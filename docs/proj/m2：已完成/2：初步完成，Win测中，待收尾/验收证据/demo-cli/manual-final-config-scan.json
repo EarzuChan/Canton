@@ -1,9 +1,0 @@
-{
-  "mode": "read-only offline schema and ConfigScanner",
-  "counts": {
-    "Fatal": 0,
-    "Resolvable": 0,
-    "Idle": 15,
-    "Applicable": 0
-  }
-}

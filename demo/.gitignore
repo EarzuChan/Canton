@@ -1,6 +1,0 @@
-/.arrange/
-/arrange.local.yaml
-node_modules/
-/ui-src/dist/
-/artifacts/
-/ui-src/.npmrc
