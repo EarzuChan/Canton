@@ -1,0 +1,12 @@
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../arrange.version.json" _arrange_version_json)
+string(JSON ARRANGE_VERSION GET "${_arrange_version_json}" frameworkVersion)
+string(JSON ARRANGE_PROTOCOL_VERSION GET "${_arrange_version_json}" frameworkInternalProtocolCode)
+
+if(NOT ARRANGE_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  message(FATAL_ERROR "Arrange version must be <major>.<minor>.<patch>, got '${ARRANGE_VERSION}'")
+endif()
+
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" ARRANGE_NUMERIC_VERSION "${ARRANGE_VERSION}")
+if(NOT ARRANGE_NUMERIC_VERSION)
+  message(FATAL_ERROR "Arrange version '${ARRANGE_VERSION}' has no numeric SemVer core")
+endif()

@@ -1,0 +1,720 @@
+#include <arrange/quickjs/QuickJsScriptHost.h>
+#include "QuickJsHotTransport.h"
+
+#if ARRANGE_WITH_QUICKJS_NG
+
+#include "QuickJsNativeApi.h"
+#include "QuickJsRuntimeContext.h"
+#include "QuickJsValueReader.h"
+#include "QuickJsDrawReader.h"
+#include "QuickJsScriptHeap.h"
+
+#include <algorithm>
+#include <chrono>
+#include <thread>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <filesystem>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+namespace arrange::quickjs {
+    namespace {
+        std::size_t scriptStackBudget() {
+#if defined(_WIN32)
+            ULONG_PTR lower = 0;
+            ULONG_PTR upper = 0;
+            GetCurrentThreadStackLimits(&lower, &upper);
+            const auto current = reinterpret_cast<ULONG_PTR>(&lower);
+            constexpr std::size_t hostReserve = 256 * 1024;
+            if (current <= lower || current - lower <= hostReserve) throw std::runtime_error("Owner 线程没有足够的脚本栈空间");
+
+            return (std::min)(std::size_t{2 * 1024 * 1024}, static_cast<std::size_t>(current - lower - hostReserve));
+#else
+            return 512 * 1024;
+#endif
+        }
+
+        struct DrainJobsResult {
+            bool ok = true;
+            std::string error;
+        };
+    }
+
+    struct QuickJsScriptHost::Impl {
+        explicit Impl(ScriptExecutionLimits value) : limits(value) {
+            if (limits.semanticMillis <= 0 || limits.visualMillis <= 0 || limits.moduleMillis <= 0) throw std::invalid_argument("脚本任务预算必须为正数");
+        }
+
+        const ScriptExecutionLimits limits;
+        ScriptHeap heap;
+        QuickJsRuntimeContext runtime;
+
+        ~Impl() {
+            reset();
+        }
+
+        void reset() {
+            if (runtime.context != nullptr) {
+                TaskBudget budget(*this, "disposeApp");
+                if (JS_IsFunction(runtime.context, runtime.disposeApp)) {
+                    ScopedValue callback(runtime.context, JS_DupValue(runtime.context, runtime.disposeApp));
+                    ScopedValue disposed(runtime.context, JS_Call(runtime.context, callback.get(), JS_UNDEFINED, 0, nullptr));
+                    if (JS_IsException(disposed.get())) (void)quickJsExceptionText(runtime.context);
+                }
+                JS_FreeValue(runtime.context, runtime.prepareFrame);
+                JS_FreeValue(runtime.context, runtime.completeFrame);
+                JS_FreeValue(runtime.context, runtime.disposeApp);
+                for (const auto& prepared : runtime.preparedDrawCallbacks) JS_FreeValue(runtime.context, prepared.callback);
+                runtime.preparedDrawCallbacks.clear();
+                JS_FreeValue(runtime.context, runtime.materializeLayout);
+                runtime.materializeLayout = JS_UNDEFINED;
+                runtime.prepareFrame = runtime.completeFrame = runtime.disposeApp = JS_UNDEFINED;
+                runtime.painters.reset();
+                for (auto& request : runtime.assetRequests) {
+                    JS_FreeValue(runtime.context, request.resolve);
+                    JS_FreeValue(runtime.context, request.reject);
+                }
+                runtime.assetRequests.clear();
+                if (runtime.interop) runtime.interop->close();
+                runtime.interop.reset();
+                JS_FreeValue(runtime.context, runtime.rearrangeCompletion);
+                runtime.rearrangeCompletion = JS_UNDEFINED;
+                if (runtime.rearrangeSubmission) runtime.rearrangeSubmission->cancelled = true;
+                runtime.rearrangeSubmission.reset();
+                runtime.rearrangeCheckpoint.reset();
+                runtime.events.reset(nullptr);
+                for (auto& [promise, reason] : runtime.unhandledRejections) {
+                    JS_FreeValue(runtime.context, promise);
+                    JS_FreeValue(runtime.context, reason);
+                }
+                runtime.unhandledRejections.clear();
+                JS_FreeContext(runtime.context);
+                runtime.context = nullptr;
+            }
+            runtime.events.clearContext();
+            if (runtime.runtime != nullptr) {
+                JS_FreeRuntime(runtime.runtime);
+                runtime.runtime = nullptr;
+            }
+            heap.reset();
+            runtime.rootNodeId = 0;
+            runtime.frameRequested = false;
+            runtime.focusCommands.clear();
+            runtime.framePrepared = false;
+            runtime.frameTimeMillis = 0.0;
+            runtime.publishedModifiers.clear();
+            runtime.modifierInputs.clear();
+            runtime.rejectedBindingUpdates = 0;
+            runtime.remainingFrameJobs = QuickJsRuntimeContext::maxJobsPerFrame;
+            runtime.pendingTransactions = nullptr;
+            runtime.nodeTypes.clear();
+            runtime.nodeGenerations.clear();
+            runtime.hostBindings.clear();
+            runtime.bindings.clear();
+            runtime.modifierBindings.clear();
+            runtime.childrenByNode.clear();
+            runtime.parentByNode.clear();
+            runtime.moduleLoader.clear();
+            runtime.diagnosticToasts.clear();
+            runtime.diagnosticActions.clear();
+            runtime.hotMessages.clear();
+        }
+
+        void initialise(QuickJsScriptHost* owner) {
+            reset();
+            runtime.pendingTransactions = &owner->pendingTransactions_;
+            runtime.runtime = JS_NewRuntime2(&ScriptHeap::functions, &heap);
+            // 给宿主输入、布局与异常处理保留栈空间，先由引擎报告脚本栈溢出
+            if (!runtime.runtime) throw std::bad_alloc();
+            JS_SetMaxStackSize(runtime.runtime, scriptStackBudget());
+            JS_SetInterruptHandler(
+                runtime.runtime,
+                [](JSRuntime*, void* opaque) {
+                    auto& owner = *static_cast<Impl*>(opaque);
+                    if (!owner.taskDepth || std::chrono::steady_clock::now() < owner.deadline) return 0;
+                    owner.interrupted = true;
+                    return 1;
+                },
+                this);
+            JS_SetModuleLoaderFunc(runtime.runtime, &QuickJsModuleLoader::normalize, &QuickJsModuleLoader::load, &runtime.moduleLoader);
+            runtime.context = JS_NewContext(runtime.runtime);
+            if (!runtime.context) throw std::bad_alloc();
+            JS_SetHostPromiseRejectionTracker(
+                runtime.runtime,
+                [](JSContext* context, JSValueConst promise, JSValueConst reason, bool handled, void* opaque) {
+                    auto& state = *static_cast<QuickJsRuntimeContext*>(opaque);
+                    if (handled) {
+                        std::erase_if(state.unhandledRejections, [&](const auto& entry) {
+                            if (!JS_IsStrictEqual(context, promise, entry.first)) return false;
+                            JS_FreeValue(context, entry.first);
+                            JS_FreeValue(context, entry.second);
+                            return true;
+                        });
+                    } else
+                        state.unhandledRejections.emplace_back(JS_DupValue(context, promise), JS_DupValue(context, reason));
+                },
+                &runtime);
+            runtime.events.reset(runtime.context);
+            JS_SetContextOpaque(runtime.context, &runtime);
+            runtime.painters = std::make_unique<QuickJsPainterResources>(runtime.context, runtime.painterLoader);
+            if (runtime.interopHost) runtime.interop = std::make_unique<QuickJsInterop>(runtime.context, *runtime.interopHost, runtime.wakeOwner);
+            QuickJsNativeApi::install(runtime.context, runtime);
+        }
+
+        struct TaskBudget {
+            Impl& owner;
+
+            explicit TaskBudget(Impl& value, const char* name, int milliseconds = 0) : owner(value) {
+                if (owner.ownerThread != std::this_thread::get_id()) throw std::runtime_error("QuickJS 只能由创建它的 UI Owner 线程执行");
+                if (owner.taskDepth++ == 0) {
+                    owner.taskName = name;
+                    owner.taskMillis = milliseconds ? milliseconds : owner.limits.semanticMillis;
+                    owner.started = std::chrono::steady_clock::now();
+                    owner.deadline = owner.started + std::chrono::milliseconds(owner.taskMillis);
+                    owner.interrupted = false;
+                    owner.initialAllocations = owner.heap.stats().allocations;
+                    owner.runtime.remainingFrameJobs = QuickJsRuntimeContext::maxJobsPerFrame;
+                }
+            }
+
+            ~TaskBudget() {
+                if (--owner.taskDepth == 0 && std::getenv("ARRANGE_TRACE_SCRIPT_TASKS")) arrange::Log::d("QuickJS任务", owner.taskName, "预算", owner.taskMillis, "耗时", std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - owner.started).count(), "中断", owner.interrupted, "分配", owner.heap.stats().allocations - owner.initialAllocations);
+            }
+        };
+
+        const std::thread::id ownerThread = std::this_thread::get_id();
+        unsigned taskDepth = 0;
+        std::chrono::steady_clock::time_point deadline;
+        std::chrono::steady_clock::time_point started;
+        const char* taskName = "";
+        int taskMillis = 0;
+        bool interrupted = false;
+        std::uint64_t initialAllocations = 0;
+
+        std::string exceptionText(JSContext* context) const {
+            auto error = quickJsExceptionText(context);
+            if (interrupted) error += "\nQuickJS 任务 " + std::string(taskName) + " 超过 " + std::to_string(taskMillis) + "ms 预算（耗时 " + std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()) + "ms）";
+            return error;
+        }
+
+        DrainJobsResult drainJobs() {
+            // 完成视觉回执后重新建立语义边界，嵌套派发仍继承当前任务预算
+            TaskBudget budget(*this, "drainJobs");
+            JSContext* jobContext = nullptr;
+            while (JS_IsJobPending(runtime.runtime)) {
+                if (runtime.remainingFrameJobs == 0) return {false, "JavaScript 语义任务超过检查点数量预算"};
+                --runtime.remainingFrameJobs;
+                if (JS_ExecutePendingJob(runtime.runtime, &jobContext) < 0) return {false, exceptionText(jobContext != nullptr ? jobContext : runtime.context)};
+            }
+            if (!runtime.unhandledRejections.empty()) {
+                JS_Throw(runtime.context, JS_DupValue(runtime.context, runtime.unhandledRejections.front().second));
+                return {false, exceptionText(runtime.context)};
+            }
+            return {};
+        }
+    };
+
+    QuickJsScriptHost::QuickJsScriptHost(ScriptExecutionLimits limits) : impl_(std::make_unique<Impl>(limits)) {}
+
+    void QuickJsScriptHost::setAssetLoader(core::AssetLoader loader) {
+        impl_->runtime.assetLoader = std::move(loader);
+    }
+
+    QuickJsScriptHost::~QuickJsScriptHost() = default;
+
+    void QuickJsScriptHost::setPainterLoader(arrange::core::PainterLoader loader) {
+        impl_->runtime.painterLoader = std::move(loader);
+    }
+
+    void QuickJsScriptHost::setInteropHost(arrange::core::InteropHost* host) {
+        if (impl_->runtime.context) throw std::logic_error("互操作宿主须在加载脚本前设置");
+        impl_->runtime.interopHost = host;
+    }
+
+    std::size_t QuickJsScriptHost::eventSlotCount() const noexcept {
+        return impl_ ? impl_->runtime.events.size() : 0;
+    }
+
+    std::size_t QuickJsScriptHost::bindingCount() const noexcept {
+        return impl_ ? impl_->runtime.bindings.size() : 0;
+    }
+
+    std::size_t QuickJsScriptHost::modifierInstanceCount() const noexcept {
+        return impl_ ? impl_->runtime.publishedModifiers.size() : 0;
+    }
+
+    std::uint64_t QuickJsScriptHost::rejectedBindingUpdates() const noexcept {
+        return impl_ ? impl_->runtime.rejectedBindingUpdates : 0;
+    }
+
+    ScriptMemoryStats QuickJsScriptHost::memoryStats() const noexcept {
+        return impl_ ? impl_->heap.stats() : ScriptMemoryStats{};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::completeRearrange(const std::shared_ptr<arrange::core::RearrangeSubmission>& submission, const std::string& error) {
+        if (!impl_) return {true, {}};
+        auto& state = impl_->runtime;
+        if (!submission || submission->cancelled || submission != state.rearrangeSubmission || JS_IsUndefined(state.rearrangeCompletion)) return {true, {}};
+        {
+            // 回执包含结构退休与生命周期通知，属于当前视觉候选的完成阶段
+            Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+            const auto callback = state.rearrangeCompletion;
+            state.rearrangeCompletion = JS_UNDEFINED;
+            if (error.empty())
+                state.commitRearrange();
+            else
+                state.abortRearrange();
+
+            auto argument = error.empty() ? JS_UNDEFINED : JS_NewStringLen(state.context, error.data(), error.size());
+            ScopedValue result(state.context, JS_Call(state.context, callback, JS_UNDEFINED, 1, &argument));
+            JS_FreeValue(state.context, argument);
+            JS_FreeValue(state.context, callback);
+            if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        }
+        const auto drained = impl_->drainJobs();
+        return {drained.ok, drained.error};
+    }
+
+    void QuickJsScriptHost::publishScene(const arrange::core::NativeScene& scene) {
+        if (!impl_) return;
+        auto& state = impl_->runtime;
+        state.events.publish(scene.activeEventSlots());
+        state.publishedModifiers.clear();
+        state.modifierInputs.clear();
+        for (const auto& [id, generation] : state.nodeGenerations) {
+            if (!scene.contains(id) || scene.node(id).generation != generation) continue;
+            std::size_t position = 0;
+            for (const auto& instance : scene.node(id).modifier.elements()) {
+                const QuickJsRuntimeContext::PublishedModifier input{{id, generation}, instance.handle, instance.descriptor, position++};
+                state.publishedModifiers.emplace(instance.handle.identity, input);
+                state.modifierInputs[id].push_back(input);
+            }
+        }
+        std::erase_if(state.bindings, [&](const auto& entry) {
+            const auto* target = std::get_if<arrange::core::ModifierInputTarget>(&entry.second.target);
+            if (!target) return false;
+            const auto found = state.publishedModifiers.find(target->modifier.identity);
+            return found == state.publishedModifiers.end() || found->second.handle != target->modifier;
+        });
+    }
+
+    bool QuickJsScriptHost::hasPendingDiagnostics() const noexcept {
+        return !impl_->runtime.diagnosticToasts.empty() || !impl_->runtime.diagnosticActions.empty();
+    }
+
+    std::vector<QuickJsToastRequest> QuickJsScriptHost::takeDiagnosticToasts() {
+        if (!impl_) return {};
+        auto toasts = std::move(impl_->runtime.diagnosticToasts);
+        impl_->runtime.diagnosticToasts.clear();
+        return toasts;
+    }
+
+    std::vector<QuickJsDiagnosticAction> QuickJsScriptHost::takeDiagnosticActions() {
+        if (!impl_) return {};
+        auto actions = std::move(impl_->runtime.diagnosticActions);
+        impl_->runtime.diagnosticActions.clear();
+        return actions;
+    }
+
+    std::optional<arrange::core::MutationTransaction> QuickJsScriptHost::takePendingTransaction() noexcept {
+        return pendingTransactions_.take();
+    }
+
+    void QuickJsScriptHost::clearPendingTransactions() noexcept {
+        pendingTransactions_.clear();
+    }
+
+    void QuickJsScriptHost::setFrameTimeMillis(double nowMillis) noexcept {
+        if (!impl_) return;
+        auto& runtime = impl_->runtime;
+        const auto timestamp = std::max(0.0, nowMillis);
+        if (timestamp != runtime.frameTimeMillis) runtime.remainingFrameJobs = QuickJsRuntimeContext::maxJobsPerFrame;
+        runtime.frameTimeMillis = timestamp;
+    }
+
+    void QuickJsScriptHost::setOwnerWake(std::function<void()> wake) {
+        impl_->runtime.wakeOwner = std::move(wake);
+        if (impl_->runtime.interop) impl_->runtime.interop->setWakeOwner(impl_->runtime.wakeOwner);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::semanticCheckpoint(double nowMillis, bool visualFrame) {
+        Impl::TaskBudget budget(*impl_, __func__);
+        auto& state = impl_->runtime;
+        if (!state.context) return {true, {}};
+        if (state.framePrepared) return {false, "语义检查点不能重入视觉提交"};
+        setFrameTimeMillis(nowMillis);
+        state.remainingFrameJobs = QuickJsRuntimeContext::maxJobsPerFrame;
+        if (state.painters && !state.painters->pump()) return {false, impl_->exceptionText(state.context)};
+        if (!state.pumpAssets()) return {false, impl_->exceptionText(state.context)};
+        if (state.interop && !state.interop->pump(visualFrame)) return {false, impl_->exceptionText(state.context)};
+        const auto drained = impl_->drainJobs();
+        return {drained.ok, drained.error};
+    }
+
+    bool QuickJsScriptHost::hasPendingSemanticWork() const noexcept {
+        return impl_ && impl_->runtime.context && (JS_IsJobPending(impl_->runtime.runtime) || !impl_->runtime.assetRequests.empty() || (impl_->runtime.painters && impl_->runtime.painters->hasPending()) || (impl_->runtime.interop && impl_->runtime.interop->hasPending()));
+    }
+
+    bool QuickJsScriptHost::hasPendingVisualWork() const noexcept {
+        // 播放中的走带与观测订阅按帧拉取，由 VBlank 驱动语义检查点交付
+        return impl_ && (impl_->runtime.frameRequested || (impl_->runtime.interop && impl_->runtime.interop->wantsFrames()));
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::prepareVisualFrame(double nowMillis) {
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+        auto& state = impl_->runtime;
+        if (!state.context) return {false, "QuickJS 运行时尚未初始化"};
+        if (state.framePrepared) return {false, "视觉帧不能重入"};
+        setFrameTimeMillis(nowMillis);
+        if (JS_IsUndefined(state.prepareFrame)) return {true, {}};
+
+        state.frameRequested = false;
+        state.framePrepared = true;
+        ScopedValue timestamp(state.context, JS_NewFloat64(state.context, state.frameTimeMillis));
+        JSValueConst argv[] = {timestamp.get()};
+        ScopedValue result(state.context, JS_Call(state.context, state.prepareFrame, JS_UNDEFINED, 1, argv));
+        if (JS_IsException(result.get())) {
+            const auto error = impl_->exceptionText(state.context);
+            state.abortRearrange();
+            (void)completeVisualFrame(false);
+            return {false, error};
+        }
+        return {true, {}};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::prepareDrawModifiers(arrange::core::NativeScene& candidateScene) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+        auto& state = impl_->runtime;
+        try {
+            for (const auto id : candidateScene.tree().nodeIds()) {
+                const auto& node = candidateScene.node(id);
+                for (std::size_t index = 0; index < node.modifier.elements().size(); ++index) {
+                    const auto& current = node.modifier.elements()[index];
+                    const auto* input = std::get_if<arrange::core::DrawModifier>(&current.descriptor.value);
+                    if (!input) continue;
+                    const arrange::core::Size size{current.bounds.width, current.bounds.height};
+                    if (current.preparedDraw && current.preparedDrawSize == size && current.preparedDrawRevision == input->revision && current.preparedDrawCallback == input->prepare) continue;
+                    if (!candidateScene.hasEventSlot(input->prepare)) throw std::runtime_error("绘制准备受体已经退休");
+                    ScopedValue callback(state.context, JS_DupValue(state.context, state.events.candidateCallback(input->prepare)));
+                    if (!JS_IsFunction(state.context, callback.get())) throw std::runtime_error("绘制准备函数已经退休");
+                    ScopedValue width(state.context, JS_NewFloat64(state.context, size.width));
+                    ScopedValue height(state.context, JS_NewFloat64(state.context, size.height));
+                    ScopedValue phase(state.context, JS_NewString(state.context, "prepare"));
+                    if (input->transactional) state.preparedDrawCallbacks.push_back({JS_DupValue(state.context, callback.get()), size.width, size.height});
+                    JSValueConst arguments[]{width.get(), height.get(), phase.get()};
+                    ScopedValue prepared(state.context, JS_Call(state.context, callback.get(), JS_UNDEFINED, input->transactional ? 3 : 2, arguments));
+                    if (JS_IsException(prepared.get())) throw std::runtime_error(impl_->exceptionText(state.context));
+                    auto commands = QuickJsDrawReader(state.context, state.interopHost ? state.interopHost->nativePainters() : nullptr).read(prepared.get());
+                    auto& instance = candidateScene.tree().mutableNode(id).modifier.elements()[index];
+                    if (!instance.preparedDraw || *instance.preparedDraw != commands) instance.preparedDraw = std::make_shared<const arrange::core::DrawCommands>(std::move(commands));
+                    instance.preparedDrawSize = size;
+                    instance.preparedDrawRevision = input->revision;
+                    instance.preparedDrawCallback = input->prepare;
+                    candidateScene.noteDrawPrepared();
+                }
+            }
+            return {true, {}};
+        } catch (const std::exception& error) {
+            if (JS_HasException(state.context)) return {false, std::string(error.what()) + "：" + impl_->exceptionText(state.context)};
+            return {false, error.what()};
+        }
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::materializeLayout(arrange::core::NodeId id, const std::vector<int>& indices) {
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+        auto& state = impl_->runtime;
+        if (!state.framePrepared || state.materializingLayout || !JS_IsFunction(state.context, state.materializeLayout)) return {false, "Layout 材料化缺少当前视觉候选或驱动"};
+        if (indices.size() > 4096) return {false, "单次 Layout 材料化超过 4096 项保护上限"};
+        ScopedValue values(state.context, JS_NewArray(state.context));
+        for (std::uint32_t index = 0; index < indices.size(); ++index) JS_SetPropertyUint32(state.context, values.get(), index, JS_NewInt32(state.context, indices[index]));
+        JSValue argv[] = {JS_NewUint32(state.context, id), values.get()};
+        state.materializingLayout = true;
+        ScopedValue result(state.context, JS_Call(state.context, state.materializeLayout, JS_UNDEFINED, 2, argv));
+        state.materializingLayout = false;
+        JS_FreeValue(state.context, argv[0]);
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        return {true, {}};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::completeVisualFrame(bool success) {
+        auto& state = impl_->runtime;
+        std::string drawError;
+        {
+            Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+            const auto drawings = std::move(state.preparedDrawCallbacks);
+            state.preparedDrawCallbacks.clear();
+            for (const auto& drawing : drawings) {
+                ScopedValue callback(state.context, drawing.callback);
+                ScopedValue width(state.context, JS_NewFloat64(state.context, drawing.width));
+                ScopedValue height(state.context, JS_NewFloat64(state.context, drawing.height));
+                ScopedValue phase(state.context, JS_NewString(state.context, success ? "commit" : "rollback"));
+                JSValueConst arguments[]{width.get(), height.get(), phase.get()};
+                ScopedValue finished(state.context, JS_Call(state.context, callback.get(), JS_UNDEFINED, 3, arguments));
+                if (JS_IsException(finished.get())) {
+                    const auto error = impl_->exceptionText(state.context);
+                    if (drawError.empty()) drawError = error;
+                }
+            }
+            if (!state.framePrepared) return {drawError.empty(), drawError};
+            state.framePrepared = false;
+            ScopedValue argument(state.context, JS_NewBool(state.context, success));
+            JSValueConst argv[] = {argument.get()};
+            ScopedValue result(state.context, JS_Call(state.context, state.completeFrame, JS_UNDEFINED, 1, argv));
+            if (JS_IsException(result.get())) {
+                const auto error = impl_->exceptionText(state.context);
+                return {false, drawError.empty() ? error : drawError + "\n" + error};
+            }
+        }
+        const auto drained = impl_->drainJobs();
+        if (!drawError.empty()) return {false, drawError};
+        return {drained.ok, drained.error};
+    }
+
+    ScriptExecutionResult QuickJsScriptHost::executeModule(const std::filesystem::path& modulePath, std::string_view source) {
+        pendingTransactions_.clear();
+        const auto normalizedModulePath = std::filesystem::absolute(modulePath).lexically_normal();
+        impl_->initialise(this);
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
+        ScopedValue result(impl_->runtime.context, JS_Eval(impl_->runtime.context, source.data(), source.size(), normalizedModulePath.generic_string().c_str(), JS_EVAL_TYPE_MODULE));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(impl_->runtime.context)};
+        const auto drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        const auto& pending = pendingTransactions_.pending();
+        if ((!pending || !pending->hasTreeMutations()) && JS_IsUndefined(impl_->runtime.prepareFrame)) return {false, "应用未挂载：需要 createApp(App).mount() 安装帧驱动"};
+        return {true, {}};
+    }
+
+    ScriptExecutionResult QuickJsScriptHost::executePackage(std::shared_ptr<const core::UiPackage> package) {
+        pendingTransactions_.clear();
+        impl_->initialise(this);
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
+        auto& state = impl_->runtime;
+        const std::string entry(package->entry());
+        state.moduleLoader.install(std::move(package));
+        auto* module = QuickJsModuleLoader::load(state.context, entry.c_str(), &state.moduleLoader);
+        if (!module) return {false, impl_->exceptionText(state.context)};
+        const auto value = JS_MKPTR(JS_TAG_MODULE, module);
+        if (JS_ResolveModule(state.context, value) < 0) return {false, impl_->exceptionText(state.context)};
+        ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, value)));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        const auto drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        const auto& pending = pendingTransactions_.pending();
+        if ((!pending || !pending->hasTreeMutations()) && JS_IsUndefined(state.prepareFrame)) return {false, "应用未挂载：需要 createApp(App).mount() 安装帧驱动"};
+        return {true, {}};
+    }
+
+    ScriptExecutionResult QuickJsScriptHost::executeLiveModules(const LiveModuleSnapshot& snapshot) {
+        pendingTransactions_.clear();
+        impl_->initialise(this);
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
+        auto& state = impl_->runtime;
+        state.moduleLoader.install(snapshot);
+        installHotTransport(state.context);
+        auto* module = QuickJsModuleLoader::load(state.context, snapshot.entry.c_str(), &state.moduleLoader);
+        if (!module) return {false, impl_->exceptionText(state.context)};
+        ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, JS_MKPTR(JS_TAG_MODULE, module))));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        const auto drained = impl_->drainJobs();
+        return {drained.ok, drained.error};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::applyHotUpdate(const LiveModuleSnapshot& snapshot, const HotMessage& message) {
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
+        auto& state = impl_->runtime;
+        if (!state.context) return {false, "HMR runtime 尚未初始化"};
+        if (message.event == "arrange:import-ready") {
+            const auto* data = std::get_if<HotValue::Object>(&message.data.value);
+            if (!data || !data->contains("session") || !std::holds_alternative<std::string>(data->at("session").value) || std::get<std::string>(data->at("session").value) != state.hotSession) return {true, {}};
+        }
+        state.moduleLoader.install(snapshot);
+        ScopedValue global(state.context, JS_GetGlobalObject(state.context));
+        ScopedValue receive(state.context, JS_GetPropertyStr(state.context, global.get(), "__ARRANGE_HOT_RECEIVE__"));
+        if (!JS_IsFunction(state.context, receive.get())) return {false, "HMR runtime 未安装"};
+        ScopedValue argument(state.context, hotMessageValue(state.context, message));
+        JSValueConst argv[] = {argument.get()};
+        ScopedValue result(state.context, JS_Call(state.context, receive.get(), JS_UNDEFINED, 1, argv));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        const auto drained = impl_->drainJobs();
+        return {drained.ok, drained.error};
+    }
+
+    std::vector<HotMessage> QuickJsScriptHost::takeHotMessages() {
+        return std::exchange(impl_->runtime.hotMessages, {});
+    }
+
+    std::vector<arrange::core::FocusCommand> QuickJsScriptHost::takeFocusCommands() {
+        return std::exchange(impl_->runtime.focusCommands, {});
+    }
+
+    bool QuickJsScriptHost::hasPendingFocusCommands() const noexcept {
+        return !impl_->runtime.focusCommands.empty();
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeEventSlot(const arrange::core::EventSlotId& slot, const CallbackInvokeOptions& options) {
+        Impl::TaskBudget budget(*impl_, __func__);
+        if (impl_->runtime.context == nullptr) return {false, "QuickJS runtime is not initialised"};
+        if (!slot.valid()) return {false, "Arrange event slot is invalid"};
+        if (slot.kind == arrange::core::EventSlotKind::DrawPrepare) return {false, "绘制 callback 只允许候选准备阶段调用"};
+        const auto callbackValue = impl_->runtime.events.callback(slot);
+        if (JS_IsUndefined(callbackValue)) return {false, "Arrange event slot is not registered in QuickJS"};
+
+        ScopedValue callback(impl_->runtime.context, JS_DupValue(impl_->runtime.context, callbackValue));
+        JSValueConst* argv = nullptr;
+        int argc = 0;
+        JSValue argument = JS_UNDEFINED;
+        if (options.hasStringArgument && !options.hasFocusArgument) {
+            argument = JS_NewStringLen(impl_->runtime.context, options.stringArgument.data(), options.stringArgument.size());
+            argv = &argument;
+            argc = 1;
+        }
+        if (options.hasFocusArgument) {
+            argument = JS_NewObject(impl_->runtime.context);
+            JS_SetPropertyStr(impl_->runtime.context, argument, "isFocused", JS_NewBool(impl_->runtime.context, options.focused));
+            JS_SetPropertyStr(impl_->runtime.context, argument, "hasFocus", JS_NewBool(impl_->runtime.context, options.hasFocus));
+            argv = &argument;
+            argc = 1;
+        }
+        ScopedValue result(impl_->runtime.context, JS_Call(impl_->runtime.context, callback.get(), JS_UNDEFINED, argc, argv));
+        if (options.hasStringArgument || options.hasFocusArgument) JS_FreeValue(impl_->runtime.context, argument);
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(impl_->runtime.context)};
+        const auto drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        return {true, {}};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeEventSlot(const arrange::core::EventSlotId& slot, const arrange::core::ScrollResult& scroll) {
+        Impl::TaskBudget budget(*impl_, __func__);
+        if (impl_->runtime.context == nullptr) return {false, "QuickJS runtime is not initialised"};
+        if (!slot.valid()) return {false, "Arrange event slot is invalid"};
+        if (slot.kind == arrange::core::EventSlotKind::DrawPrepare) return {false, "绘制 callback 只允许候选准备阶段调用"};
+        const auto callbackValue = impl_->runtime.events.callback(slot);
+        if (JS_IsUndefined(callbackValue)) return {false, "Arrange event slot is not registered in QuickJS"};
+
+        ScopedValue argument(impl_->runtime.context, JS_NewObject(impl_->runtime.context));
+        JS_SetPropertyStr(impl_->runtime.context, argument.get(), "value", JS_NewFloat64(impl_->runtime.context, scroll.value));
+        JS_SetPropertyStr(impl_->runtime.context, argument.get(), "maxValue", JS_NewFloat64(impl_->runtime.context, scroll.maxValue));
+        JS_SetPropertyStr(impl_->runtime.context, argument.get(), "viewportSize", JS_NewFloat64(impl_->runtime.context, scroll.viewportSize));
+        JS_SetPropertyStr(impl_->runtime.context, argument.get(), "contentSize", JS_NewFloat64(impl_->runtime.context, scroll.contentSize));
+        JS_SetPropertyStr(impl_->runtime.context, argument.get(), "isScrollInProgress", JS_NewBool(impl_->runtime.context, false));
+        if (scroll.lazy) {
+            auto* context = impl_->runtime.context;
+            const auto& lazy = *scroll.lazy;
+            JS_SetPropertyStr(context, argument.get(), "needsMoreItems", JS_NewBool(context, lazy.needsMoreItems));
+            JS_SetPropertyStr(context, argument.get(), "workGeneration", JS_NewFloat64(context, static_cast<double>(lazy.workGeneration)));
+            JS_SetPropertyStr(context, argument.get(), "firstVisibleItemIndex", JS_NewInt32(context, lazy.firstVisibleItemIndex));
+            JS_SetPropertyStr(context, argument.get(), "firstVisibleItemScrollOffset", JS_NewFloat64(context, lazy.firstVisibleItemScrollOffset));
+            JS_SetPropertyStr(context, argument.get(), "totalItemsCount", JS_NewInt32(context, lazy.totalItemsCount));
+            JSValue visible = JS_NewArray(context);
+            for (std::uint32_t index = 0; index < lazy.visibleItems.size(); ++index) {
+                const auto& item = lazy.visibleItems[index];
+                JSValue entry = JS_NewObject(context);
+                JS_SetPropertyStr(context, entry, "index", JS_NewInt32(context, item.index));
+                JS_SetPropertyStr(context, entry, "offset", JS_NewFloat64(context, item.offset));
+                JS_SetPropertyStr(context, entry, "size", JS_NewFloat64(context, item.size));
+                JS_SetPropertyStr(context, entry, "span", JS_NewInt32(context, item.span));
+                JS_SetPropertyUint32(context, visible, index, entry);
+            }
+            JS_SetPropertyStr(context, argument.get(), "visibleItemsInfo", visible);
+        }
+        ScopedValue callback(impl_->runtime.context, JS_DupValue(impl_->runtime.context, callbackValue));
+        JSValueConst argv[1] = {argument.get()};
+        ScopedValue result(impl_->runtime.context, JS_Call(impl_->runtime.context, callback.get(), JS_UNDEFINED, 1, argv));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(impl_->runtime.context)};
+        const auto drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        return {true, {}};
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeEventSlot(const arrange::core::EventSlotId& slot, const arrange::core::InputEventPayload& payload) {
+        Impl::TaskBudget budget(*impl_, __func__);
+        auto* context = impl_->runtime.context;
+        if (context == nullptr) return {false, "QuickJS runtime is not initialised"};
+        if (!slot.valid()) return {false, "Arrange event slot is invalid"};
+        if (slot.kind == arrange::core::EventSlotKind::DrawPrepare) return {false, "绘制 callback 只允许候选准备阶段调用"};
+        const auto callbackValue = impl_->runtime.events.callback(slot);
+        if (JS_IsUndefined(callbackValue)) return {false, "Arrange event slot is not registered in QuickJS"};
+
+        ScopedValue argument(context, JS_NewObject(context));
+        const auto number = [&](const char* name, double value) {
+            JS_SetPropertyStr(context, argument.get(), name, JS_NewFloat64(context, value));
+        };
+        const auto flag = [&](const char* name, bool value) {
+            JS_SetPropertyStr(context, argument.get(), name, JS_NewBool(context, value));
+        };
+        const auto modifiers = [&](const arrange::core::KeyModifierState& state) {
+            JSValue object = JS_NewObject(context);
+            JS_SetPropertyStr(context, object, "shift", JS_NewBool(context, state.shift));
+            JS_SetPropertyStr(context, object, "alt", JS_NewBool(context, state.alt));
+            JS_SetPropertyStr(context, object, "ctrl", JS_NewBool(context, state.ctrl));
+            JS_SetPropertyStr(context, object, "meta", JS_NewBool(context, state.meta));
+            JS_SetPropertyStr(context, object, "command", JS_NewBool(context, state.command));
+            JS_SetPropertyStr(context, argument.get(), "modifiers", object);
+        };
+        std::visit(
+            [&](const auto& event) {
+                using T = std::decay_t<decltype(event)>;
+                if constexpr (std::is_same_v<T, arrange::core::PointerEventPayload>) {
+                    number("x", event.x);
+                    number("y", event.y);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::KeyEventPayload>) {
+                    JS_SetPropertyStr(context, argument.get(), "type", JS_NewString(context, event.up ? "up" : "down"));
+                    JS_SetPropertyStr(context, argument.get(), "key", JS_NewStringLen(context, event.key.data(), event.key.size()));
+                    JS_SetPropertyStr(context, argument.get(), "text", JS_NewStringLen(context, event.text.data(), event.text.size()));
+                    flag("repeat", event.repeat);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::WheelEventPayload>) {
+                    number("deltaX", event.deltaX);
+                    number("deltaY", event.deltaY);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::DragStartPayload>) {
+                    number("x", event.x);
+                    number("y", event.y);
+                    number("width", event.width);
+                    number("height", event.height);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::DragDeltaPayload>) {
+                    number("deltaX", event.deltaX);
+                    number("deltaY", event.deltaY);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::DragStopPayload>) {
+                    number("velocity", event.velocity);
+                    flag("cancelled", event.cancelled);
+                } else if constexpr (std::is_same_v<T, arrange::core::PointerInputPayload>) {
+                    constexpr const char* types[]{"down", "move", "up", "cancel", "enter", "exit"};
+                    JS_SetPropertyStr(context, argument.get(), "type", JS_NewString(context, types[static_cast<std::size_t>(event.type)]));
+                    number("x", event.x);
+                    number("y", event.y);
+                    modifiers(event.modifiers);
+                } else if constexpr (std::is_same_v<T, arrange::core::InteractionPayload>) {
+                    flag("hovered", event.hovered);
+                    flag("pressed", event.pressed);
+                    flag("focused", event.focused);
+                    flag("dragged", event.dragged);
+                }
+            },
+            payload);
+        ScopedValue callback(context, JS_DupValue(context, callbackValue));
+        JSValueConst argv[1] = {argument.get()};
+        ScopedValue result(context, JS_Call(context, callback.get(), JS_UNDEFINED, 1, argv));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(context)};
+        const auto consumed = JS_ToBool(context, result.get()) > 0;
+        const auto drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        return {true, {}, consumed};
+    }
+}
+
+#endif

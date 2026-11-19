@@ -1,0 +1,12 @@
+<template>
+    <Text :text="secret" :modifier="M.fillMaxWidth().background(Color(theme.fill), rounded(12.dp)).padding(12.dp)" :style="{ fontSize: 11.sp, color: Color(theme.label) }" />
+</template>
+
+<script>
+import { M, Color, rounded } from '@arrange/framework/ui'
+import { Text } from '@arrange/framework/foundation'
+import { useGalleryTheme } from '../../design/theme'
+
+const { secret = 'InnerBoundary 默认值（显示本文本则正确，代表没有发生Props父层透传）' } = defineProps<{ secret?: string }>()
+const theme = useGalleryTheme()
+</script>

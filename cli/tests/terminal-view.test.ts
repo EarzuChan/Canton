@@ -1,0 +1,250 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { SessionDocument } from '../src/terminal/SessionDocument.ts'
+import { TaskController } from '../src/terminal/TaskController.ts'
+import { layoutDocument } from '../src/terminal/DocumentRenderer.ts'
+import { hitTest, viewport, type Row } from '../src/terminal/LayoutModel.ts'
+import { ScreenRenderer } from '../src/terminal/ScreenRenderer.ts'
+import { TranscriptRenderer } from '../src/terminal/TranscriptRenderer.ts'
+import { ViewportController } from '../src/terminal/ViewportController.ts'
+import { stripAnsi, visibleWidth } from '../src/util/TerminalText.ts'
+
+const rowText = (row: Row) => stripAnsi(row.spans.map(part => part.text).join(''))
+
+test('空会话、单行消息和仅问题均由渲染器补齐边界且不改写内容', () => {
+    const document = new SessionDocument()
+    document.phase = 'done'
+    assert.deepEqual(layoutDocument(document, 80, {}, 0, undefined, true).map(rowText), ['┌', '└'])
+    document.append({ type: 'message', text: '唯一消息', tone: 'info' })
+    assert.deepEqual(layoutDocument(document, 80, {}, 0, undefined, true).map(rowText), ['┌', '└  唯一消息'])
+    assert.deepEqual(document.entries, [{ type: 'message', text: '唯一消息', tone: 'info' }])
+    const prompt = { kind: 'text' as const, question: '名字', options: [], index: 0, selected: [], value: '', cursor: 0, placeholder: '' }
+    const active = layoutDocument(new SessionDocument(), 80, {}, 0, prompt).map(rowText)
+    assert.equal(active[0], '┌')
+    assert.ok(active.includes('◆  名字'))
+    assert.ok(!active.some(line => line.startsWith('└')))
+})
+
+test('渲染器按整份线性文档确定首尾，嵌套标题与中间结果不终止引导线', () => {
+    const document = new SessionDocument()
+    document.append({ type: 'message', text: '工程创建' })
+    document.append({ type: 'message', text: '工程已创建', tone: 'success' })
+    const region = document.region()
+    region.document.append({ type: 'message', text: '同步阶段' })
+    region.document.append({ type: 'message', text: '同步完成', tone: 'success' })
+    region.complete()
+    const prompt = { kind: 'text' as const, question: '下一步', options: [], index: 0, selected: [], value: '', cursor: 0, placeholder: '' }
+    const active = layoutDocument(document, 80, {}, 0, prompt).map(rowText)
+    assert.equal(active.filter(line => line.startsWith('┌')).length, 1)
+    assert.equal(active.filter(line => line.startsWith('└')).length, 0)
+    assert.ok(active.includes('│  同步阶段'))
+    assert.ok(active.includes('│  工程已创建'))
+
+    document.phase = 'failed'
+    document.append({ type: 'message', text: '后续失败\n详细原因', tone: 'error' })
+    for (const flatten of [false, true]) {
+        const lines = layoutDocument(document, 80, {}, 0, undefined, flatten).map(rowText)
+        assert.equal(lines.filter(line => line.startsWith('┌')).length, 1)
+        assert.equal(lines.filter(line => line.startsWith('└')).length, 1)
+        assert.ok(lines.includes('│  同步完成'))
+        assert.ok(lines.includes('└  详细原因'))
+    }
+    const transcript = new TranscriptRenderer().render(document)
+    assert.equal(transcript.split('\n').filter(line => line.startsWith('└')).length, 1)
+})
+
+test('消息色调不决定会话状态，渲染器仅对末尾内容收线', () => {
+    for (const phase of ['done', 'failed', 'cancelled'] as const) {
+        const document = new SessionDocument()
+        document.append({ type: 'message', text: '先前取消', tone: 'warn' })
+        document.append({ type: 'message', text: '后续操作' })
+        document.phase = phase
+        assert.equal(document.entries.length, 2)
+        assert.equal(layoutDocument(document, 80).map(rowText).filter(line => line.startsWith('└')).length, 1)
+    }
+})
+
+test('单任务提升为主行时符号后留两格，任务组内子项仍按层级排列', () => {
+    const document = new SessionDocument()
+    const batch = document.batch('检查候选')
+    const task = document.task(batch, '检查候选')
+    for (const state of ['pending', 'running', 'done', 'failed', 'cancelled', 'stopped'] as const) {
+        task.state = state
+        batch.state = state === 'pending' ? 'running' : state
+        for (const flatten of [false, true]) assert.ok(layoutDocument(document, 80, {}, 0, undefined, flatten).map(rowText).some(line => /^[○◒◐◓◑✓■] {2}检查候选/.test(line)))
+    }
+    const other = document.task(batch, '其它任务')
+    other.state = 'done'
+    batch.state = 'done'
+    const rows = layoutDocument(document, 80).map(rowText)
+    assert.ok(rows.includes('◇  检查候选 完成'))
+    assert.ok(rows.includes('│  ✓ 其它任务 · 已完成'))
+})
+function fixture() {
+    const document = new SessionDocument()
+    document.entries.push({ type: 'message', text: '标题' }, { type: 'message', text: '说明' })
+    const batch = document.batch('SETUP')
+    const task = document.task(batch, 'CMake')
+    task.state = 'done'
+    task.console = { started: true, lines: Array.from({ length: 20 }, (_, index) => '输出 ' + index) }
+    batch.state = 'done'
+    return { document, batch, task }
+}
+
+test('线性历史统一主项留白、六行上限、完整框线和滚动方向标注', () => {
+    const { document, task } = fixture()
+    const tail = layoutDocument(document, 80)
+    const text = tail.map(rowText)
+    assert.equal(text[2], '│  ')
+    const top = text.findIndex(line => line.includes('╭'))
+    assert.match(text[top]!, /╭─可往上滚[^╮]*╮/)
+    assert.ok(!text[top]!.includes('跟随中'))
+    assert.match(text[top + 7]!, /╰─已完成/)
+    assert.equal(visibleWidth(text[top]!), visibleWidth(text[top + 1]!))
+    assert.equal(visibleWidth(text[top]!), visibleWidth(text[top + 7]!))
+    task.state = 'running'
+    assert.match(layoutDocument(document, 80, { [task.id]: 0 }).map(rowText).join('\n'), /╭─可往下滚/)
+    assert.match(layoutDocument(document, 80, { [task.id]: 4 }).map(rowText).join('\n'), /╭─可上下滚/)
+})
+
+test('子控制台按实际内容收缩至六行上限，结束后移除跟随标记', () => {
+    const { document, task } = fixture()
+    for (const count of [1, 5, 6, 9]) {
+        task.console!.lines = Array.from({ length: count }, (_, index) => '短输出 ' + index)
+        task.state = 'running'
+        const active = layoutDocument(document, 80)
+        const activeBox = viewport(active, 80, 40, 0).hitboxes[0]!
+        assert.equal(activeBox.height, Math.min(count, 6) + 2)
+        assert.ok(active.some(row => row.spans.some(part => part.text.includes('跟随中'))))
+
+        task.state = 'done'
+        const completed = layoutDocument(document, 80)
+        const completedBox = viewport(completed, 80, 40, 0).hitboxes[0]!
+        assert.equal(completedBox.height, Math.min(count, 6) + 2)
+        assert.ok(!completed.some(row => row.spans.some(part => part.text.includes('跟随中'))))
+    }
+})
+
+test('任务不额外显示阶段与状态附文，运行及拍扁均保留错误和已保存日志提示', () => {
+    const { document, task } = fixture()
+    task.stage = '编译'
+    task.note = '运行中'
+    for (const state of ['running', 'done', 'failed'] as const) {
+        task.state = state
+        task.failure = state === 'failed' ? '实际错误原因' : undefined
+        for (const flatten of [false, true]) {
+            const lines = layoutDocument(document, 80, {}, 0, undefined, flatten).map(rowText)
+            const title = lines.findIndex(line => line.includes('CMake'))
+            assert.match(lines[title + (state === 'failed' ? 2 : 1)]!, /╭/)
+            assert.ok(!lines.some(line => line.includes('编译') || line.includes('运行中')))
+        }
+    }
+    task.failure = '实际错误原因'
+    task.logPath = 'failed.log'
+    const text = layoutDocument(document, 80).map(rowText).join('\n')
+    assert.match(text, /实际错误原因/)
+    assert.match(text, /已记录到 failed.log/)
+})
+
+test('资源等待作为所属任务的蓝色进展显示，并在等待结束后清除', () => {
+    const document = new SessionDocument()
+    const tasks = new TaskController(document, () => { })
+    const batch = tasks.group('SETUP')
+    const task = batch.task('配置 native · debug · cmake')
+    task.start()
+    task.waiting('等待其他 Arrange CLI 释放源码缓存')
+    let rows = layoutDocument(document, 100).map(rowText)
+    const taskRow = rows.findIndex(line => line.includes('配置 native · debug · cmake'))
+    assert.match(rows[taskRow + 1]!, /等待其他 Arrange CLI 释放源码缓存/)
+
+    task.waiting(undefined)
+    rows = layoutDocument(document, 100).map(rowText)
+    assert.ok(!rows.some(line => line.includes('等待其他 Arrange CLI')))
+})
+
+test('子控制台命中仅含边框矩形，外侧引导线和留白自然归历史', () => {
+    const { document, task } = fixture()
+    const rows = layoutDocument(document, 80)
+    const view = viewport(rows, 80, 30, 0)
+    const box = view.hitboxes[0]!
+    assert.equal(hitTest(view, box.x, box.y), task.id)
+    assert.equal(hitTest(view, box.x + box.width - 1, box.y + box.height - 1), task.id)
+    assert.equal(hitTest(view, box.x - 1, box.y), undefined)
+    assert.equal(hitTest(view, box.x + box.width, box.y), undefined)
+    assert.equal(hitTest(view, box.x, box.y - 1), undefined)
+    assert.equal(hitTest(view, box.x, box.y + box.height), undefined)
+    const clipped = viewport(rows, 80, 4, rows.length)
+    assert.ok(clipped.hitboxes[0]!.height < 8)
+    assert.equal(hitTest(clipped, 3, 0), task.id)
+})
+
+test('短内容贴底，极窄与极矮尺寸只裁剪画面不丢文档', () => {
+    const { document } = fixture()
+    const transcript = new TranscriptRenderer().render(document)
+    for (const columns of [1, 2, 3, 4, 12, 80]) for (const height of [1, 2, 8, 40]) {
+        const rows = layoutDocument(document, columns)
+        const view = viewport(rows, columns, height, Number.MAX_SAFE_INTEGER)
+        const frame = new ScreenRenderer().frame(view, false)
+        for (const line of frame.split('\n')) assert.ok(visibleWidth(line) <= Math.max(0, columns - 1))
+        assert.equal(new TranscriptRenderer().render(document), transcript)
+    }
+    const rows = layoutDocument(document, 80)
+    const view = viewport(rows, 80, 40, 0)
+    assert.equal(view.rows.length, 40)
+    assert.equal(rowText(view.rows[0]!), '')
+    assert.match(rowText(view.rows.at(-1)!), /╰─已完成/)
+})
+
+test('拍扁展开全部原行、按文本撑开框宽、保留侧边框且首尾各一空行', () => {
+    const { document, task } = fixture()
+    task.console!.lines.push('很长😀'.repeat(60))
+    const result = new TranscriptRenderer().render(document)
+    assert.ok(result.startsWith('\n┌'))
+    assert.ok(result.endsWith('\n\n'))
+    assert.ok(result.includes('很长😀'.repeat(60)))
+    assert.ok(!result.includes('跟随中'))
+    assert.ok(!result.includes('按 Enter'))
+    const lines = result.split('\n').filter(line => /│  [╭│╰]/.test(line))
+    assert.equal(new Set(lines.map(visibleWidth)).size, 1)
+    assert.ok(result.includes('输出 0'))
+    assert.ok(result.includes('输出 19'))
+})
+
+test('普通任务不创建控制台，完成后荧幕仍可滚动且新增输出在底部跟随', async () => {
+    const document = new SessionDocument()
+    const tasks = new TaskController(document, () => { })
+    const batch = tasks.group('任务')
+    const simple = batch.task('纯计算')
+    simple.start()
+    simple.progress(0.5)
+    assert.equal(layoutDocument(document, 80).filter(row => row.hitbox).length, 0)
+    await simple.finish('done')
+    const console = batch.task('工具')
+    console.start()
+    console.console(Array.from({ length: 20 }, (_, index) => 'line ' + index).join('\r\n'))
+    await console.finish('done')
+    batch.complete()
+    const frames: string[] = []
+    const controller = new ViewportController(document, { columns: 80, rows: 40, writeFrame: frame => { frames.push(stripAnsi(frame)) } })
+    controller.render(0)
+    const box = viewport(layoutDocument(document, 80), 80, 40, 0).hitboxes[0]!
+    controller.wheel(box.x, box.y, -1)
+    controller.render(0)
+    assert.ok(frames.at(-1)!.includes('line 11'))
+    assert.ok(!frames.at(-1)!.includes('跟随中'))
+    controller.wheel(box.x, box.y, 100)
+    controller.render(0)
+    assert.ok(frames.at(-1)!.includes('line 19'))
+    assert.ok(!frames.at(-1)!.includes('跟随中'))
+    assert.ok(frames.at(-1)!.includes('╰─已完成'))
+})
+
+test('选项多于屏高时围绕当前项呈现，默认选择与多选小圆标仍可见', () => {
+    const document = new SessionDocument()
+    const options = Array.from({ length: 100 }, (_, index) => '选项 ' + index)
+    for (const index of [0, 50, 99]) {
+        const rows = layoutDocument(document, 80, {}, 0, { kind: 'multiselect', question: '模块', options, index, selected: [index], value: '', cursor: 0, placeholder: '' }, false, 12)
+        assert.ok(rows.length <= 12)
+        assert.ok(rows.map(rowText).some(line => line.includes('› ● 选项 ' + index)))
+    }
+})

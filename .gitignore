@@ -1,0 +1,51 @@
+# Operating-system noise
+.DS_Store
+Thumbs.db
+
+# Editor / IDE local state
+.idea/
+.vscode/
+.proxyai/
+
+# Package-manager state
+node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local third-party dependency checkouts
+third_party/
+
+# Build outputs, generated artifacts and temporary references
+build/
+dist/
+cmake-build-*/
+tmp-refs/
+artifacts/
+
+# CMake accidental in-source configure outputs
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+install_manifest.txt
+
+# Logs, temp files, and local process markers
+*.log
+*.pid
+*.tmp
+*.bak
+*.orig
+*.tsbuildinfo
+
+# Test / smoke local outputs
+tests/smoke/*.output.json
+
+# Arrange local state
+.arrange/
+arrange.local.yaml
+# Demo 消费本机发行的 Framework 包，锁文件的 integrity 与 pnpm 自动写入的豁免因机器而异，各机自行生成
+demo/ui-src/pnpm-lock.yaml
+demo/ui-src/pnpm-workspace.yaml

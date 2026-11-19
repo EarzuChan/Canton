@@ -1,0 +1,23 @@
+{
+  "name": "arrangedemo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --configLoader runner",
+    "typecheck": "tsx scripts/check-types.ts",
+    "build": "tsx scripts/check-types.ts && vite build --configLoader runner"
+  },
+  "dependencies": {
+    "@arrange/framework": "0.12.3"
+  },
+  "devDependencies": {
+    "vite": "8.3.5",
+    "tsx": "4.22.3",
+    "typescript": "5.9.3",
+    "@types/node": "24.19.2"
+  },
+  "version": "0.1.0",
+  "engines": {
+    "node": ">=24"
+  }
+}

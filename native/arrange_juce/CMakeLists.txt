@@ -1,0 +1,73 @@
+add_library(arrange_juce STATIC
+  src/AppResolver.cpp
+  src/UiPackage.cpp
+  src/DevServerClient.cpp
+  src/LiveModuleClient.cpp
+  src/ErrorScreenModel.cpp
+  src/FramePlanner.cpp
+  src/VBlankSource.cpp
+  src/HeadlessArrangeEditor.cpp
+  src/ScenePipelineState.cpp
+)
+
+add_library(Arrange::juce ALIAS arrange_juce)
+target_include_directories(arrange_juce PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(arrange_juce PUBLIC Arrange::core Arrange::quickjs)
+
+if(NOT TARGET juce::juce_audio_processors)
+  message(FATAL_ERROR "arrange_juce requires JUCE target juce::juce_audio_processors. Use the Arrange root CMake project or provide JUCE before adding this module.")
+endif()
+
+target_sources(arrange_juce PRIVATE
+  src/ArrangeEditor.cpp
+  src/Interop.cpp
+  src/ArrangeRuntime.cpp
+  src/EditorChromeModel.cpp
+  src/RearrangeHost.cpp
+  src/DiagnosticsState.cpp
+  src/DiagnosticsModel.cpp
+  src/DiagnosticsToast.cpp
+  src/DiagnosticsScene.cpp
+  src/EditorDebugActions.cpp
+  src/EditorFrameClock.cpp
+  src/EditorSceneHost.cpp
+  src/FramePumpDriver.cpp
+  src/PainterResources.cpp
+  src/InteractionStateOwner.cpp
+  src/TextInputOwner.cpp
+  src/TextInputMutationSink.cpp
+  src/InputTextSession.cpp
+  src/TextInputLayoutModel.cpp
+  src/JuceDrawOpsPainter.cpp
+  src/ImageBlur.cpp
+  src/JuceTextServices.cpp
+  src/JuceFonts.cpp
+  src/PackageRuntimeSource.cpp
+  src/PassivePaintRenderer.cpp
+  src/JucePointerInputAdapter.cpp
+  src/JuceRepaintAdapter.cpp
+  src/RuntimePackageBinder.cpp
+  src/RuntimeSessionState.cpp
+  src/RuntimePackageLoader.cpp
+  src/ScriptEventDispatcher.cpp
+  src/JuceTextInputAdapter.cpp
+)
+target_compile_definitions(arrange_juce PUBLIC ARRANGE_JUCE_WITH_JUCE=1)
+target_link_libraries(arrange_juce PUBLIC
+  juce::juce_audio_processors
+  juce::juce_gui_basics
+  PRIVATE juce::juce_cryptography
+)
+
+if(APPLE)
+  target_sources(arrange_juce PRIVATE src/PlatformWheelInput_mac.mm src/JuceFonts_mac.mm)
+elseif(WIN32)
+  # 未测试！
+  target_compile_definitions(arrange_juce PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+  target_sources(arrange_juce PRIVATE src/PlatformWheelInput_windows.cpp src/WindowsPrecisionWheelSource.cpp)
+  target_link_libraries(arrange_juce PRIVATE comctl32 ole32 uuid dwrite)
+else()
+  target_sources(arrange_juce PRIVATE src/PlatformWheelInput_fallback.cpp)
+endif()

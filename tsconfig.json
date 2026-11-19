@@ -1,0 +1,37 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "types": [
+      "node",
+      "./types/arrange-globals.d.ts"
+    ],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@arrange/framework": ["packages/framework/src/index.ts"],
+      "@arrange/reactivity": ["packages/reactivity/src/index.ts"],
+      "@arrange/shared": ["packages/shared/src/index.ts"],
+      "@arrange/vite-plugin": ["packages/vite-plugin/src/index.ts"],
+      "@arrange/framework/foundation": ["packages/framework/src/foundation.ts"],
+      "@arrange/framework/ui": ["packages/framework/src/ui.ts"],
+      "@arrange/framework/animation": ["packages/framework/src/animation/index.ts"],
+      "@arrange/framework/interop": ["packages/framework/src/interop.ts"],
+      "@arrange/framework/internal": ["packages/framework/src/internal.ts"],
+      "@arrange/framework/vite": ["packages/framework/src/vite.ts"],
+      "@arrange/compiler": ["packages/compiler/src/sfa/index.ts"],
+      "@arrange/compiler/core": ["packages/compiler/src/core/index.ts"],
+      "@arrange/compiler/template": ["packages/compiler/src/template/index.ts"]
+    }
+  },
+  "include": [
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": [
+    "**/node_modules/**",
+    "build/**",
+    "artifacts/**"
+  ]
+}

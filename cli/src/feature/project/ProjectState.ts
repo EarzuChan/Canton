@@ -1,0 +1,116 @@
+import { z } from "zod"
+import { validateBundleId, validateDisplayName, validateIconPath } from "./ProjectMetadata.ts"
+import { isConcreteVersion } from '../../util/Semver.ts'
+
+export const arrangeSubprojectSchema = z.enum(["ui", "native"])
+export type ArrangeSubproject = z.infer<typeof arrangeSubprojectSchema>
+
+export const buildFlavorSchema = z.enum(["debug", "release"])
+export type BuildFlavor = z.infer<typeof buildFlavorSchema>
+
+export const nativeProductSchema = z.enum(["standalone", "vst3"])
+export type NativeProduct = z.infer<typeof nativeProductSchema>
+
+export const packageManagerNameSchema = z.enum(["pnpm", "npm"])
+export type PackageManagerName = z.infer<typeof packageManagerNameSchema>
+
+export const frameworkDefinitionSchema = z.object({
+    version: z.string().refine(isConcreteVersion, "需要具体版本号"),
+    nodeRegistryUrl: z.string().refine(value => !/[\r\n]/.test(value), "registry 不得包含换行").nullish(),
+    cmakeFetchContentUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "FetchContent URL 不得包含换行").nullish(),
+})
+export type FrameworkDefinition = z.infer<typeof frameworkDefinitionSchema>
+
+export const uiProjectDefinitionSchema = z.object({
+    directory: z.string().min(1),
+    packageManager: packageManagerNameSchema,
+    outputDirectory: z.string().min(1).optional(),
+    packageFormat: z.enum(['directory', 'zip']).optional(),
+    scriptFormat: z.enum(['bytecode', 'js']).optional(),
+})
+export type UiProjectDefinition = z.infer<typeof uiProjectDefinitionSchema>
+
+export const nativeProjectDefinitionSchema = z.object({
+    directory: z.string().min(1),
+    target: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.+-]*$/, "需要明确且合法的 CMake 插件根目标名称"),
+    pluginType: z.enum(["effect", "instrument"]).default("effect"),
+})
+export type NativeProjectDefinition = z.infer<typeof nativeProjectDefinitionSchema>
+
+export const artifactDefinitionSchema = z.object({
+    directory: z.string().min(1),
+    includeVersionDirectory: z.boolean(),
+})
+export type ArtifactDefinition = z.infer<typeof artifactDefinitionSchema>
+
+export const projectMetadataSchema = z.object({
+    name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, "名称须以字母开头，仅含字母、数字、下划线"),
+    displayName: validatedText(validateDisplayName).optional(),
+    bundleId: validatedText(validateBundleId).optional(),
+    icon: validatedText(validateIconPath).optional(),
+    version: z.string().refine(isConcreteVersion, "需要具体版本号"),
+    vendorName: z.string().min(1).refine(value => !/[\r\n]/.test(value), "厂商名称不得包含换行"),
+    vendorCode: z.string().regex(/^[A-Za-z0-9]{4}$/),
+    pluginCode: z.string().regex(/^[A-Za-z0-9]{4}$/),
+    products: z.array(nativeProductSchema).min(1),
+})
+export type ProjectMetadata = z.infer<typeof projectMetadataSchema>
+
+export const projectDefinitionSchema = z.object({
+    project: projectMetadataSchema,
+    framework: frameworkDefinitionSchema,
+    ui: uiProjectDefinitionSchema,
+    native: nativeProjectDefinitionSchema,
+    artifacts: artifactDefinitionSchema,
+    "managed-items": z.array(z.string()),
+})
+export type ProjectDefinition = z.infer<typeof projectDefinitionSchema>
+
+export const toolPathDefinitionSchema = z.object({
+    path: z.string().min(1),
+    version: z.string().optional(),
+})
+export type ToolPathDefinition = z.infer<typeof toolPathDefinitionSchema>
+
+export const localFrameworkDefinitionSchema = z.object({
+    nodeRegistryUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "registry 不得包含换行").optional(),
+    cmakeFetchContentUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "Framework 仓库地址不得包含换行").optional(),
+})
+export type LocalFrameworkDefinition = z.infer<typeof localFrameworkDefinitionSchema>
+
+export const localDefinitionSchema = z.object({
+    framework: localFrameworkDefinitionSchema.optional(),
+    node: toolPathDefinitionSchema.optional(),
+    packageManager: toolPathDefinitionSchema.optional(),
+    cmake: toolPathDefinitionSchema.optional(),
+    nativeCompiler: toolPathDefinitionSchema.optional(),
+    ninja: toolPathDefinitionSchema.optional(),
+    native: z.object({
+        generator: z.string().min(1),
+        architecture: z.enum(["x64", "arm64"]),
+        developerCommand: z.string().optional(),
+        developerDirectory: z.string().optional(),
+        buildRoot: z.string().min(1).optional(),
+        cmakeDefinitions: z.record(z.string(), z.string()).optional(),
+    }).optional(),
+})
+export type LocalDefinition = z.infer<typeof localDefinitionSchema>
+
+export const projectStateSchema = z.object({
+    rootDir: z.string(),
+    project: projectDefinitionSchema,
+    local: localDefinitionSchema.nullable(),
+})
+export type ProjectState = z.infer<typeof projectStateSchema>
+
+// 一个小工具方法
+export function isManagedItem(state: ProjectState, key: string): boolean {
+    return state.project["managed-items"].includes(key)
+}
+
+function validatedText(validate: (value: string) => string | undefined) {
+    return z.string().superRefine((value, context) => {
+        const message = validate(value)
+        if (message) context.addIssue({ code: "custom", message })
+    })
+}
