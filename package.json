@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    // 可能要重写也说不定
     "format": "node --import tsx scripts/format-code.ts --write",
     "format:check": "node --import tsx scripts/format-code.ts",
     "format:native": "node --import tsx scripts/format-native.ts --write",
