@@ -20,11 +20,11 @@ export class Wrapper {
         if (!/^(cluster|region):[\w.-]+$/.test(id)) throw new Error(`非法 Wrapper 标识：${id}`)
     }
 
-    get begin(): string { return `# arrange:begin ${this.id}` }
+    get begin(): string { return `# canton:begin ${this.id}` }
 
-    get end(): string { return `# arrange:end ${this.id}` }
+    get end(): string { return `# canton:end ${this.id}` }
 
-    get marker(): string { return `# arrange:insert ${this.id}` }
+    get marker(): string { return `# canton:insert ${this.id}` }
 
     make(inner: string): string {
         if (inner !== "" && !inner.endsWith("\n")) throw new Error(`${this.id} 的非空正文必须以换行结束`)
@@ -32,7 +32,7 @@ export class Wrapper {
     }
 
     locate(text: string): WrappedLocation {
-        const tags: Tag[] = [...text.matchAll(/^[\t ]*# arrange:(begin|end) ((?:cluster|region):[\w.-]+)[\t ]*(?:\r?\n|$)/gm)].map(m => ({ id: m[2], edge: m[1] as Tag["edge"], start: m.index, end: m.index + m[0].length }))
+        const tags: Tag[] = [...text.matchAll(/^[\t ]*# canton:(begin|end) ((?:cluster|region):[\w.-]+)[\t ]*(?:\r?\n|$)/gm)].map(m => ({ id: m[2], edge: m[1] as Tag["edge"], start: m.index, end: m.index + m[0].length }))
 
         const own = tags.filter(tag => tag.id === this.id)
         if (own.length === 0) return { kind: "missing" }
@@ -65,7 +65,7 @@ export class Wrapper {
     }
 
     locateMarker(text: string): TextSpan | null {
-        const lines = [...text.matchAll(/^[\t ]*# arrange:insert ((?:cluster|region):[\w.-]+)[\t ]*(?:\r?\n|$)/gm)].filter(m => m[1] === this.id)
+        const lines = [...text.matchAll(/^[\t ]*# canton:insert ((?:cluster|region):[\w.-]+)[\t ]*(?:\r?\n|$)/gm)].filter(m => m[1] === this.id)
 
         return lines.length === 1 ? { start: lines[0].index, end: lines[0].index + lines[0][0].length } : null
     }

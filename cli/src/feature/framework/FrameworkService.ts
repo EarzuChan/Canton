@@ -51,12 +51,13 @@ export class FrameworkService {
         const registryUrl = normalizeRegistryUrl(input.registryUrl)
         if (!this.sources) throw new Error('Framework 版本准入未装配源码验证服务')
         const sources = this.sources
+        // TODO(M8)：版本准入随新 CLI 重造。源码不再经 FetchContent 交给工程编译，但继续沿用公开 Git 与 npm 双源同版本：npm 上的 @canton/framework@<version> 必须对应公开仓库的 tag v<version>
         const repositoryUrl = input.repositoryUrl ?? defaultFetchUrl
         const spec = { repository: repositoryUrl, ref: `v${version}` }
         return sources.operations.run([{ kind: 'directory', path: sources.directory, mode: 'read' }], '验证 Framework 源码', async () => {
             const commit = await sources.git.resolveTag(repositoryUrl, spec.ref)
-            const source = await sources.cache.ensure(spec, 'Arrange', task, async source => {
-                if (source.commit !== commit) throw new Error(`Arrange ${spec.ref} 的源码 commit 与远端 tag 不一致；拒绝使用未确认的源码`)
+            const source = await sources.cache.ensure(spec, 'Canton', task, async source => {
+                if (source.commit !== commit) throw new Error(`Canton ${spec.ref} 的源码 commit 与远端 tag 不一致；拒绝使用未确认的源码`)
                 await assertFrameworkSource(source.directory, version)
             })
             return Object.freeze({ version, cliCompatibility: candidate.cliCompatibility, registryUrl, repositoryUrl, commit: source.commit })
@@ -90,8 +91,8 @@ export class FrameworkService {
         try { manifest = JSON.parse(snapshot.content) } catch (error) { throw new Error(`已安装的 Framework package.json 无法解析：${path}`, { cause: error }) }
         if (!isJsonObject(manifest) || typeof manifest.version !== "string" || !manifest.version) throw new Error(`已安装的 Framework package.json 缺少有效 version：${path}`)
         if (manifest.version !== state.project.framework.version) return false
-        const compatibility = readCliCompatibility(isJsonObject(manifest.arrange) ? manifest.arrange.cliCompatibility : null)
-        if (compatibility === null) throw new Error(`已安装的 Framework ${manifest.version} 未声明有效的 arrange.cliCompatibility：${path}`)
+        const compatibility = readCliCompatibility(isJsonObject(manifest.canton) ? manifest.canton.cliCompatibility : null)
+        if (compatibility === null) throw new Error(`已安装的 Framework ${manifest.version} 未声明有效的 canton.cliCompatibility：${path}`)
         assertFrameworkCompatible({ version: manifest.version, cliCompatibility: compatibility })
         return true
     }

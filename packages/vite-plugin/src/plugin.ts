@@ -1,37 +1,37 @@
-import { ARRANGE_DEFINES, PUBLIC_PLUGIN_NAME } from "./constraints.ts"
+import { CANTON_DEFINES, PUBLIC_PLUGIN_NAME } from "./constraints.ts"
 import { createModuleSnapshot, MODULE_SNAPSHOT_PATH } from './module-snapshot.ts'
 import type { ViteDevServer } from 'vite'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createArrangeTransformPlugin } from "./transform.ts"
-import { invalidateSfaTypeDependency } from "./sfa.ts"
+import { createCantonTransformPlugin } from "./transform.ts"
+import { invalidateCtaTypeDependency } from "./ctaTransform.ts"
 import { bindPublicResourceReload } from "./public-resource-hmr.ts"
 import { bytecodeBuildInput, uiPackageHooks } from './ui-package.ts'
-import type { ArrangeDevServer, ArrangeViteConfig, ArrangeVitePlugin, ArrangeVitePluginOptions, ConfigEnv, HotUpdateContext, HotUpdateModule } from "./types.ts"
+import type { CantonDevServer, CantonViteConfig, CantonVitePlugin, CantonVitePluginOptions, ConfigEnv, HotUpdateContext, HotUpdateModule } from "./types.ts"
 
-export default function arrange(options: ArrangeVitePluginOptions = {}): ArrangeVitePlugin {
-    const runtimeRoots = ['@arrange/framework/internal', '@arrange/reactivity', '@arrange/shared'].map(name => dirname(fileURLToPath(import.meta.resolve(name))).replaceAll('\\', '/') + '/')
+export default function canton(options: CantonVitePluginOptions = {}): CantonVitePlugin {
+    const runtimeRoots = ['@canton/framework/internal', '@canton/reactivity', '@canton/shared'].map(name => dirname(fileURLToPath(import.meta.resolve(name))).replaceAll('\\', '/') + '/')
     const entry = options.entry ?? "src/main.ts"
     let command: string | undefined = "serve"
-    const transformPlugin = createArrangeTransformPlugin({
+    const transformPlugin = createCantonTransformPlugin({
         name: PUBLIC_PLUGIN_NAME,
         hot: () => command === "serve",
     })
     return {
         ...transformPlugin,
         ...uiPackageHooks(),
-        config(_config: unknown = {}, env: ConfigEnv = {}): ArrangeViteConfig {
+        config(_config: unknown = {}, env: ConfigEnv = {}): CantonViteConfig {
             command = env.command
-            const extension = env.command === "build" && bytecodeBuildInput() ? "aex" : "js"
+            const extension = env.command === "build" && bytecodeBuildInput() ? "cbc" : "js"
             const nodeEnv = env.mode === "production" || env.command === "build" ? "production" : "development"
             return {
                 define: {
-                    ...ARRANGE_DEFINES,
+                    ...CANTON_DEFINES,
                     "process.env.NODE_ENV": JSON.stringify(nodeEnv),
                 },
                 server: { host: options.host ?? "127.0.0.1", port: options.port ?? 9178, strictPort: options.strictPort ?? true },
                 build: {
-                    ...(env.command === "build" && process.env.ARRANGE_UI_BUILD_STAGE ? { outDir: process.env.ARRANGE_UI_BUILD_STAGE } : {}),
+                    ...(env.command === "build" && process.env.CANTON_UI_BUILD_STAGE ? { outDir: process.env.CANTON_UI_BUILD_STAGE } : {}),
                     target: "es2022",
                     rollupOptions: {
                         input: entry,
@@ -56,11 +56,11 @@ export default function arrange(options: ArrangeVitePluginOptions = {}): Arrange
                 build: { ssr: false, emitAssets: true, minify: 'oxc', modulePreload: false, rolldownOptions: { platform: 'browser' } },
             }
         },
-        configureServer(server: ArrangeDevServer): void {
+        configureServer(server: CantonDevServer): void {
             bindPublicResourceReload(server as ViteDevServer)
             server.middlewares?.use(MODULE_SNAPSHOT_PATH, async (req, res) => {
                 try {
-                    const query = new URL((req as { url?: string }).url ?? '/', 'http://arrange').searchParams
+                    const query = new URL((req as { url?: string }).url ?? '/', 'http://canton').searchParams
                     const snapshot = await createModuleSnapshot(server as ViteDevServer, entry, query.getAll('url'))
                     res.statusCode = 200
                     res.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -73,7 +73,7 @@ export default function arrange(options: ArrangeVitePluginOptions = {}): Arrange
             })
         },
         handleHotUpdate(ctx: HotUpdateContext): HotUpdateModule[] {
-            invalidateSfaTypeDependency(ctx.file)
+            invalidateCtaTypeDependency(ctx.file)
             // runtime 自身维护实例、响应式和原生绑定身份；更新其实现必须重建整个 JS 世界
             if (runtimeRoots.some(root => ctx.file.replaceAll('\\', '/').startsWith(root))) {
                 ctx.server?.ws?.send?.({ type: 'full-reload', path: '*' })
@@ -84,4 +84,4 @@ export default function arrange(options: ArrangeVitePluginOptions = {}): Arrange
     }
 }
 
-export { arrange }
+export { canton }

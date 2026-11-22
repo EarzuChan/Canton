@@ -1,10 +1,6 @@
 import { dirname } from "node:path"
 import type { ProjectInitializer, InitializationPlan } from "../feature/project/ProjectInitializer.ts"
 import type { SyncService, SyncRunOptions } from "../feature/sync/SyncService.ts"
-import { requiresNativeBuildTools, type BuildService, type BuildOptions } from "../feature/building/BuildService.ts"
-import type { DevService, DevOptions } from "../feature/building/DevService.ts"
-import type { ProjectService } from "../feature/project/ProjectService.ts"
-import type { Packer, PackOptions } from "../feature/packing/Packer.ts"
 import type { Operations } from "../feature/operation/Operations.ts"
 import type { ProjectOperations, ProjectAccess } from "../feature/operation/ProjectOperations.ts"
 import type { Resource } from "../feature/operation/Resource.ts"
@@ -27,27 +23,6 @@ export class ApplicationOperations {
     sync(service: SyncService, options: SyncRunOptions, root: string) {
         const mode = options.scanOnly ? "read" : "write"
         const access: ProjectAccess = { configuration: mode, ui: options.nativeOnly ? undefined : mode, nativeSource: options.uiOnly ? undefined : options.setupOnly ? "read" : mode, native: options.configOnly || options.uiOnly ? undefined : mode, observe: options.scanOnly }
-        return this.projects.run(root, access, "arrange sync", () => service.run(options, root))
-    }
-
-    build(service: BuildService, root: string, options: BuildOptions) {
-        const packed = options.ui && options.native && options.pack !== false
-        return this.projects.run(root, state => {
-            const native = state ? requiresNativeBuildTools(state, options) : options.native
-            return { configuration: "read", ui: options.ui ? "write" : undefined, nativeSource: native ? "read" : undefined, native: native ? "write" : undefined, flavors: [options.flavor], artifacts: packed ? "write" : undefined }
-        }, "arrange build", () => service.build(root, options))
-    }
-
-    dev(service: DevService, root: string, options: DevOptions) {
-        const packaged = options.native && !(options.flavor === "debug" && options.ui)
-        return this.projects.run(root, { configuration: "read", ui: options.ui || packaged ? "write" : undefined, nativeSource: options.native ? "read" : undefined, native: options.native ? "write" : undefined, flavors: [options.flavor], artifacts: packaged ? "write" : undefined, liveServer: options.ui && (!options.native || options.flavor === "debug") }, "arrange dev", () => service.run(root, options))
-    }
-
-    pack(project: ProjectService, packer: Packer, root: string, options: Omit<PackOptions, "products"> & { products?: PackOptions["products"] }) {
-        return this.projects.run(root, { configuration: "read", ui: "read", nativeSource: "read", native: "read", flavors: [options.flavor], artifacts: "write" }, "arrange pack", async () => {
-            const state = await project.load(root)
-            const result = await packer.pack(state, { ...options, products: options.products ?? state.project.project.products })
-            return { state, result }
-        })
+        return this.projects.run(root, access, "canton sync", () => service.run(options, root))
     }
 }

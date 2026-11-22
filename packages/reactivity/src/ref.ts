@@ -1,34 +1,16 @@
-import { type IfAny, hasChanged, isArray, isFunction, isIntegerKey, isObject, isSymbol } from '@arrange/shared'
-import type { ComputedRef, WritableComputedRef } from './computed.ts'
+import { type IfAny, hasChanged, isArray, isFunction, isIntegerKey, isObject, isSymbol } from '@canton/shared'
 import { ReactiveFlags, TrackOpTypes, TriggerOpTypes } from './constants.ts'
 import { Dep, getDepFromReactive } from './dep.ts'
-import { type Builtin, type ShallowReactiveBrand, type Target, isProxy, isReactive, isReadonly, isShallow, toRaw, toReactive } from './reactive.ts'
+import { toReactive } from './reactive.ts'
+import { isProxy, isReactive, isReadonly, isRef, isShallow, toRaw } from './target.ts'
+import type { ComputedRef, MaybeRef, MaybeRefOrGetter, Ref, ShallowRef, ShallowUnwrapRef, Target, UnwrapRef, WritableComputedRef } from './types.ts'
+
 import { warn } from './warning.ts'
-
-declare const RefSymbol: unique symbol
-export declare const RawSymbol: unique symbol
-
-export interface Ref<T = any, S = T> {
-    get value(): T
-    set value(_: S)
-    [RefSymbol]: true
-}
-
-export function isRef<T>(r: Ref<T> | unknown): r is Ref<T>
-export function isRef(r: any): r is Ref {
-    return r ? r[ReactiveFlags.IS_REF] === true : false
-}
 
 export function ref<T>(value: T): [T] extends [Ref] ? IfAny<T, Ref<T>, T> : Ref<UnwrapRef<T>, UnwrapRef<T> | T>
 export function ref<T = any>(): Ref<T | undefined>
 export function ref(value?: unknown) {
     return createRef(value, false)
-}
-
-declare const ShallowRefMarker: unique symbol
-
-export type ShallowRef<T = any, S = T> = Ref<T, S> & {
-    [ShallowRefMarker]?: true
 }
 
 export function shallowRef<T>(value: T): Ref extends T
@@ -114,10 +96,6 @@ export function triggerRef(ref: Ref): void {
         }
     }
 }
-
-export type MaybeRef<T = any> = | T | Ref<T> | ShallowRef<T> | WritableComputedRef<T>
-
-export type MaybeRefOrGetter<T = any> = MaybeRef<T> | ComputedRef<T> | (() => T)
 
 export function unref<T>(ref: MaybeRef<T> | ComputedRef<T>): T {
     return isRef(ref) ? ref.value : ref
@@ -283,37 +261,3 @@ export function toRef(source: Record<PropertyKey, any> | MaybeRef, key?: string 
 function propertyToRef(source: Record<PropertyKey, any>, key: string | number | symbol, defaultValue?: unknown) {
     return new ObjectRefImpl(source, key, defaultValue) as any
 }
-
-export interface RefUnwrapBailTypes { }
-
-export type ShallowUnwrapRef<T> = T extends ShallowReactiveBrand ? T : { [K in keyof T]: DistributeRef<T[K]> }
-
-type DistributeRef<T> = T extends Ref<infer V, unknown> ? V : T
-
-export type UnwrapRef<T> = T extends ShallowRef<infer V, unknown> ? V : T extends Ref<infer V, unknown> ? UnwrapRefSimple<V> : UnwrapRefSimple<T>
-
-export type UnwrapRefSimple<T> = T extends
-    | Builtin
-    | Ref
-    | RefUnwrapBailTypes[keyof RefUnwrapBailTypes]
-    | { [RawSymbol]?: true }
-    ? T
-    : T extends ShallowReactiveBrand
-    ? T
-    : T extends Map<infer K, infer V>
-    ? Map<K, UnwrapRefSimple<V>> & UnwrapRef<Omit<T, keyof Map<any, any>>>
-    : T extends WeakMap<infer K, infer V>
-    ? WeakMap<K, UnwrapRefSimple<V>> &
-    UnwrapRef<Omit<T, keyof WeakMap<any, any>>>
-    : T extends Set<infer V>
-    ? Set<UnwrapRefSimple<V>> & UnwrapRef<Omit<T, keyof Set<any>>>
-    : T extends WeakSet<infer V>
-    ? WeakSet<UnwrapRefSimple<V>> &
-    UnwrapRef<Omit<T, keyof WeakSet<any>>>
-    : T extends ReadonlyArray<any>
-    ? { [K in keyof T]: UnwrapRefSimple<T[K]> }
-    : T extends object
-    ? {
-        [P in keyof T]: P extends symbol ? T[P] : UnwrapRef<T[P]>
-    }
-    : T

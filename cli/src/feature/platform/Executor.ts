@@ -11,7 +11,7 @@ export function quoteWindowsArgument(value: string): string {
 }
 
 export class Executor {
-    constructor(private readonly executionPlatform: NodeJS.Platform = process.platform, private readonly defaultSignal?: AbortSignal, private readonly host?: { start(spec: ProcessSpec): RunningProcess }, private readonly containment: ProcessContainment = createContainment(executionPlatform)) { }
+    constructor(private readonly defaultSignal?: AbortSignal, private readonly host?: { start(spec: ProcessSpec): RunningProcess }, private readonly containment: ProcessContainment = createContainment()) { }
 
     async run(spec: ProcessSpec): Promise<ProcessResult> {
         return this.start(spec).completion
@@ -21,16 +21,16 @@ export class Executor {
         const signal = spec.signal ?? this.defaultSignal
         if (signal?.aborted) return { pid: undefined, completion: Promise.resolve({ exitCode: 130, stdout: "", stderr: "", cancelled: true, timedOut: false }), stop: async () => "clean" }
         if (this.host) return this.host.start({ ...spec, signal })
-        const batch = this.executionPlatform === "win32" && /\.(cmd|bat)$/i.test(spec.command)
+        const batch = /\.(cmd|bat)$/i.test(spec.command)
         const command = batch ? process.env.ComSpec ?? "cmd.exe" : spec.command
         const args = batch ? ["/d", "/v:off", "/s", "/c", `"${[spec.command, ...spec.args].map(quoteWindowsArgument).join(" ")}"`] : [...spec.args]
         const env = { ...process.env }
         for (const [key, value] of Object.entries(spec.env ?? {})) {
-            if (this.executionPlatform === "win32") for (const existing of Object.keys(env)) if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
+            for (const existing of Object.keys(env)) if (existing.toLowerCase() === key.toLowerCase()) delete env[existing]
             env[key] = value
         }
         const startedAt = Date.now()
-        const child = spawn(command, args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: this.executionPlatform !== "win32", windowsHide: true, windowsVerbatimArguments: batch || spec.windowsVerbatimArguments === true })
+        const child = spawn(command, args, { cwd: spec.cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: batch || spec.windowsVerbatimArguments === true })
         let stdout = ""
         let stderr = ""
         let cancelled = false

@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { M, createDensity } from '@arrange/framework/ui'
-import type { ContextClickEvent } from '@arrange/framework/ui'
-import { ModifierLowering } from '../../packages/framework/src/modifierLowering.ts'
+import { M, createDensity } from '@canton/framework/ui'
+import type { ContextClickEvent } from '@canton/framework/ui'
+import { ModifierLowering } from '../../packages/framework/src/bridge/modifierLowering.ts'
 import { createDraggableState, createDraggable2DState, createInteractionState } from '../../packages/framework/src/index.ts'
 
 const fire = (callback: unknown, event: unknown) => (callback as (event: unknown) => void)(event)

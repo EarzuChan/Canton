@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
 import test, { type TestContext } from 'node:test'
 import { createServer, type ViteDevServer } from 'vite'
-import arrange from '../../packages/vite-plugin/src/plugin.ts'
+import canton from '../../packages/vite-plugin/src/plugin.ts'
 
 interface ServerMessage { type: string, path?: string }
 const delay = (milliseconds: number) => new Promise<void>(resolve => setTimeout(resolve, milliseconds))
@@ -25,16 +25,16 @@ async function connect(server: ViteDevServer, messages: ServerMessage[]): Promis
 }
 
 async function fixture(t: TestContext, publicDir: string | false = 'public') {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'arrange-public-resource-')))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'canton-public-resource-')))
     const assets = join(root, publicDir || 'public')
     await mkdir(assets, { recursive: true })
     await mkdir(join(root, 'src'))
     await writeFile(join(root, 'src/main.ts'), 'export const value = 1\n')
-    const png = await readFile(resolve('demo/ui-src/public/arrange-logo.png'))
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aKl8AAAAASUVORK5CYII=', 'base64')
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0h10v10z"/></svg>'
     await writeFile(join(assets, 'logo.png'), png)
     await writeFile(join(assets, 'play.svg'), svg)
-    const plugin = arrange({ port: 0, strictPort: false })
+    const plugin = canton({ port: 0, strictPort: false })
     const server = await createServer({ root, configFile: false, publicDir, plugins: [plugin], logLevel: 'silent', server: { host: '127.0.0.1', port: 0, strictPort: false } })
     const messages: ServerMessage[] = []
     const sockets: WebSocket[] = []

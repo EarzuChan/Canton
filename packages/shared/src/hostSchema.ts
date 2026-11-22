@@ -1,6 +1,6 @@
 import { camelize } from './general.ts'
 
-export function arrangeParameterName(value: unknown): string {
+export function cantonParameterName(value: unknown): string {
     if (typeof value !== 'string' || !value) throw new TypeError('参数名称必须是非空字符串')
 
     return camelize(value)
@@ -13,7 +13,7 @@ export function normalizeParameterObject(value: unknown): Record<string, unknown
     const result: Record<string, unknown> = Object.create(null)
     for (const original of Reflect.ownKeys(value)) {
         if (!Object.prototype.propertyIsEnumerable.call(value, original)) continue
-        const name = arrangeParameterName(original)
+        const name = cantonParameterName(original)
         if (Object.prototype.hasOwnProperty.call(result, name)) throw new TypeError(`重复参数：${name}`)
         result[name] = (value as Record<string, unknown>)[name === original ? name : original as string]
     }
@@ -21,4 +21,4 @@ export function normalizeParameterObject(value: unknown): Record<string, unknown
     return result
 }
 
-export const canonicalHostInput = arrangeParameterName
+export const canonicalHostInput = cantonParameterName

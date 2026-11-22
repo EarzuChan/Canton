@@ -21,7 +21,7 @@ export async function withNativeSession(body: () => Promise<void>, builds: reado
     const controller = new AbortController()
     const interrupt = () => controller.abort()
     const signal = AbortSignal.any([controller.signal, host.failureSignal])
-    const operations = new Operations(host, signal, message => console.log("[ArrangeNativeSession]", message))
+    const operations = new Operations(host, signal, message => console.log("[CantonNativeSession]", message))
     session = { host, operations, signal, builds: new Set(builds.map(path => resolve(path))) }
     process.on("SIGINT", interrupt)
     process.on("SIGTERM", interrupt)
@@ -46,13 +46,13 @@ export async function claimNativeVerification(build: string): Promise<void> {
 
 export function nativeSessionStart(spec: ProcessSpec) {
     const session = currentNativeSession()
-    return new Executor(process.platform, session.signal, session.host).start(spec)
+    return new Executor(session.signal, session.host).start(spec)
 }
 
 export async function nativeSessionRun(command: string, args: readonly string[] = [], env: NodeJS.ProcessEnv = process.env): Promise<void> {
     const session = currentNativeSession()
     const variables = Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
-    const result = await new Executor(process.platform, session.signal, session.host).run({ command, args, cwd: repoRoot, env: variables, retainOutput: false, onOutput: (chunk, stream) => (stream === "stdout" ? process.stdout : process.stderr).write(chunk) })
+    const result = await new Executor(session.signal, session.host).run({ command, args, cwd: repoRoot, env: variables, retainOutput: false, onOutput: (chunk, stream) => (stream === "stdout" ? process.stdout : process.stderr).write(chunk) })
     throwIfProcessCancelled(result)
     if (result.exitCode !== 0) throw new Error(`${command} 执行失败，退出码 ${result.exitCode}`)
 }

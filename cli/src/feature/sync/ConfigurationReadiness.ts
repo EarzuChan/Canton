@@ -10,6 +10,6 @@ export class ConfigurationReadiness {
         const report = await this.scanner.scan(state, scope)
         if (!report.fatal.length && !report.resolvable.length && !report.applicable.length) return
         this.interaction.report(report)
-        throw new Error("工程配置尚未同步，请运行 arrange sync --config")
+        throw new Error("工程配置尚未同步，请运行 canton sync --config")
     }
 }

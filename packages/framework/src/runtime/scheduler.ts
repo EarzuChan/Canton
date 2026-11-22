@@ -1,13 +1,20 @@
-import { type ArrangableInstance, getArrangableName } from './arrangable.ts'
-import { ErrorCodes, callWithErrorHandling } from './errorHandling.ts'
+import { type ErrorOwner, ErrorCodes, callWithErrorHandling } from './errorHandling.ts'
 
 export enum SchedulerJobFlags { DISPOSED = 1 }
 export type JobPhase = 'pre' | 'collect' | 'rearrange' | 'post'
 
+// 调度只需要任务所属实例的存活状态、名称与所属帧调度器
+export interface SchedulerOwner extends ErrorOwner {
+    readonly type: { readonly name?: string; readonly __name?: string }
+    readonly isUnmounted: boolean
+    readonly isDeactivated: boolean
+    readonly rearrangeSession: { readonly scheduler: FrameScheduler }
+}
+
 export interface SchedulerJob {
     (): void
     flags?: SchedulerJobFlags
-    i?: ArrangableInstance
+    i?: SchedulerOwner
     scheduler?: FrameScheduler
     phase?: JobPhase
 }
@@ -91,7 +98,7 @@ export class FrameScheduler {
             if (job.flags! & SchedulerJobFlags.DISPOSED || job.i?.isUnmounted || job.i?.isDeactivated) return
             const visits = (executions.get(job) ?? 0) + 1
             executions.set(job, visits)
-            if (++count > 10000 || visits > 100) throw new Error(`响应式任务反复失效，超过帧内执行上限：${job.i ? getArrangableName(job.i.type) ?? '匿名定义' : 'App'}`)
+            if (++count > 10000 || visits > 100) throw new Error(`响应式任务反复失效，超过帧内执行上限：${job.i ? job.i.type.name ?? job.i.type.__name ?? '匿名定义' : 'App'}`)
             this.counters.jobs++
             callWithErrorHandling(job, job.i, job.i ? ErrorCodes.ARRANGABLE_UPDATE : ErrorCodes.SCHEDULER)
         }

@@ -1,0 +1,376 @@
+import { computed } from "@canton/reactivity"
+import { nativeAnimationSpec, spring, type AnimationSpec } from "../animation/value.ts"
+import { IntrinsicSize, PaddingValues } from "../values/primitives.ts"
+import type { IntrinsicSizeValue } from "../values/primitives.ts"
+import type { Brush, PaddingValue, Shape } from "../values/primitives.ts"
+import { scrollStateInternal, type ScrollState } from "../layout/state.ts"
+import { painterSnapshot } from '../draw/painter.ts'
+import type { Painter } from '../draw/painter.ts'
+import type { NinePatch } from '../draw/draw.ts'
+import type { ContentScaleValue, ImageAlignment, TextAlignment } from '../values/primitives.ts'
+import type { TextStyleProp } from '../native/protocol.ts'
+import { focusRequesterIdentity } from './focus.ts'
+import type { FocusRequester, FocusProperties, FocusState } from './focus.ts'
+import { isCanvasController, type CanvasController, type CanvasInvalidation, type DrawCallback, type DrawContentCallback, type DrawCacheBuilder } from '../draw/draw.ts'
+import { dragStateInternal, interactionStateInternal } from './gesture.ts'
+import type { DraggableOptions, DraggableState, Draggable2DState, InteractionState, KeyModifiers } from './gesture.ts'
+export type { DrawSize, DrawRect, DrawPaint, DrawPathPaint, DrawTextOptions, DrawPainterOptions, DrawNativeOptions, NativePainterParams, NinePatch, StrokeCap, StrokeJoin, DrawTransform, DrawCallback, DrawContentCallback, DrawCacheResult, DrawCacheBuilder, CanvasInvalidation, CanvasController } from '../draw/draw.ts'
+export { DrawScope, Path, createCanvasController } from '../draw/draw.ts'
+
+export type ModifierValue = Readonly<Record<string, unknown>>
+
+export type ModifierElement = Readonly<{ type: string, key?: string, value: ModifierValue }>
+
+export type SizeRange = { minWidthDp?: number; minWidthPx?: number; maxWidthDp?: number; maxWidthPx?: number; minHeightDp?: number; minHeightPx?: number; maxHeightDp?: number; maxHeightPx?: number }
+export type BorderOptions = { widthDp: number; widthPx: number; brush: Brush | number; shape?: Shape }
+// 设计工具式阴影：radius 为模糊半径（高斯标准差为其一半），spread 为扩展，均为 DP/PX 长度；shape 默认矩形
+export type ShadowOptions = Readonly<{ shape?: Shape; radiusDp?: number; radiusPx?: number; spreadDp?: number; spreadPx?: number; offset?: Readonly<{ xDp?: number; xPx?: number; yDp?: number; yPx?: number }>; color: number }>
+export type ClickableOptions = { onClick: () => void; onDoubleClick?: () => void; enabled?: boolean; focusable?: boolean; interactionState?: InteractionState }
+export type EnabledOptions = { enabled?: boolean }
+export type FocusableOptions = { enabled?: boolean; interactionState?: InteractionState }
+export type HoverableOptions = { enabled?: boolean; onEnter?: () => void; onExit?: () => void; interactionState?: InteractionState }
+export type SemanticsRole = 'button' | 'slider' | 'switch' | 'checkbox' | 'textField' | 'image' | 'group'
+export type SemanticsOptions = { role?: SemanticsRole; label?: string; description?: string; valueText?: string; enabled?: boolean; increment?: () => void; decrement?: () => void }
+export type PointerIcon = 'default' | 'hand' | 'text' | 'crosshair' | 'resizeHorizontal' | 'resizeVertical' | 'grab' | 'grabbing' | 'none'
+export type { KeyModifiers }
+export type ContextClickEvent = Readonly<{ xDp: number; yDp: number; modifiers: KeyModifiers }>
+export type WheelEvent = Readonly<{ deltaXDp: number; deltaYDp: number; modifiers: KeyModifiers }>
+export type PointerInputEvent = Readonly<{ type: 'down' | 'move' | 'up' | 'cancel' | 'enter' | 'exit'; xDp: number; yDp: number; modifiers: KeyModifiers }>
+export type KeyEvent = Readonly<{ type: 'down' | 'up'; key: string; text: string; repeat: boolean; modifiers: KeyModifiers }>
+// tile 按固有尺寸平铺；ninePatch 以固有尺寸为单位切分，四角保持源尺寸。两者都忽略 contentScale 与 alignment
+export type PaintOptions = Readonly<{ contentScale?: ContentScaleValue; alignment?: ImageAlignment; alpha?: number; colorFilter?: Readonly<{ tint: number }>; sizeToIntrinsics?: boolean; tile?: boolean; ninePatch?: NinePatch }>
+export type TextOptions = Readonly<{ style?: TextStyleProp; singleLine?: boolean; minLines?: number; maxLines?: number; textAlign?: TextAlignment; overflow?: 'clip' | 'ellipsis' | 'visible' }>
+export type TextFieldOptions = Readonly<{ textStyle?: TextStyleProp; singleLine?: boolean; minLines?: number; maxLines?: number; placeholder?: string; enabled?: boolean; selectAllOnFocus?: boolean; onValueChange?: (value: string) => void; onSubmit?: (value: string) => void; onChange?: (value: string) => void; onBlur?: (value: string) => void }>
+export type GraphicsLayerOptions = {
+    translationX?: number
+    translationY?: number
+    scaleX?: number
+    scaleY?: number
+    rotationZ?: number
+    alpha?: number
+    clip?: boolean
+    transformOrigin?: "TopStart" | "TopCenter" | "TopEnd" | "CenterStart" | "Center" | "CenterEnd" | "BottomStart" | "BottomCenter" | "BottomEnd" | { x?: number; y?: number }
+}
+
+function shadowValue(args: ShadowOptions): ModifierValue {
+    return { shape: args.shape, radiusDp: args.radiusDp ?? 0, radiusPx: args.radiusPx ?? 0, spreadDp: args.spreadDp ?? 0, spreadPx: args.spreadPx ?? 0, offset: Object.freeze({ xDp: args.offset?.xDp ?? 0, xPx: args.offset?.xPx ?? 0, yDp: args.offset?.yDp ?? 0, yPx: args.offset?.yPx ?? 0 }), color: args.color }
+}
+
+export const modifierAllocationStats = { chains: 0, elementReferences: 0 }
+
+export class Modifier {
+    readonly elements: readonly ModifierElement[]
+
+    constructor(elements: readonly ModifierElement[] = []) {
+        modifierAllocationStats.chains++
+        modifierAllocationStats.elementReferences += elements.length
+        this.elements = Object.freeze([...elements])
+        Object.freeze(this)
+    }
+
+    then(other: Modifier | null | undefined): Modifier {
+        return new Modifier([...this.elements, ...toModifier(other).elements])
+    }
+
+    // 为最后一层提供协调身份；不是 native slot 的运行时 handle
+    keyed(key: string): Modifier {
+        if (!key || this.elements.length === 0) throw new TypeError("Modifier.keyed 需要非空 key 和至少一层元素")
+        const elements = [...this.elements]
+        elements[elements.length - 1] = Object.freeze({ ...elements[elements.length - 1], key })
+        return new Modifier(elements)
+    }
+
+    if(condition: boolean, ifModifier: Modifier, elseModifier: Modifier = M): Modifier {
+        return condition ? this.then(ifModifier) : this.then(elseModifier)
+    }
+
+    animateContentSize(animationSpec: AnimationSpec = spring(), args: { clip?: boolean } = {}): Modifier {
+        return this.#add("animateContentSize", { animationSpec: nativeAnimationSpec(animationSpec), clip: args.clip ?? true })
+    }
+
+    width(value: IntrinsicSizeValue): Modifier
+    width(dp: number, px: number): Modifier
+    width(dp: number | IntrinsicSizeValue, px?: number): Modifier {
+        if (typeof dp === 'string') return this.#intrinsic('intrinsicWidth', dp)
+        return this.#add("width", { valueDp: dp, valuePx: px })
+    }
+
+    height(value: IntrinsicSizeValue): Modifier
+    height(dp: number, px: number): Modifier
+    height(dp: number | IntrinsicSizeValue, px?: number): Modifier {
+        if (typeof dp === 'string') return this.#intrinsic('intrinsicHeight', dp)
+        return this.#add("height", { valueDp: dp, valuePx: px })
+    }
+
+    size(widthDp: number, widthPx: number, heightDp = widthDp, heightPx = widthPx): Modifier {
+        return this.#add("size", { widthDp, widthPx, heightDp, heightPx })
+    }
+
+    requiredWidth(dp: number, px: number): Modifier {
+        return this.#add("requiredWidth", { widthDp: dp, widthPx: px })
+    }
+
+    requiredHeight(dp: number, px: number): Modifier {
+        return this.#add("requiredHeight", { heightDp: dp, heightPx: px })
+    }
+
+    requiredSize(widthDp: number, widthPx: number, heightDp = widthDp, heightPx = widthPx): Modifier {
+        return this.#add("requiredSize", { widthDp, widthPx, heightDp, heightPx })
+    }
+
+    widthIn(args: { minDp?: number; minPx?: number; maxDp?: number; maxPx?: number }): Modifier {
+        return this.#add("widthIn", { ...args })
+    }
+
+    heightIn(args: { minDp?: number; minPx?: number; maxDp?: number; maxPx?: number }): Modifier {
+        return this.#add("heightIn", { ...args })
+    }
+
+    sizeIn(args: SizeRange): Modifier {
+        return this.#add("sizeIn", { ...args })
+    }
+
+    defaultMinSize(args: Pick<SizeRange, "minWidthDp" | "minWidthPx" | "minHeightDp" | "minHeightPx">): Modifier {
+        return this.#add("defaultMinSize", { ...args })
+    }
+
+    fillMaxWidth(fraction = 1): Modifier {
+        return this.#add("fillMaxWidth", checkedFraction(fraction))
+    }
+
+    fillMaxHeight(fraction = 1): Modifier {
+        return this.#add("fillMaxHeight", checkedFraction(fraction))
+    }
+
+    fillMaxSize(fraction = 1): Modifier {
+        return this.#add("fillMaxSize", checkedFraction(fraction))
+    }
+
+    padding(dp: number, px: number): Modifier
+    padding(value: PaddingValue): Modifier
+    padding(dpOrValue: number | PaddingValue, px?: number): Modifier {
+        const value = typeof dpOrValue === "number" ? { startDp: dpOrValue, startPx: px ?? 0, topDp: dpOrValue, topPx: px ?? 0, endDp: dpOrValue, endPx: px ?? 0, bottomDp: dpOrValue, bottomPx: px ?? 0 } : dpOrValue
+        return this.#add("padding", PaddingValues(value))
+    }
+
+    offset(args: { xDp?: number; xPx?: number; yDp?: number; yPx?: number }): Modifier {
+        return this.#add("offset", { xDp: args.xDp ?? 0, xPx: args.xPx ?? 0, yDp: args.yDp ?? 0, yPx: args.yPx ?? 0 })
+    }
+
+    absoluteOffset(args: { xDp?: number; xPx?: number; yDp?: number; yPx?: number }): Modifier {
+        return this.#add("absoluteOffset", { xDp: args.xDp ?? 0, xPx: args.xPx ?? 0, yDp: args.yDp ?? 0, yPx: args.yPx ?? 0 })
+    }
+
+    zIndex(value: number): Modifier {
+        return this.#add("zIndex", { value })
+    }
+
+    background(brush: Brush | number, shape?: Shape): Modifier {
+        return this.#add("background", { brush, shape })
+    }
+
+    paint(painter: Painter, options: PaintOptions = {}): Modifier {
+        return this.#add('paint', { painter: painterSnapshot(painter), ...options })
+    }
+
+    text(text: string, options: TextOptions = {}): Modifier {
+        return this.#add('text', { text, ...options, style: options.style && Object.freeze({ ...options.style }) })
+    }
+
+    textField(value: string, options: TextFieldOptions = {}): Modifier {
+        return this.#add('textField', { value, ...options, textStyle: options.textStyle && Object.freeze({ ...options.textStyle }) })
+    }
+
+    border(args: BorderOptions): Modifier
+    border(widthDp: number, widthPx: number, brush: Brush | number, shape?: Shape): Modifier
+    border(widthOrArgs: number | BorderOptions, widthPxOrBrush?: number | Brush, brushOrShape?: Brush | number | Shape, shape?: Shape): Modifier {
+        return typeof widthOrArgs === "object" ? this.#add("border", { ...widthOrArgs }) : this.#add("border", { widthDp: widthOrArgs, widthPx: widthPxOrBrush as number, brush: brushOrShape as Brush | number, shape })
+    }
+
+    clip(shape: Shape): Modifier {
+        return this.#add("clip", { shape })
+    }
+
+    // 外阴影画在后续内容之后方，不改变布局与命中
+    dropShadow(args: ShadowOptions): Modifier {
+        return this.#add("dropShadow", shadowValue(args))
+    }
+
+    // 内阴影画在本层形状内、后续内容之前
+    innerShadow(args: ShadowOptions): Modifier {
+        return this.#add("innerShadow", shadowValue(args))
+    }
+
+    alpha(value: number): Modifier {
+        return this.#add("alpha", { value })
+    }
+
+    graphicsLayer(args: GraphicsLayerOptions = {}): Modifier {
+        return this.#add("graphicsLayer", { ...args })
+    }
+
+    drawBehind(draw: DrawCallback): Modifier {
+        return this.#add('drawBehind', checkedDraw(draw))
+    }
+
+    drawWithContent(draw: DrawContentCallback): Modifier {
+        return this.#add('drawWithContent', checkedDraw(draw))
+    }
+
+    drawWithCache(draw: DrawCacheBuilder): Modifier {
+        return this.#add('drawWithCache', checkedDraw(draw))
+    }
+
+    clickable(arg: (() => void) | ClickableOptions): Modifier {
+        if (typeof arg === "function") return this.#add("clickable", { onClick: arg, enabled: true, focusable: true })
+        return this.#interaction(arg.interactionState, "clickable", { enabled: true, focusable: true, ...arg }, arg.focusable ?? true)
+    }
+
+    // 上下文点击：右键；clickable 只响应主键
+    onContextClick(callback: (event: ContextClickEvent) => void, args: EnabledOptions = {}): Modifier {
+        return this.#add('onContextClick', { callback, enabled: true, ...args })
+    }
+
+    hoverable(args: HoverableOptions = {}): Modifier {
+        return this.#interaction(args.interactionState, "hoverable", { enabled: true, ...args }, false)
+    }
+
+    // 从焦点受体向祖先冒泡，返回 true 表示已消费；未消费才走默认行为并交还宿主
+    onKeyEvent(callback: (event: KeyEvent) => boolean): Modifier {
+        return this.#add('onKeyEvent', { callback })
+    }
+
+    // 手势原语只交付位移；开始与停止回调随使用场景配置
+    draggable(state: DraggableState, args: DraggableOptions & { orientation?: 'horizontal' | 'vertical' } = {}): Modifier {
+        if (dragStateInternal(state).twoDimensional) throw new TypeError('draggable 需要 createDraggableState()，二维状态请用 draggable2D')
+        const orientation = args.orientation ?? 'vertical'
+        if (orientation !== 'horizontal' && orientation !== 'vertical') throw new TypeError("draggable.orientation 只能是 'horizontal' 或 'vertical'")
+        return this.#interaction(args.interactionState, 'draggable', { ...args, state, orientation }, false)
+    }
+
+    draggable2D(state: Draggable2DState, args: DraggableOptions = {}): Modifier {
+        if (!dragStateInternal(state).twoDimensional) throw new TypeError('draggable2D 需要 createDraggable2DState()')
+        return this.#interaction(args.interactionState, 'draggable', { ...args, state, orientation: 'both' }, false)
+    }
+
+    // 声明了 onWheel 的节点参与滚轮会话的起手候选；比同轴滚动容器更靠内时整个会话交给它
+    onWheel(callback: (event: WheelEvent) => void, args: { axis?: 'vertical' | 'horizontal' | 'both'; enabled?: boolean } = {}): Modifier {
+        return this.#add('onWheel', { callback, enabled: true, axis: 'both', ...args })
+    }
+
+    // 最小语义声明；增减动作供语义测试与后续无障碍桥接调用
+    semantics(args: SemanticsOptions): Modifier {
+        return this.#add('semantics', { ...args })
+    }
+
+    // 低级指针流：悬停时进入、移动、离开；主键按下后捕获，交付按下、移动、抬起或取消
+    pointerInput(handler: (event: PointerInputEvent) => void, args: EnabledOptions = {}): Modifier {
+        if (typeof handler !== 'function') throw new TypeError('pointerInput 需要函数')
+        return this.#add('pointerInput', { callback: handler, enabled: true, ...args })
+    }
+
+    pointerIcon(icon: PointerIcon): Modifier {
+        return this.#add('pointerIcon', { icon })
+    }
+
+    focusable(arg: boolean | FocusableOptions = true): Modifier {
+        if (typeof arg === "boolean") return this.#add("focusable", { enabled: arg })
+        return this.#interaction(arg.interactionState, "focusable", { enabled: true, ...arg }, true)
+    }
+
+    focusRequester(requester: FocusRequester): Modifier { return this.#add('focusRequester', { requester: focusRequesterIdentity(requester) }) }
+    focusGroup(): Modifier { return this.#add('focusGroup', {}) }
+    onFocusChanged(callback: (state: FocusState) => void): Modifier {
+        if (typeof callback !== 'function') throw new TypeError('onFocusChanged 需要函数')
+        return this.#add('onFocusChanged', { callback })
+    }
+    focusProperties(properties: FocusProperties): Modifier {
+        const value: Record<string, unknown> = { canFocus: properties.canFocus ?? true }
+        for (const direction of ['next', 'previous', 'up', 'down', 'left', 'right'] as const) if (properties[direction]) value[direction] = focusRequesterIdentity(properties[direction])
+        return this.#add('focusProperties', value)
+    }
+
+    // pointerInput 将来会在 native typed pointer event slot、派发、释放与测试齐全后再正规添加回来；当前故意不公开半支持 API
+    verticalScroll(state: ScrollState, args: EnabledOptions = {}): Modifier {
+        return this.#add("verticalScroll", { ...scrollPayload(state), enabled: true, ...args })
+    }
+
+    horizontalScroll(state: ScrollState, args: EnabledOptions = {}): Modifier {
+        return this.#add("horizontalScroll", { ...scrollPayload(state), enabled: true, ...args })
+    }
+
+    // 交互状态：指针部分由原生 interaction 槽回写，焦点部分附带同节点焦点观察
+    #interaction(state: InteractionState | undefined, type: string, value: Record<string, unknown>, focus: boolean): Modifier {
+        const { interactionState: _, ...rest } = value
+        if (!state) return this.#add(type, rest)
+        const internal = interactionStateInternal(state)
+        // 焦点观察须在受体之前声明
+        const observed = focus ? this.#add('onFocusChanged', { callback: internal.focus }) : this
+        return observed.#add(type, { ...rest, interaction: internal.pointer })
+    }
+
+    #add(type: string, value: Record<string, unknown>): Modifier {
+        return new Modifier([...this.elements, Object.freeze({ type, value: Object.freeze(value) })])
+    }
+
+    #intrinsic(type: string, value: IntrinsicSizeValue): Modifier {
+        if (value !== IntrinsicSize.Min && value !== IntrinsicSize.Max) throw new TypeError('固有尺寸必须是 IntrinsicSize.Min 或 Max')
+        return this.#add(type, { maximum: value === IntrinsicSize.Max })
+    }
+}
+
+function checkedFraction(fraction: number): Readonly<{ fraction: number }> {
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) throw new RangeError("fillMax* 的比例必须在 0..1 之间")
+    return { fraction }
+}
+
+// Canvas 降解为带失效方式的 drawBehind，与绘制修饰器共用实例、编码与缓存
+export function canvasModifier(base: Modifier, draw: DrawCallback, invalidation: CanvasInvalidation, controller: CanvasController | undefined): Modifier {
+    if (invalidation !== 'auto' && invalidation !== 'manual' && invalidation !== 'frame') throw new TypeError('Canvas invalidation 只能是 auto、manual 或 frame')
+    if (controller !== undefined && !isCanvasController(controller)) throw new TypeError('Canvas controller 需要 createCanvasController() 创建')
+    return new Modifier([...base.elements, Object.freeze({ type: 'drawBehind', value: Object.freeze({ ...checkedDraw(draw), invalidation, controller }) })])
+}
+
+function checkedDraw(draw: unknown): { draw: unknown } {
+    if (typeof draw !== 'function') throw new TypeError('绘制 Modifier 需要函数')
+    return { draw }
+}
+
+export function toModifier(value: Modifier | null | undefined): Modifier {
+    if (value == null) return M
+    if (value instanceof Modifier) return value
+    throw new TypeError("需要 Canton Modifier 对象")
+}
+
+export const M = new Modifier()
+
+// 原生只见当前值与稳定的回写入口，状态对象本身不进入描述
+function scrollPayload(state: ScrollState): { value: number; onScroll: (payload: never) => void } {
+    return { value: state.valuePx, onScroll: scrollStateInternal(state).native }
+}
+
+export const modifierStats = { parameterEvaluations: 0, chainsAssembled: 0, instanceWrites: 0, chainWrites: 0, equalWritesSkipped: 0 }
+
+const builtinMethods = new Map(Object.getOwnPropertyNames(Modifier.prototype).map(name => [name, (Modifier.prototype as unknown as Record<string, unknown>)[name]]))
+
+// 编译器仅拆分已经确认的固定原厂 Modifier 链
+export function cantonModifier(root: Modifier, segments: readonly (readonly [string, () => unknown[]])[], source?: string) {
+    const invoke = (receiver: Modifier, method: string, args: unknown[]) => {
+        const factory = (receiver as unknown as Record<string, (...args: unknown[]) => Modifier>)[method]
+        return factory.apply(receiver, args)
+    }
+    const valid = () => root === M && segments.every(([name]) => (Modifier.prototype as unknown as Record<string, unknown>)[name] === builtinMethods.get(name))
+    const parameters = segments.map(([method, read]) => computed(() => {
+        modifierStats.parameterEvaluations++
+        return invoke(root, method, read())
+    }))
+    return () => {
+        if (!valid()) {
+            let result = root
+            for (const [method, read] of segments) result = invoke(result, method, read())
+            return result
+        }
+        modifierStats.chainsAssembled++
+        return new Modifier(parameters.flatMap(parameter => parameter.value.elements))
+    }
+}

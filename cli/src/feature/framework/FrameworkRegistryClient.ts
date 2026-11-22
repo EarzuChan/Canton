@@ -18,7 +18,7 @@ interface FrameworkPackument {
 
 interface FrameworkManifest {
     readonly version?: unknown
-    readonly arrange?: {
+    readonly canton?: {
         readonly cliCompatibility?: unknown
     }
 }
@@ -55,8 +55,8 @@ export class FrameworkRegistryClient {
         const manifest: unknown = await response.json()
         if (!isJsonObject(manifest) || !isConcreteVersion(manifest.version)) throw new Error(`${frameworkPackageName}@${version} 的 registry metadata 缺少有效 version`)
         if (manifest.version !== version) throw new Error(`registry 返回的 Framework 版本与请求不符：请求 ${version}，实际 ${manifest.version}`)
-        const compatibility = readCliCompatibility(isJsonObject(manifest.arrange) ? manifest.arrange.cliCompatibility : undefined)
-        if (compatibility === null) throw new Error(`${frameworkPackageName}@${version} 未声明有效的 arrange.cliCompatibility`)
+        const compatibility = readCliCompatibility(isJsonObject(manifest.canton) ? manifest.canton.cliCompatibility : undefined)
+        if (compatibility === null) throw new Error(`${frameworkPackageName}@${version} 未声明有效的 canton.cliCompatibility`)
 
         return { version, cliCompatibility: compatibility, markedLatest: false, publishedAt: null }
     }
@@ -79,7 +79,7 @@ export class FrameworkRegistryClient {
             .filter((entry): entry is [string, FrameworkManifest & { readonly version: string }] => isJsonObject(entry[1]) && isConcreteVersion(entry[0]) && entry[1].version === entry[0])
             .map(([, manifest]): FrameworkVersionCandidate => ({
                 version: manifest.version,
-                cliCompatibility: readCliCompatibility(isJsonObject(manifest.arrange) ? manifest.arrange.cliCompatibility : undefined),
+                cliCompatibility: readCliCompatibility(isJsonObject(manifest.canton) ? manifest.canton.cliCompatibility : undefined),
                 markedLatest: false,
                 publishedAt: times[manifest.version] ?? null,
             }))

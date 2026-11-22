@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import ts from 'typescript'
-import { HotRuntime, type HotMessage } from '../../packages/framework/src/hotRuntime.ts'
-import { compileArrangeSfa } from '../../packages/vite-plugin/src/sfa.ts'
+import { HotRuntime, type HotMessage } from '../../packages/framework/src/app/hotRuntime.ts'
+import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { applyArrangableHmr } from '../../packages/framework/src/runtime/arrangableHmr.ts'
 import { createApp, type ArrangableDefinition } from '../../packages/framework/src/index.ts'
-import { requireSfaModule } from './sfaModules.ts'
+import { requireCtaModule } from './ctaModules.ts'
 import { recordingNative, mountFrame, advanceFrames } from './recordingNative.ts'
 import { createFakeNative } from '../helpers/fakeNative.ts'
 
@@ -68,10 +68,10 @@ test('模块执行失败保留旧 accept 边界，下一次修复能够接收更
     assert.equal(errors.length, 1)
 })
 
-test('HotRuntime 通过 Arrange Log 记录更新接收与应用', async () => {
-    const previous = globalThis.__ARRANGE_NATIVE__
+test('HotRuntime 通过 Canton Log 记录更新接收与应用', async () => {
+    const previous = globalThis.__CANTON_NATIVE__
     const events: unknown[][] = []
-    globalThis.__ARRANGE_NATIVE__ = createFakeNative({ log: (...args: unknown[]) => { events.push(args) } })
+    globalThis.__CANTON_NATIVE__ = createFakeNative({ log: (...args: unknown[]) => { events.push(args) } })
     try {
         const runtime = new HotRuntime({
             send() { }, reload() { }, report: error => { throw error },
@@ -79,7 +79,7 @@ test('HotRuntime 通过 Arrange Log 记录更新接收与应用', async () => {
         runtime.context('/logged').accept(module => assert.equal(module?.value, 2))
         await runtime.receive({ type: 'update', updates: [{ type: 'js-update', path: '/logged', acceptedPath: '/logged', timestamp: 1 }] })
     } finally {
-        globalThis.__ARRANGE_NATIVE__ = previous
+        globalThis.__CANTON_NATIVE__ = previous
     }
     assert.deepEqual(events.map(event => [event[0], event[1], event[2]]), [
         ['i', 'HotRuntime', ['收到热更新', '1', '个模块', '/logged']],
@@ -89,25 +89,25 @@ test('HotRuntime 通过 Arrange Log 记录更新接收与应用', async () => {
 
 function evaluate(source: string, id: string, state: object = {}): ArrangableDefinition {
     Object.defineProperty(state, '__esModule', { value: true, configurable: true })
-    const { code } = compileArrangeSfa(source, id, true)
+    const { code } = compileCantonCta(source, id, true)
     const output = ts.transpileModule(code.replaceAll('import.meta.hot', 'undefined'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
     const exports: { default?: ArrangableDefinition } = {}
-    new Function('require', 'exports', output)((name: string) => name === './state' ? state : requireSfaModule(name), exports)
+    new Function('require', 'exports', output)((name: string) => name === './state' ? state : requireCtaModule(name), exports)
     return exports.default!
 }
 
 test('子组件兼容热更新后，新挂载的父级按新导入定义预备的参数计划仍可调用沿用旧身份的子组件', () => {
-    const childId = 'hmr-plan-child.sfa'
+    const childId = 'hmr-plan-child.cta'
     const child = (text: string) => `<script>const { label } = defineProps<{ label: string }>()</script><template><Text :text="label + '${text}'" /></template>`
     evaluate(child('旧'), childId)
     const next = evaluate(child('新'), childId)
     applyArrangableHmr(childId, next)
-    const { code } = compileArrangeSfa(`<script>import Child from './Child.sfa'</script><template><Child label="甲" /></template>`, 'hmr-plan-parent.sfa', true)
+    const { code } = compileCantonCta(`<script>import Child from './Child.cta'</script><template><Child label="甲" /></template>`, 'hmr-plan-parent.cta', true)
     assert.match(code, /prepareParameters/)
     const output = ts.transpileModule(code.replaceAll('import.meta.hot', 'undefined'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
     const exports: { default?: ArrangableDefinition } = {}
     const childModule = Object.defineProperty({ default: next }, '__esModule', { value: true })
-    new Function('require', 'exports', output)((name: string) => name === './Child.sfa' ? childModule : requireSfaModule(name), exports)
+    new Function('require', 'exports', output)((name: string) => name === './Child.cta' ? childModule : requireCtaModule(name), exports)
     const native = recordingNative()
     const app = createApp(exports.default!)
     mountFrame(app, native.target)
@@ -115,12 +115,12 @@ test('子组件兼容热更新后，新挂载的父级按新导入定义预备�
     app.unmount()
 })
 
-test('SFA 不增加对 console API 的额外编译期拦截', () => {
-    assert.doesNotThrow(() => compileArrangeSfa('<script>console.log("未定义 API 会在运行时自然失败")</script>', 'console.sfa'))
+test('CTA 不增加对 console API 的额外编译期拦截', () => {
+    assert.doesNotThrow(() => compileCantonCta('<script>console.log("未定义 API 会在运行时自然失败")</script>', 'console.cta'))
 })
 
-test('SFA 模板更新保留 ref、setup 生命周期与 native 节点，新增模板引用可读取既有局部变量', () => {
-    const id = 'hmr-template.sfa'
+test('CTA 模板更新保留 ref、setup 生命周期与 native 节点，新增模板引用可读取既有局部变量', () => {
+    const id = 'hmr-template.cta'
     let count: any
     let setups = 0
     const state = {
@@ -129,7 +129,7 @@ test('SFA 模板更新保留 ref、setup 生命周期与 native 节点，新增�
             setups++
         }
     }
-    const script = `<script>import {ref} from '@arrange/framework'\nimport {capture} from './state'\nconst count = ref(1)\nconst extra = ref('!')\ncapture(count)</script>`
+    const script = `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\nconst extra = ref('!')\ncapture(count)</script>`
     const root = evaluate(script + '<template><Text :text="String(count)" /></template>', id, state)
     assert.equal(root.__hmrId, id)
     const native = recordingNative()
@@ -146,8 +146,8 @@ test('SFA 模板更新保留 ref、setup 生命周期与 native 节点，新增�
     app.unmount()
 })
 
-test('SFA 模板更新会刷新静态参数且复用 native 节点', () => {
-    const id = 'hmr-static-prop.sfa'
+test('CTA 模板更新会刷新静态参数且复用 native 节点', () => {
+    const id = 'hmr-static-prop.cta'
     const app = createApp(evaluate('<template><Text text="旧文案" /></template>', id))
     const native = recordingNative()
     mountFrame(app, native.target)
@@ -158,8 +158,8 @@ test('SFA 模板更新会刷新静态参数且复用 native 节点', () => {
     app.unmount()
 })
 
-test('SFA 接受依赖模块更新时重建 setup，模板更新仍复用原 setup', () => {
-    const id = 'hmr-dependency.sfa'
+test('CTA 接受依赖模块更新时重建 setup，模板更新仍复用原 setup', () => {
+    const id = 'hmr-dependency.cta'
     const source = `<script>import { read } from './state'\nconst text = read()</script><template><Text :text="text" /></template>`
     const app = createApp(evaluate(source, id, { read: () => '旧依赖' }))
     const native = recordingNative()
@@ -171,12 +171,12 @@ test('SFA 接受依赖模块更新时重建 setup，模板更新仍复用原 set
     app.unmount()
 })
 
-test('SFA 脚本更新迁移显式 ref，重建 computed 与 setup 清理，不兼容 props 则重置状态', () => {
-    const id = 'hmr-script.sfa'
+test('CTA 脚本更新迁移显式 ref，重建 computed 与 setup 清理，不兼容 props 则重置状态', () => {
+    const id = 'hmr-script.cta'
     let count: any
     let disposed = 0
     const state = { capture: (value: any) => { count = value }, dispose: () => { disposed++ } }
-    const source = (factor: number, props = '') => `<script>import {ref, computed, onScopeDispose} from '@arrange/framework'\nimport {capture, dispose} from './state'\n${props}\nconst count = ref(1)\nconst display = computed(() => count.value * ${factor})\ncapture(count)\nonScopeDispose(dispose)</script><template><Text :text="String(display)" /></template>`
+    const source = (factor: number, props = '') => `<script>import {ref, computed, onScopeDispose} from '@canton/framework'\nimport {capture, dispose} from './state'\n${props}\nconst count = ref(1)\nconst display = computed(() => count.value * ${factor})\ncapture(count)\nonScopeDispose(dispose)</script><template><Text :text="String(display)" /></template>`
     const app = createApp(evaluate(source(2), id, state))
     const native = recordingNative()
     mountFrame(app, native.target)
@@ -198,12 +198,12 @@ test('SFA 脚本更新迁移显式 ref，重建 computed 与 setup 清理，不�
     assert.equal(disposed, 3)
 })
 
-for (const failure of ['setup', 'native'] as const) test(`SFA ${failure} 失败回滚候选状态表，修复后重新初始化新增状态`, () => {
-    const id = `hmr-rollback-${failure}.sfa`
+for (const failure of ['setup', 'native'] as const) test(`CTA ${failure} 失败回滚候选状态表，修复后重新初始化新增状态`, () => {
+    const id = `hmr-rollback-${failure}.cta`
     let count: any
     const errors: unknown[] = []
     const state = { capture: (value: any) => { count = value } }
-    const source = (bonus?: number, broken = false) => `<script>import {ref} from '@arrange/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\n${bonus === undefined ? '' : `const bonus = ref(${bonus})`}\n${broken ? "throw new Error('候选 setup 失败')" : ''}</script><template><Text :text="String(count${bonus === undefined ? '' : ' + bonus'})" /></template>`
+    const source = (bonus?: number, broken = false) => `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\n${bonus === undefined ? '' : `const bonus = ref(${bonus})`}\n${broken ? "throw new Error('候选 setup 失败')" : ''}</script><template><Text :text="String(count${bonus === undefined ? '' : ' + bonus'})" /></template>`
     const app = createApp(evaluate(source(), id, state))
     app.config.errorHandler = error => { errors.push(error) }
     const native = recordingNative(false)

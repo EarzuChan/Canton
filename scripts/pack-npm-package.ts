@@ -1,7 +1,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { basename, resolve } from "node:path"
 import { npmSubprocessEnv, repoRoot, run } from "./common.ts"
-import { assertArrangeVersionContract, readArrangeVersionContract } from "./version-contract.ts"
+import { assertCantonVersionContract, readCantonVersionContract } from "./version-contract.ts"
 
 const artifactsDir = resolve(repoRoot, "artifacts/npm")
 const stagingRoot = resolve(artifactsDir, "staging")
@@ -18,12 +18,7 @@ function writeJson(path: string, value: Record<string, unknown>): void {
 }
 
 async function runNpm(args: readonly string[]): Promise<void> {
-    const env = npmSubprocessEnv()
-    if (process.platform === "win32") {
-        await run("cmd.exe", ["/d", "/c", "npm.cmd", ...args], { env })
-        return
-    }
-    await run("npm", args, { env })
+    await run("cmd.exe", ["/d", "/c", "npm.cmd", ...args], { env: npmSubprocessEnv() })
 }
 
 function copyIfExists(source: string, target: string): void {
@@ -34,9 +29,9 @@ function copyIfExists(source: string, target: string): void {
     })
 }
 
-function copyPackageSource(sourceDir: string, targetDir: string, options: { includeBin?: boolean } = {}): void {
+function copyPackageSource(sourceDir: string, targetDir: string): void {
     mkdirSync(targetDir, { recursive: true })
-    const items = ["src", ...(options.includeBin ? ["bin"] : []), "README.md", "LICENSE", "UPSTREAM.md"]
+    const items = ["src", "README.md", "LICENSE", "UPSTREAM.md"]
     for (const item of items) copyIfExists(resolve(sourceDir, item), resolve(targetDir, item))
     writeJson(resolve(targetDir, "package.json"), readJson(resolve(sourceDir, "package.json")))
 }
@@ -48,7 +43,7 @@ function packageStageName(sourceDir: string): string {
 }
 
 function packageScopeName(sourceDir: string): string {
-    return basename(sourceDir).replace(/^arrange-/, "")
+    return basename(sourceDir).replace(/^canton-/, "")
 }
 
 function assertStagedTreeClean(stageDir: string): void {
@@ -68,8 +63,8 @@ function assertStagedTreeClean(stageDir: string): void {
     }
 }
 
-assertArrangeVersionContract()
-const contract = readArrangeVersionContract()
+assertCantonVersionContract()
+const contract = readCantonVersionContract()
 
 rmSync(stagingRoot, { recursive: true, force: true })
 mkdirSync(artifactsDir, { recursive: true })
@@ -78,17 +73,19 @@ mkdirSync(stagingRoot, { recursive: true })
 const stageDir = resolve(stagingRoot, packageStageName(frameworkSourceDir))
 copyPackageSource(frameworkSourceDir, stageDir)
 
-const arrangeScopeDir = resolve(stageDir, "node_modules/@arrange")
-mkdirSync(arrangeScopeDir, { recursive: true })
+const cantonScopeDir = resolve(stageDir, "node_modules/@canton")
+mkdirSync(cantonScopeDir, { recursive: true })
 for (const bundleDir of frameworkBundleDirs) {
-    copyPackageSource(bundleDir, resolve(arrangeScopeDir, packageScopeName(bundleDir)))
+    copyPackageSource(bundleDir, resolve(cantonScopeDir, packageScopeName(bundleDir)))
 }
 
 assertStagedTreeClean(stageDir)
 await runNpm(["pack", stageDir, "--pack-destination", artifactsDir])
 
-const cliStageDir = resolve(stagingRoot, packageStageName(cliSourceDir))
-await runNpm(["pack", cliSourceDir, "--pack-destination", artifactsDir])
+console.log('[CantonPackagePack]', `packed @canton/framework ${contract.frameworkVersion} into ${artifactsDir}`)
 
-const cliManifest = readJson(resolve(cliSourceDir, "package.json"))
-console.log('[ArrangePackagePack]', `packed @arrange/framework ${contract.frameworkVersion} and ${cliManifest.name} ${cliManifest.version} into ${artifactsDir}`)
+if (!process.argv.includes('--framework-only')) {
+    await runNpm(["pack", cliSourceDir, "--pack-destination", artifactsDir])
+    const cliManifest = readJson(resolve(cliSourceDir, "package.json"))
+    console.log('[CantonPackagePack]', `packed ${cliManifest.name} ${cliManifest.version} into ${artifactsDir}`)
+}

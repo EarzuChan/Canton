@@ -1,0 +1,2 @@
+export const CANTON_PACKAGE_VERSION = "0.1.0"
+export const CANTON_PROTOCOL_VERSION = 1

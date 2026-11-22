@@ -1,13 +1,20 @@
 import { ReactiveFlags } from './constants.ts'
-import type { ReactiveEffect } from './effect.ts'
+
 import { warn } from './warning.ts'
+
+// 作用域只需批量暂停、恢复与停止其登记的副作用
+interface ScopedEffect {
+    pause(): void
+    resume(): void
+    stop(): void
+}
 
 export let activeEffectScope: EffectScope | undefined
 
 export class EffectScope {
     private _active = true
     private _on = 0
-    effects: ReactiveEffect[] = []
+    effects: ScopedEffect[] = []
     cleanups: (() => void)[] = []
 
     readonly pauseCallbacks = new Set<() => void>()

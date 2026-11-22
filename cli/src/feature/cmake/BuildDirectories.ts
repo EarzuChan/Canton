@@ -1,7 +1,6 @@
 import { access, mkdir } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import type { BuildFlavor, ProjectState } from "../project/ProjectState.ts"
-import type { PlatformService } from "../platform/PlatformService.ts"
 import { UserDirectories } from "../user/UserDirectories.ts"
 import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
 import { buildOwnerFileName } from "../../CliMetadata.ts"
@@ -13,26 +12,26 @@ import { readCurrentRecord } from "../../util/RecordInspection.ts"
 export class BuildDirectories {
     private readonly claims = new Map<string, Promise<void>>()
 
-    constructor(private readonly platform: PlatformService["name"], private readonly user: UserDirectories, private readonly signal = new AbortController().signal) { }
+    constructor(private readonly user: UserDirectories, private readonly signal = new AbortController().signal) { }
 
     anchor(state: ProjectState): string {
         return state.local?.native?.buildRoot ? resolve(state.rootDir, state.local.native.buildRoot) : this.user.builds
     }
 
     private identity(root: string): string {
-        return nativeBuildRootIdentity(root, this.platform)
+        return nativeBuildRootIdentity(root)
     }
 
     private base(state: ProjectState): string {
-        const digest = nativeBuildRootKey(state.rootDir, this.platform)
+        const digest = nativeBuildRootKey(state.rootDir)
         return join(this.anchor(state), digest)
     }
 
     directory(state: ProjectState, flavor: BuildFlavor): string {
         const arch = state.local?.native?.architecture
-        if (!arch) throw new Error("本机 native 工具环境尚未准备，请先运行 arrange sync --setup")
+        if (!arch) throw new Error("本机 native 工具环境尚未准备，请先运行 canton sync --setup")
         const configuration = `${arch === "arm64" ? "a" : "x"}${flavor === "debug" ? "d" : "r"}`
-        return join(this.base(state), this.platform === "darwin" ? `mac-${configuration}` : configuration)
+        return join(this.base(state), configuration)
     }
 
     async assert(state: ProjectState, flavor: BuildFlavor): Promise<void> {
@@ -69,7 +68,7 @@ export class BuildDirectories {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error(`构建目录所有权记录不可读：${ownerPath}`, { cause: error })
             }
             if (existing) {
-                if (typeof existing.rootDir !== "string" || this.identity(existing.rootDir) !== this.identity(rootDir)) throw new Error(`构建目录已被另一个工程占用：${base}。请在 arrange.local.yaml 的 native.buildRoot 指定其它位置`)
+                if (typeof existing.rootDir !== "string" || this.identity(existing.rootDir) !== this.identity(rootDir)) throw new Error(`构建目录已被另一个工程占用：${base}。请在 canton.local.yaml 的 native.buildRoot 指定其它位置`)
                 return
             }
             await writeAtomicText(ownerPath, `${JSON.stringify({ rootDir }, null, 4)}\n`, signal)

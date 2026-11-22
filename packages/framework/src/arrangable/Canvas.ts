@@ -1,7 +1,7 @@
 import { defineArrangable } from '../runtime/index.ts'
 import type { ArrangableProps, PropType } from '../runtime/index.ts'
-import { isCanvasController, type CanvasController, type CanvasInvalidation, type DrawCallback } from '../draw.ts'
-import { M, Modifier, canvasModifier } from '../modifier.ts'
+import { isCanvasController, type CanvasController, type CanvasInvalidation, type DrawCallback } from '../draw/draw.ts'
+import { M, Modifier, canvasModifier } from '../modifier/modifier.ts'
 import { Box } from './LayoutingArrangables.ts'
 
 // Canvas：一个绘制节点，onDraw 与绘制修饰器共用 DrawScope；尺寸由 modifier 决定，没有固有尺寸

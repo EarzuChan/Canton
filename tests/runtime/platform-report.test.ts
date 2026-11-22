@@ -13,7 +13,7 @@ delete runnerEnv.NODE_TEST_CONTEXT
 const reporter = pathToFileURL(resolve("scripts/platform-test-reporter.ts")).href
 
 test("平台验收报告分别记录通过和对方平台不适用，不把排除项计为通过", async t => {
-    const root = await mkdtemp(join(tmpdir(), "arrange-report-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-report-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     const fixture = join(root, "report.test.mjs")
     await writeFile(fixture, 'import test from "node:test"\ntest("common", () => {})\ntest("other host", {skip: "不适用：仅对方平台实机"}, () => {})\n')
@@ -29,7 +29,7 @@ test("平台验收报告分别记录通过和对方平台不适用，不把排�
 })
 
 test("本机未验证项让正式验收失败，不能通过跳过工具前提得到通过结论", async t => {
-    const root = await mkdtemp(join(tmpdir(), "arrange-report-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-report-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     const fixture = join(root, "report.test.mjs")
     await writeFile(fixture, 'import test from "node:test"\ntest("native prerequisites", {skip: "缺少工具链"}, () => {})\n')

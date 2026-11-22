@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { npmSubprocessEnv, repoRoot, run } from "./common.ts"
-import { assertArrangeVersionContract, readArrangeVersionContract } from "./version-contract.ts"
+import { assertCantonVersionContract, readCantonVersionContract } from "./version-contract.ts"
 
 // 本机发包：把当前提交的 Framework 发到本机 Verdaccio，并在本仓库打对应的本地轻量 tag
 // 只服务本机验证；公共 registry 发布与 tag 推送由主人决定，本脚本不做
@@ -32,21 +32,20 @@ async function assertRegistryReachable(): Promise<void> {
     }
 }
 
-assertArrangeVersionContract()
-const { frameworkVersion } = readArrangeVersionContract()
+assertCantonVersionContract()
+const { frameworkVersion } = readCantonVersionContract()
 const tag = `v${frameworkVersion}`
 if (publicRegistryHosts.has(new URL(registry).hostname)) throw new Error(`${registry} 是公共 registry；本机发包只发往本机 registry`)
 if (git(["status", "--porcelain"])) throw new Error("工作区有未提交改动；本地 tag 必须对应已提交的源码，请先提交")
-if (git(["tag", "--list", tag])) throw new Error(`本地已存在 tag ${tag}；请在 arrange.version.json 递增版本并执行 pnpm sync:version 后提交`)
+if (git(["tag", "--list", tag])) throw new Error(`本地已存在 tag ${tag}；请在 canton.version.json 递增版本并执行 pnpm sync:version 后提交`)
 await assertRegistryReachable()
 
-await run(process.execPath, ["--import", "tsx", "scripts/pack-npm-package.ts"])
-const tarball = resolve(repoRoot, "artifacts/npm", `arrange-framework-${frameworkVersion}.tgz`)
+await run(process.execPath, ["--import", "tsx", "scripts/pack-npm-package.ts", "--framework-only"])
+const tarball = resolve(repoRoot, "artifacts/npm", `canton-framework-${frameworkVersion}.tgz`)
 if (!existsSync(tarball)) throw new Error(`未找到打包产物：${tarball}`)
 const npmArgs = ["publish", tarball, "--registry", registry, "--tag", "local"]
-if (process.platform === "win32") await run("cmd.exe", ["/d", "/c", "npm.cmd", ...npmArgs], { env: npmSubprocessEnv() })
-else await run("npm", npmArgs, { env: npmSubprocessEnv() })
+await run("cmd.exe", ["/d", "/c", "npm.cmd", ...npmArgs], { env: npmSubprocessEnv() })
 
 // 轻量 tag 不会被 git push --follow-tags 带到远端
 git(["tag", tag])
-console.log("[ArrangeLocalPublish]", `已发布 @arrange/framework@${frameworkVersion} 到 ${registry}，并创建本地 tag ${tag}`)
+console.log("[CantonLocalPublish]", `已发布 @canton/framework@${frameworkVersion} 到 ${registry}，并创建本地 tag ${tag}`)

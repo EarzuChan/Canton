@@ -88,11 +88,11 @@ export function testTask(title = "test"): RecordedTask {
 }
 
 export function stateFor(rootDir: string): ProjectState {
-    return { rootDir, project: { project: { name: "TestPlugin", version: "1.0.0", vendorName: "Test Vendor", vendorCode: "Test", pluginCode: "TstP", products: ["standalone", "vst3"] }, framework: { version: "0.0.0-m.2.2" }, ui: { directory: "ui", packageManager: "npm" }, native: { directory: "native", target: "TestPlugin", pluginType: "effect" }, artifacts: { directory: "artifacts", includeVersionDirectory: true }, "managed-items": configRegistry.items.map(item => item.id) }, local: null }
+    return { rootDir, project: { project: { name: "TestPlugin", version: "1.0.0" }, framework: { version: "0.0.0-m.2.2" }, ui: { directory: "ui", packageManager: "npm" }, native: { directory: "native", target: "TestPlugin" }, artifacts: { directory: "artifacts", includeVersionDirectory: true }, "managed-items": configRegistry.items.map(item => item.id) }, local: null }
 }
 
 export async function fixture(t: Pick<TestContext, "after">, generate = true): Promise<ProjectState> {
-    const root = await mkdtemp(join(tmpdir(), "arrange-config-test-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-config-test-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     const state = stateFor(root)
     await new ProjectStateStore(new FileTransaction()).save(state)

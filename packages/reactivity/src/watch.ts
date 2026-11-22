@@ -1,10 +1,10 @@
-import { EMPTY_OBJ, NOOP, hasChanged, isArray, isFunction, isMap, isObject, isPlainObject, isSet, remove } from '@arrange/shared'
-import type { ComputedRef } from './computed.ts'
+import { EMPTY_OBJ, NOOP, hasChanged, isArray, isFunction, isMap, isObject, isPlainObject, isSet, remove } from '@canton/shared'
 import { ReactiveFlags } from './constants.ts'
-import { type DebuggerOptions, EffectFlags, type EffectScheduler, ReactiveEffect, pauseTracking, resetTracking } from './effect.ts'
+import { type EffectScheduler, ReactiveEffect, pauseTracking, resetTracking } from './effect.ts'
+import { type DebuggerOptions, EffectFlags } from './system.ts'
 import { getCurrentScope } from './effectScope.ts'
-import { isReactive, isShallow } from './reactive.ts'
-import { type Ref, isRef } from './ref.ts'
+import { isReactive, isRef, isShallow } from './target.ts'
+import type { ComputedRef, Ref } from './types.ts'
 import { warn } from './warning.ts'
 
 export enum WatchErrorCodes {

@@ -5,7 +5,6 @@ import { join, resolve } from "node:path"
 import { test, type TestContext } from "node:test"
 import { configRegistry } from "../src/feature/config/ConfigRegistry.ts"
 import { defaultProjectDirectories, cliCompatibility } from "../src/CliMetadata.ts"
-import { cmakeListsFile, pluginVersionRegion } from "../src/feature/cmake/CmakeStuffs.ts"
 import { npmrcFile, packageJsonFile, registryCluster, registryRegion } from "../src/feature/nodejs/NodeJsStuffs.ts"
 import { FrameworkRegistryClient } from "../src/feature/framework/FrameworkRegistryClient.ts"
 import { FrameworkService } from "../src/feature/framework/FrameworkService.ts"
@@ -22,7 +21,6 @@ import { detectJsonLayout, detectLineEnding, normalizeLineEndings, serializeJson
 import { fixture, TestSyncWizard, write, quietTerminal } from "./fixture.ts"
 
 const scanner = new ConfigScanner(configRegistry)
-const pluginVersion = configRegistry.items.find(item => item.id === pluginVersionRegion.managedItemId)!
 
 class TestRegistryClient extends FrameworkRegistryClient {
     override async fetchCandidateByVersion(version: string) {
@@ -75,26 +73,26 @@ test("CRLF 文件里同内容的托管区块是 Idle，不制造 Applicable", as
 
 test("CRLF 文件更新区块后仍是纯 CRLF，不混入孤立 LF", async t => {
     const state = await fixture(t)
-    state.project["managed-items"] = [pluginVersion.id]
-    const path = cmakeListsFile.path(state)
-    await write(path, toLineEnding(cmakeListsFile.make(state), "\r\n"))
-    state.project.project.version = "2.3.4"
-    const report = await scanner.scan(state, "Native")
+    state.project["managed-items"] = [registryRegion.managedItemId]
+    const path = npmrcFile.path(state)
+    await write(path, toLineEnding(npmrcFile.make(state), "\r\n"))
+    state.project.framework.nodeRegistryUrl = "https://registry.example.test/"
+    const report = await scanner.scan(state, "UI")
     assert.equal(report.applicable.length, 1)
     await new ConfigApplier(new ConfigWriter()).apply(state.rootDir, report)
     const after = await readFile(path, "utf8")
-    assert.match(after, /VERSION "2\.3\.4"/)
+    assert.match(after, /registry\.example\.test/)
     assert.equal(loneLf(after), 0)
     assert.equal(loneCr(after), 0)
-    assert.equal((await scanner.scan(state, "Native")).applicable.length, 0)
+    assert.equal((await scanner.scan(state, "UI")).applicable.length, 0)
 })
 
 test("LF 文件更新区块后仍是纯 LF", async t => {
     const state = await fixture(t)
-    state.project["managed-items"] = [pluginVersion.id]
-    const path = cmakeListsFile.path(state)
-    state.project.project.version = "2.3.4"
-    const report = await scanner.scan(state, "Native")
+    state.project["managed-items"] = [registryRegion.managedItemId]
+    const path = npmrcFile.path(state)
+    state.project.framework.nodeRegistryUrl = "https://registry.example.test/"
+    const report = await scanner.scan(state, "UI")
     await new ConfigApplier(new ConfigWriter()).apply(state.rootDir, report)
     assert.equal((await readFile(path, "utf8")).includes("\r"), false)
 })
@@ -124,18 +122,18 @@ test("缺失的 JSON 字段补入时保留制表符缩进与 CRLF", async t => {
     assert.equal((await run(wizard).run({ configOnly: true }, state.rootDir)).status, "completed")
     const after = await readFile(path, "utf8")
     assert.equal(loneLf(after), 0)
-    assert.match(after, /\r\n\t"dependencies": \{\r\n\t\t"@arrange\/framework"/)
+    assert.match(after, /\r\n\t"dependencies": \{\r\n\t\t"@canton\/framework"/)
     assert.deepEqual(Object.keys(JSON.parse(after)), ["name", "other", "dependencies"])
 })
 
 async function temporaryRoot(t: TestContext): Promise<string> {
-    const root = await mkdtemp(resolve(tmpdir(), "arrange-gitattributes-"))
+    const root = await mkdtemp(resolve(tmpdir(), "canton-gitattributes-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     return root
 }
 
 function createRequest(rootDir: string): CreateProjectRequest {
-    return { rootDir, projectName: "StarterPlugin", projectVersion: "1.2.3", frameworkVersion: "0.0.0-m.2.2", vendorName: "Test Company", vendorCode: "Test", pluginCode: "StrP", pluginType: "effect", packageManager: "npm", products: ["standalone", "vst3"], uiDirectory: defaultProjectDirectories.ui, nativeDirectory: defaultProjectDirectories.native, artifactsDirectory: defaultProjectDirectories.artifacts, managedItems: Object.fromEntries(configRegistry.items.map(item => [item.id, true])) }
+    return { rootDir, projectName: "StarterPlugin", projectVersion: "1.2.3", frameworkVersion: "0.0.0-m.2.2", packageManager: "npm", uiDirectory: defaultProjectDirectories.ui, nativeDirectory: defaultProjectDirectories.native, artifactsDirectory: defaultProjectDirectories.artifacts, managedItems: Object.fromEntries(configRegistry.items.map(item => [item.id, true])) }
 }
 
 test("create 为全新工程生成 LF 的 .gitattributes", async t => {

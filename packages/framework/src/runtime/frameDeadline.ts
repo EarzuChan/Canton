@@ -1,4 +1,4 @@
-import { getCurrentScope } from '@arrange/reactivity'
+import { getCurrentScope } from '@canton/reactivity'
 import { animationScheduler } from './animationOwner.ts'
 import type { FrameParticipant } from './scheduler.ts'
 

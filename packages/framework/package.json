@@ -1,36 +1,36 @@
 {
-  "name": "@arrange/framework",
-  "version": "0.12.3",
+  "name": "@canton/framework",
+  "version": "0.1.0",
   "private": false,
   "type": "module",
   "exports": {
     ".": {
-      "arrange-ts": "./src/index.ts",
+      "canton-ts": "./src/index.ts",
       "import": "./src/index.ts"
     },
     "./foundation": {
-      "arrange-ts": "./src/foundation.ts",
+      "canton-ts": "./src/foundation.ts",
       "import": "./src/foundation.ts"
     },
     "./ui": {
-      "arrange-ts": "./src/ui.ts",
+      "canton-ts": "./src/ui.ts",
       "import": "./src/ui.ts"
     },
     "./animation": {
-      "arrange-ts": "./src/animation/index.ts",
-      "import": "./src/animation/index.ts"
-    },
-    "./interop": {
-      "arrange-ts": "./src/interop.ts",
-      "import": "./src/interop.ts"
+      "canton-ts": "./src/animation.ts",
+      "import": "./src/animation.ts"
     },
     "./vite": {
-      "arrange-ts": "./src/vite.ts",
+      "canton-ts": "./src/vite.ts",
       "import": "./src/vite.ts"
     },
     "./internal": {
-      "arrange-ts": "./src/internal.ts",
+      "canton-ts": "./src/internal.ts",
       "import": "./src/internal.ts"
+    },
+    "./hot-runtime": {
+      "canton-ts": "./src/app/hotRuntime.ts",
+      "import": "./src/app/hotRuntime.ts"
     }
   },
   "dependencies": {
@@ -42,10 +42,10 @@
     "vite": "8.3.5",
     "lru-cache": "10.1.0",
     "typescript": "^5.9.0",
-    "@arrange/reactivity": "0.12.3",
-    "@arrange/shared": "0.12.3",
-    "@arrange/compiler": "0.12.3",
-    "@arrange/vite-plugin": "0.12.3"
+    "@canton/reactivity": "0.1.0",
+    "@canton/shared": "0.1.0",
+    "@canton/compiler": "0.1.0",
+    "@canton/vite-plugin": "0.1.0"
   },
   "license": "MIT",
   "sideEffects": false,
@@ -59,13 +59,13 @@
     "tag": "m"
   },
   "bundledDependencies": [
-    "@arrange/reactivity",
-    "@arrange/shared",
-    "@arrange/compiler",
-    "@arrange/vite-plugin"
+    "@canton/reactivity",
+    "@canton/shared",
+    "@canton/compiler",
+    "@canton/vite-plugin"
   ],
-  "arrange": {
-    "cliCompatibility": 4
+  "canton": {
+    "cliCompatibility": 1
   },
   "engines": {
     "node": ">=24"

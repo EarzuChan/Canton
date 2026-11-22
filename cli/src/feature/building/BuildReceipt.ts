@@ -5,7 +5,7 @@ import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
 import { writeAtomicText } from "../../util/AtomicFile.ts"
 import { mkdir } from "node:fs/promises"
 
-export function nativeBuildRecordName(state: ProjectState, flavor: BuildFlavor, platform: "win32" | "darwin"): string {
+export function nativeBuildRecordName(state: ProjectState, flavor: BuildFlavor, platform: "win32"): string {
     if (!state.local?.native) throw new Error("native 构建记录需要已确认的架构")
     return `native-${platform}-${state.local.native.architecture}-${flavor}`
 }

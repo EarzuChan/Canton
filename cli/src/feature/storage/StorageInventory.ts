@@ -33,7 +33,7 @@ export class StorageInventory {
         items.push(...await new DependencyInventory(this.user, this.git, this.signal).inspect(builds.references, blockers))
         const pending = await new TransactionStore(this.user.root, this.user.transactions).list()
         if (!pending.length) return items
-        const transactions: InspectionFact[] = pending.map(entry => ({ state: entry.error ? "damaged" : "incomplete", path: join(this.user.transactions, `${entry.id}.json`), reason: entry.error ?? `用户事务 ${entry.id} 未收尾，请运行 arrange storage recover` }))
-        return items.map(item => ({ ...item, facts: [...item.facts, ...transactions.map(check => ({ label: "transaction" as const, check }))], cleanup: { allowed: false, reason: "用户级事务尚未收尾，请先运行 arrange storage recover" }, repairable: false }))
+        const transactions: InspectionFact[] = pending.map(entry => ({ state: entry.error ? "damaged" : "incomplete", path: join(this.user.transactions, `${entry.id}.json`), reason: entry.error ?? `用户事务 ${entry.id} 未收尾，请运行 canton storage recover` }))
+        return items.map(item => ({ ...item, facts: [...item.facts, ...transactions.map(check => ({ label: "transaction" as const, check }))], cleanup: { allowed: false, reason: "用户级事务尚未收尾，请先运行 canton storage recover" }, repairable: false }))
     }
 }

@@ -2,10 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('AST 格式修复保留注释、字符串与必要分号，拆分语句且重复执行无变化', () => {
-    const directory = mkdtempSync(resolve('tmp-refs/style-'))
+    const directory = mkdtempSync(join(tmpdir(), 'canton-style-'))
     const file = join(directory, '样例.ts')
     const source = [
         'import type {',

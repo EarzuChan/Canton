@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict'
-import { EventEmitter, once } from 'node:events'
+import { once } from 'node:events'
 import { createServer, type IncomingMessage } from 'node:http'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import test, { type TestContext } from 'node:test'
 import { cliCompatibility } from '../src/CliMetadata.ts'
 import { FrameworkRegistryClient } from '../src/feature/framework/FrameworkRegistryClient.ts'
@@ -16,26 +15,19 @@ import { OperationHost } from '../src/feature/operation/OperationHost.ts'
 import { Operations } from '../src/feature/operation/Operations.ts'
 import { Executor } from '../src/feature/platform/Executor.ts'
 import { isAbortError } from '../src/feature/platform/ProcessSpec.ts'
-import { TerminalSession } from '../src/terminal/TerminalSession.ts'
-import { commandInterface } from '../src/business/CommandInterface.ts'
-import { selectFrameworkVersion } from '../src/business/wizard/FrameworkVersion.ts'
-import { createCliApplication } from '../src/CliApplication.ts'
-import { write, testTask, observePrompts } from './fixture.ts'
-import type { PromptRequest } from '../src/terminal/PromptController.ts'
-import type { CommandInterface } from '../src/business/CommandInterface.ts'
-import { stripAnsi } from '../src/util/TerminalText.ts'
+import { write, testTask } from './fixture.ts'
 import { assertFrameworkDevReadiness } from '../src/feature/framework/FrameworkSourceMetadata.ts'
 
 const version = '1.2.3'
 const dependency = { repository: 'https://example.invalid/dependency.git', ref: 'v1', commit: 'a'.repeat(40) }
-const dependencies = { schema: 1, juce: dependency, quickjs_ng: dependency }
+const dependencies = { schema: 1, quickjs_ng: dependency }
 
 async function fixture(t: TestContext) {
-    const root = await mkdtemp(join(tmpdir(), 'arrange-admission-'))
+    const root = await mkdtemp(join(tmpdir(), 'canton-admission-'))
     const user = new UserDirectories(join(root, 'user'))
     const signal = new AbortController()
     const host = new OperationHost(user)
-    const executor = new Executor(process.platform, signal.signal, host)
+    const executor = new Executor(signal.signal, host)
     const operations = new Operations(host, signal.signal, () => { })
     const git = new GitSource(executor)
     const cache = new SourceCache(user, git, signal.signal, operations)
@@ -50,7 +42,7 @@ async function fixture(t: TestContext) {
     await run('config', 'user.email', 'fixture@example.invalid')
     await run('config', 'user.name', 'Fixture')
     const tag = async (selected = version, metadata: unknown = { frameworkVersion: selected, cliCompatibility, frameworkInternalProtocolCode: 1 }, manifest: unknown = dependencies, annotated = false) => {
-        await write(join(repository, 'arrange.version.json'), JSON.stringify(metadata))
+        await write(join(repository, 'canton.version.json'), JSON.stringify(metadata))
         await write(join(repository, 'cmake', 'NativeDependencies.json'), JSON.stringify(manifest))
         await run('add', '.')
         await run('commit', '--quiet', '--allow-empty', '-m', selected)
@@ -58,7 +50,7 @@ async function fixture(t: TestContext) {
         else await run('tag', `v${selected}`)
         return run('rev-parse', 'HEAD')
     }
-    let handle = (_request: IncomingMessage): { status?: number, body: unknown } => ({ body: { version, arrange: { cliCompatibility } } })
+    let handle = (_request: IncomingMessage): { status?: number, body: unknown } => ({ body: { version, canton: { cliCompatibility } } })
     const requests: string[] = []
     const server = createServer((request, response) => {
         requests.push(decodeURIComponent(request.url!))
@@ -82,38 +74,6 @@ async function fixture(t: TestContext) {
     return { root, user, service, signal, executor, git, cache, tag, run, repository, registryUrl, requests, handle: (next: typeof handle) => { handle = next }, input: { registryUrl, repositoryUrl: repository } }
 }
 
-function conversation(t: TestContext, body: (ui: CommandInterface) => Promise<unknown>) {
-    let frame = ''
-    const driver = Object.assign(new EventEmitter(), { columns: 100, rows: 30, host: new EventEmitter(), output: { isTTY: true }, enter() { }, writeFrame(text: string) { frame = stripAnsi(text) }, async close(_transcript?: string) { } })
-    const session = new TerminalSession(driver)
-    const questions: PromptRequest[] = []
-    let current: PromptRequest | undefined
-    let value: unknown
-    let failure: unknown
-    const running = session.run(async ui => {
-        const terminal = observePrompts(commandInterface(ui, session.signal), async (request, next) => {
-            questions.push(request)
-            current = request
-            try { return await next() } finally { if (current === request) current = undefined }
-        })
-        try { value = await body(terminal) } catch (error) { failure = error }
-    })
-    t.after(async () => {
-        driver.emit('signal', 'SIGTERM')
-        await running
-    })
-    const until = async (predicate: () => boolean) => {
-        for (let attempt = 0; attempt < 1500; attempt++) {
-            if (predicate()) return
-            if (failure) throw failure
-            await delay(10)
-        }
-        assert.fail('等待真实提问流程超时')
-    }
-    const key = (key: string) => driver.emit('input', { kind: 'key', key })
-    return { questions, current: () => current, value: () => value, failure: () => failure, frame: () => frame, key, until, text: (text: string) => driver.emit('input', { kind: 'paste', text }), waitQuestion: (part: string) => until(() => current?.message.includes(part) === true) }
-}
-
 test('registry 确切版本与 Git 注解 tag 同时验证，复用源码缓存且不安装其它依赖', async t => {
     const input = await fixture(t)
     const commit = await input.tag(version, undefined, undefined, true)
@@ -123,22 +83,22 @@ test('registry 确切版本与 Git 注解 tag 同时验证，复用源码缓存�
     assert.equal(await input.git.resolveTag(input.repository, `v${version}`), commit)
     assert.equal((await readdir(join(input.user.dependencySources, 'entries'))).length, 1)
     assert.deepEqual(await input.service.selectVersion(version, input.input, testTask()), selected)
-    assert.deepEqual(input.requests, [`/@arrange/framework/${version}`, `/@arrange/framework/${version}`])
+    assert.deepEqual(input.requests, [`/@canton/framework/${version}`, `/@canton/framework/${version}`])
     await assert.rejects(readdir(join(input.root, 'node_modules')), { code: 'ENOENT' })
 })
 
 test('Native dev 只接受声明当前就绪回执协议的 Framework 源码', async t => {
     const input = await fixture(t)
-    await write(join(input.repository, 'arrange.version.json'), JSON.stringify({ frameworkVersion: version, cliCompatibility, frameworkInternalProtocolCode: 6, nativeDevReadinessProtocolCode: 1 }))
+    await write(join(input.repository, 'canton.version.json'), JSON.stringify({ frameworkVersion: version, cliCompatibility, frameworkInternalProtocolCode: 6, nativeDevReadinessProtocolCode: 1 }))
     await write(join(input.repository, 'cmake', 'NativeDependencies.json'), JSON.stringify(dependencies))
     await assertFrameworkDevReadiness(input.repository, version)
-    await write(join(input.repository, 'arrange.version.json'), JSON.stringify({ frameworkVersion: version, cliCompatibility, frameworkInternalProtocolCode: 6 }))
+    await write(join(input.repository, 'canton.version.json'), JSON.stringify({ frameworkVersion: version, cliCompatibility, frameworkInternalProtocolCode: 6 }))
     await assert.rejects(assertFrameworkDevReadiness(input.repository, version), /不支持 Native 开发就绪握手/)
 })
 
 test('不存在、不兼容或无法验证的 registry 版本在接触源码前拒绝', async t => {
     const input = await fixture(t)
-    for (const response of [{ status: 404, body: {} }, { body: { version } }, { body: { version, arrange: { cliCompatibility: cliCompatibility + 1 } } }, { body: { version: '9.9.9', arrange: { cliCompatibility } } }]) {
+    for (const response of [{ status: 404, body: {} }, { body: { version } }, { body: { version, canton: { cliCompatibility: cliCompatibility + 1 } } }, { body: { version: '9.9.9', canton: { cliCompatibility } } }]) {
         input.handle(() => response)
         await assert.rejects(input.service.selectVersion(version, input.input, testTask()), /404|cliCompatibility|CLI 兼容契约|版本与请求不符/)
     }
@@ -160,7 +120,7 @@ test('缺 Git tag 和错误源码版本、兼容码、内部协议、依赖清�
     ]
     for (const item of cases) {
         await input.tag(item.selected, item.metadata, item.manifest)
-        input.handle(() => ({ body: { version: item.selected, arrange: { cliCompatibility } } }))
+        input.handle(() => ({ body: { version: item.selected, canton: { cliCompatibility } } }))
         await assert.rejects(input.service.selectVersion(item.selected, input.input, testTask()), item.error)
         assert.equal(await input.cache.find({ repository: input.repository, ref: `v${item.selected}` }), undefined)
     }
@@ -177,88 +137,4 @@ test('远端 tag 移动后拒绝旧缓存，保留原源码快照', async t => {
     await input.run('tag', '-f', `v${version}`)
     await assert.rejects(input.service.selectVersion(version, input.input, testTask()), /commit 与远端 tag 不一致/)
     assert.equal((await input.cache.find({ repository: input.repository, ref: `v${version}` }))!.commit, old)
-})
-
-for (const origin of ['列表', '自定义', '已有依赖建议'] as const) test(`${origin}在展示列表前完成准入，自定义回列表且最终确认后才进入厂商问题`, async t => {
-    const input = await fixture(t)
-    await input.tag()
-    input.handle(request => decodeURIComponent(request.url!).endsWith('/framework') ? { body: { versions: origin === '列表' ? { [version]: { version, arrange: { cliCompatibility } } } : {} } } : { body: { version, arrange: { cliCompatibility } } })
-    const ui = conversation(t, async terminal => {
-        const selected = await selectFrameworkVersion(terminal, input.service, { ...input.input, suggestion: origin === '已有依赖建议' ? version : undefined })
-        await terminal.prompt.controller.ask({ kind: 'text', message: '厂商名称' })
-        return selected
-    })
-    await ui.waitQuestion('选择 Arrange')
-    if (origin === '自定义') {
-        ui.key('enter')
-        await ui.waitQuestion('自定义 Arrange')
-        ui.text(version)
-        ui.key('enter')
-        await ui.waitQuestion('选择 Arrange')
-        assert.equal(ui.current()!.initial, version)
-    }
-    const option = ui.current()!.options!.find(option => option.value === version)
-    assert.equal(option?.disabled, false)
-    await ui.until(() => ui.frame().includes('选择 Arrange Framework'))
-    assert.doesNotMatch(ui.frame(), /检查 Framework|复用 Arrange 源码|获取 Arrange 源码|╭|╰/)
-    assert.ok(await input.cache.find({ repository: input.repository, ref: `v${version}` }))
-    assert.ok(!ui.questions.some(question => question.message === '厂商名称'))
-    const requests = input.requests.length
-    ui.key('enter')
-    await ui.waitQuestion('确认使用')
-    ui.key('down')
-    ui.key('enter')
-    await ui.waitQuestion('选择 Arrange')
-    assert.equal(ui.current()!.initial, version)
-    assert.equal(input.requests.length, requests)
-    ui.key('enter')
-    await ui.waitQuestion('确认使用')
-    ui.key('enter')
-    await ui.waitQuestion('厂商名称')
-    ui.text('Vendor')
-    ui.key('enter')
-    await ui.until(() => ui.value() !== undefined)
-    assert.equal((ui.value() as { version: string }).version, version)
-    assert.equal(input.requests.length, origin === '列表' ? 1 : 2)
-})
-
-for (const command of ['create', 'adopt'] as const) test(`${command}向导缺契约版本不可选，取消后不返回初始化请求、不写工程`, async t => {
-    const previous = process.cwd()
-    t.after(() => process.chdir(previous))
-    const input = await fixture(t)
-    input.handle(request => decodeURIComponent(request.url!).endsWith('/framework') ? { body: { 'dist-tags': { latest: '0.0.0-m.2.1' }, versions: { '0.0.0-m.2.1': { version: '0.0.0-m.2.1' } } } } : { status: 404, body: {} })
-    const destination = join(input.root, 'application')
-    await mkdir(destination)
-    process.chdir(destination)
-    const ui = conversation(t, async terminal => {
-        const cli = createCliApplication({ terminal, signal: input.signal.signal, userDirectories: input.user, interactions: 'terminal' })
-        await cli.parseAsync([command, '--registry', input.registryUrl, '--fetch-content', input.repository], { from: 'user' })
-        return cli.resultCode
-    })
-    if (command === 'adopt') for (const scope of ['native', 'ui']) {
-        await ui.waitQuestion(`${scope} 接入方式`)
-        ui.key('end')
-        ui.key('enter')
-        await ui.waitQuestion(`${scope} 新建目录`)
-        ui.key('enter')
-    }
-    await ui.waitQuestion('项目名称')
-    ui.text('Fixture')
-    ui.key('enter')
-    await ui.waitQuestion('项目版本')
-    ui.key('enter')
-    await ui.waitQuestion('选择 Arrange')
-    assert.equal(ui.current()!.options![0].disabled, true)
-    ui.key('home')
-    ui.key('enter')
-    await ui.waitQuestion('自定义 Arrange')
-    ui.text('1.9.19')
-    ui.key('enter')
-    await ui.waitQuestion('未通过验证')
-    assert.ok(!ui.questions.some(question => question.message === '厂商名称'))
-    ui.key('end')
-    ui.key('enter')
-    await ui.until(() => ui.value() === 0)
-    assert.equal(ui.failure(), undefined)
-    assert.deepEqual(await readdir(destination), [])
 })

@@ -11,7 +11,7 @@ const sizeRange: UnitFields = { minWidth: 'length', maxWidth: 'length', minHeigh
 const padding: UnitFields = { start: 'length', top: 'length', end: 'length', bottom: 'length', horizontal: 'length', vertical: 'length' }
 const graphics: UnitFields = { translationX: 'px', translationY: 'px' }
 
-// 单位形状由修饰 schema 与值契约共用
+// 单位形状由 Modifier 原生协议表与值契约共用
 export const unitShapes = { shape, brush, style, offset, size, range, sizeRange, padding, graphics } as const
 
 export const unitFieldContracts: Readonly<Record<string, UnitFields>> = {

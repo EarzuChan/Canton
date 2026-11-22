@@ -8,7 +8,7 @@ type Edit = { start: number, end: number, text: string }
 const root = resolve(import.meta.dirname, '..')
 const write = process.argv.includes('--write')
 const requested = process.argv.slice(2).filter(argument => argument !== '--write')
-const files = requested.length ? requested : execFileSync('rg', ['--files', 'packages', 'cli', 'scripts', 'tests', 'types', '-g', '*.ts', '-g', '*.mts', '-g', '*.cts', '-g', '*.js', '-g', '*.sfa'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/)
+const files = requested.length ? requested : execFileSync('rg', ['--files', 'packages', 'cli', 'scripts', 'tests', 'types', '-g', '*.ts', '-g', '*.mts', '-g', '*.cts', '-g', '*.js', '-g', '*.cta'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/)
 
 function parse(source: string, filename: string) {
     return ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, filename.endsWith('.js') ? ts.ScriptKind.JS : ts.ScriptKind.TS)
@@ -252,9 +252,9 @@ function formatScript(source: string, filename: string): string {
     throw new Error(`格式调整未收敛：${filename}`)
 }
 
-// SFA 只处理实际脚本区域，不把模板、测试字符串或生成代码当作宿主代码改写
+// CTA 只处理实际脚本区域，不把模板、测试字符串或生成代码当作宿主代码改写
 function formatFile(source: string, filename: string): string {
-    if (!filename.endsWith('.sfa')) return formatScript(source, filename)
+    if (!filename.endsWith('.cta')) return formatScript(source, filename)
 
     return source.replace(/(<script\b[^>]*>)([\s\S]*?)(<\/script>)/g, (_, open, script, close) => open + formatScript(script, filename + '.ts') + close)
 }
@@ -272,9 +272,9 @@ for (const filename of files) {
 if (write) {
     for (const { file, source } of changes) writeFileSync(file, source)
 } else {
-    for (const { file } of changes) console.error('[ArrangeFormat]', `格式待修正：${file}`)
+    for (const { file } of changes) console.error('[CantonFormat]', `格式待修正：${file}`)
     if (changes.length) process.exitCode = 1
 }
 
-console.log('[ArrangeFormat]', `${write ? '已修正' : '已检查'} ${files.length} 个文件，${changes.length} 个文件${write ? '已更新' : '需要调整'}`)
+console.log('[CantonFormat]', `${write ? '已修正' : '已检查'} ${files.length} 个文件，${changes.length} 个文件${write ? '已更新' : '需要调整'}`)
 

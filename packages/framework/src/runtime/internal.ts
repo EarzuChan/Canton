@@ -4,5 +4,5 @@ export type { ArrangableInstance, AppConfig, AppContext, ArrangableDefinition, R
 export { RearrangeSession, invokeContent, retainContent } from './rearrange.ts'
 export { isArrangableDefinition } from './apiDefineArrangable.ts'
 export { ValueBinding } from './valueBinding.ts'
-export type { RearrangeHost, RearrangeNode } from './rearrangeNode.ts'
-export { arrangeExecutionStats } from './executionStats.ts'
+export type { RearrangeHost, RearrangeNode } from './arrangable.ts'
+export { cantonExecutionStats } from './executionStats.ts'

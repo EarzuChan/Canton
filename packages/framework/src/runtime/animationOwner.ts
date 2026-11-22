@@ -1,4 +1,4 @@
-import { getCurrentScope, type EffectScope } from '@arrange/reactivity'
+import { getCurrentScope, type EffectScope } from '@canton/reactivity'
 import { currentInstance } from './arrangable.ts'
 import type { FrameScheduler } from './scheduler.ts'
 

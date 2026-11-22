@@ -1,9 +1,9 @@
 import { defineArrangable } from '../runtime/index.ts'
 import type { ArrangableProps, PropType } from '../runtime/index.ts'
-import { BoxMeasurePolicy, ColumnMeasurePolicy, MinSizeMeasurePolicy, RowMeasurePolicy, FlowRowMeasurePolicy, FlowColumnMeasurePolicy } from '../measurePolicy.ts'
-import { M, Modifier } from '../modifier.ts'
-import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native.ts'
-import type { BoxAlignment, HorizontalAlignment, VerticalAlignment } from '../primitives.ts'
+import { BoxMeasurePolicy, ColumnMeasurePolicy, MinSizeMeasurePolicy, RowMeasurePolicy, FlowRowMeasurePolicy, FlowColumnMeasurePolicy } from '../layout/measurePolicy.ts'
+import { M, Modifier } from '../modifier/modifier.ts'
+import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native/protocol.ts'
+import type { BoxAlignment, HorizontalAlignment, VerticalAlignment } from '../values/primitives.ts'
 import { Layout } from './Layout.ts'
 
 export type BoxProps = ArrangableProps<typeof Box>

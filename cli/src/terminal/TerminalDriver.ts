@@ -50,7 +50,7 @@ export class TerminalDriver extends EventEmitter<{ input: [InputEvent], resize: 
     enter() {
         if (this.#state !== 'new') throw new Error('终端不能重复接管')
 
-        if (!this.input.isTTY || !this.output.isTTY || !this.input.setRawMode) throw new Error('Arrange 需要交互式 TTY，请直接在终端运行')
+        if (!this.input.isTTY || !this.output.isTTY || !this.input.setRawMode) throw new Error('Canton 需要交互式 TTY，请直接在终端运行')
 
         if (owners.has(this.input) || owners.has(this.output)) throw new Error('终端已被另一会话接管')
         owners.set(this.input, this)
@@ -62,7 +62,7 @@ export class TerminalDriver extends EventEmitter<{ input: [InputEvent], resize: 
         try {
             this.#listen(this.host, 'exit', () => this.restoreSync())
             this.#listen(this.host, 'SIGINT', () => this.#dispatch({ kind: 'key', key: 'interrupt' }))
-            for (const signal of ['SIGTERM', 'SIGHUP', ...(process.platform === 'win32' ? ['SIGBREAK'] : [])]) {
+            for (const signal of ['SIGTERM', 'SIGHUP', 'SIGBREAK']) {
                 this.#listen(this.host, signal, () => { if (this.#state === 'active') this.emit('signal', signal) })
             }
             this.#listen(this.input, 'data', chunk => this.#receive(chunk))

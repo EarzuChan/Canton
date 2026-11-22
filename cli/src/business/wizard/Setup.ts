@@ -42,7 +42,7 @@ export class SetupWizard implements SetupInteraction {
     }
 
     async editTools(message: string): Promise<boolean> {
-        this.presentation.current.reporter.warn([message, "可安装缺失工具，或编辑 arrange.local.yaml 指定可执行文件路径"])
+        this.presentation.current.reporter.warn([message, "可安装缺失工具，或编辑 canton.local.yaml 指定可执行文件路径"])
         const accepted = await confirm({ ...this.presentation.current.prompt, message: "已修正工具，重新检测？", initialValue: true })
         if (isCancel(accepted) || !accepted) this.presentation.complete()
         return !isCancel(accepted) && accepted

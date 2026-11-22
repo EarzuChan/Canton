@@ -75,7 +75,7 @@ export class FileTransaction {
         this.defaultSignal?.throwIfAborted()
         await mkdir(dirname(before.path), { recursive: true })
 
-        const temporary = join(dirname(before.path), `.arrange-${id}.tmp`)
+        const temporary = join(dirname(before.path), `.canton-${id}.tmp`)
 
         try {
             const mode = before.content === null ? undefined : (await stat(before.path)).mode

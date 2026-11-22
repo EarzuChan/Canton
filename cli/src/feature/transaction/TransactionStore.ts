@@ -11,7 +11,7 @@ const schema = z.object({ schema: z.literal(transactionSchema), id: z.string().u
 export type TransactionRecord = z.infer<typeof schema>
 
 export class TransactionStore {
-    constructor(readonly root: string, readonly directory = join(root, ".arrange", "transactions")) { }
+    constructor(readonly root: string, readonly directory = join(root, ".canton", "transactions")) { }
 
     async create(kind: TransactionRecord["kind"], payload: unknown): Promise<TransactionRecord> {
         const record: TransactionRecord = { schema: transactionSchema, id: randomUUID(), kind, root: resolve(this.root), status: "pending", created: new Date().toISOString(), payload }

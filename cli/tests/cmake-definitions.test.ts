@@ -3,7 +3,6 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { IconAssetsService } from "../src/feature/asset/IconAssetsService.ts"
 import { cmakeDefinitionsFileName, windowsObjectPathMax } from "../src/CliMetadata.ts"
 import { CmakeDefinitions, mergeCmakeDefinitions, type CmakeDefinitionValues } from "../src/feature/cmake/CmakeDefinitions.ts"
 import { CmakeService } from "../src/feature/cmake/CmakeService.ts"
@@ -15,7 +14,7 @@ import { UserDirectories } from "../src/feature/user/UserDirectories.ts"
 import { fixture, testTask, write } from "./fixture.ts"
 
 test("definitions 拒绝通配键、受管选项覆盖和损坏记录，校验失败不改归属", async t => {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-definitions-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-definitions-"))
     t.after(() => rm(directory, { recursive: true, force: true }))
     const definitions = new CmakeDefinitions(directory)
     assert.equal(await definitions.readKeys(), undefined)
@@ -44,7 +43,7 @@ test("真实 CMake：删除、失败重试、取消重试、源码覆盖切换�
             return super.run({
                 ...spec, signal: controller.signal, onOutput: (chunk, stream) => {
                     spec.onOutput?.(chunk, stream)
-                    if (chunk.toString().includes("ARRANGE_TEST_PAUSE")) controller.abort()
+                    if (chunk.toString().includes("CANTON_TEST_PAUSE")) controller.abort()
                 }
             })
         }
@@ -53,7 +52,6 @@ test("真实 CMake：删除、失败重试、取消重试、源码覆盖切换�
     const platform = createPlatformService(executor)
     const tools = await nativeTools()
     const state = await fixture(t, false)
-    state.project.project.products = ["standalone"]
     state.local = tools.local
     const userRoot = await mkdtemp(join(tmpdir(), "a"))
     t.after(() => rm(userRoot, { recursive: true, force: true }))
@@ -65,23 +63,23 @@ option(TEST_FLAG "test flag" OFF)
 set(TEST_TEXT "project-default" CACHE STRING "test text")
 set(TEST_FLAG_EXTRA "neighbor-default" CACHE STRING "unowned neighbor")
 if(EXISTS "\${CMAKE_CURRENT_SOURCE_DIR}/fail")
-    message(FATAL_ERROR "ARRANGE_TEST_FAILURE")
+    message(FATAL_ERROR "CANTON_TEST_FAILURE")
 endif()
 if(EXISTS "\${CMAKE_CURRENT_SOURCE_DIR}/pause")
-    message(STATUS "ARRANGE_TEST_PAUSE")
+    message(STATUS "CANTON_TEST_PAUSE")
     execute_process(COMMAND "\${CMAKE_COMMAND}" -E sleep 60)
 endif()
 add_library(TestPlugin STATIC plugin.cpp)
-add_executable(TestPlugin_Standalone main.cpp)
-target_link_libraries(TestPlugin_Standalone PRIVATE TestPlugin)
+add_executable(TestApp main.cpp)
+target_link_libraries(TestApp PRIVATE TestPlugin)
 `)
     await write(join(native, "plugin.cpp"), "int plugin() { return 0; }\n")
     await write(join(native, "main.cpp"), "int plugin(); int main() { return plugin(); }\n")
-    const automatic = join(state.rootDir, "automatic-juce")
-    const explicit = join(state.rootDir, "explicit-juce")
+    const automatic = join(state.rootDir, "automatic-quickjs")
+    const explicit = join(state.rootDir, "explicit-quickjs")
     for (const directory of [automatic, explicit]) await write(join(directory, "CMakeLists.txt"), "# 测试源码\n")
-    const sources = { prepare: async (): Promise<CmakeDefinitionValues> => state.local!.native!.cmakeDefinitions?.JUCE_DIR === undefined ? { FETCHCONTENT_SOURCE_DIR_JUCE: automatic } : {} }
-    const service = new CmakeService(executor, platform, new IconAssetsService(), new UserDirectories(userRoot), sources)
+    const sources = { prepare: async (): Promise<CmakeDefinitionValues> => state.local!.native!.cmakeDefinitions?.CANTON_QUICKJS_NG_SOURCE_DIR === undefined ? { FETCHCONTENT_SOURCE_DIR_QUICKJS_NG: automatic } : {} }
+    const service = new CmakeService(executor, platform, new UserDirectories(userRoot), sources)
     const directory = service.buildDirectory(state, "debug")
     const keys = (): Promise<readonly string[] | undefined> => new CmakeDefinitions(directory).readKeys()
     const cacheValue = async (key: string): Promise<string | undefined> => (await readFile(join(directory, "CMakeCache.txt"), "utf8")).match(new RegExp(`^${key}:[^=]+=([^\\r\\n]*)`, "m"))?.[1]
@@ -103,7 +101,7 @@ target_link_libraries(TestPlugin_Standalone PRIVATE TestPlugin)
         assert.equal(await cacheValue("TEST_TEXT"), "project-default")
         assert.equal(await cacheValue("TEST_FLAG_EXTRA"), "keep-unowned")
         assert.equal(await cacheValue("CMAKE_COLOR_DIAGNOSTICS"), "ON")
-        assert.equal(await cacheValue("CMAKE_OBJECT_PATH_MAX"), process.platform === "win32" ? String(windowsObjectPathMax) : undefined)
+        assert.equal(await cacheValue("CMAKE_OBJECT_PATH_MAX"), String(windowsObjectPathMax))
         assert.equal(await readFile(sentinel, "utf8"), "preserved")
         assert.ok(!(await keys())!.includes("TEST_FLAG"))
         assert.equal((await service.inspect(state, "debug")).ready, true)
@@ -141,14 +139,14 @@ target_link_libraries(TestPlugin_Standalone PRIVATE TestPlugin)
     })
 
     await t.test("自动源码转手工目录再删除手工覆盖，不残留高优先级旧路径", async () => {
-        state.local!.native!.cmakeDefinitions = { JUCE_DIR: explicit }
+        state.local!.native!.cmakeDefinitions = { CANTON_QUICKJS_NG_SOURCE_DIR: explicit }
         await configure()
-        assert.equal(await cacheValue("FETCHCONTENT_SOURCE_DIR_JUCE"), undefined)
-        assert.equal(await cacheValue("JUCE_DIR"), explicit)
+        assert.equal(await cacheValue("FETCHCONTENT_SOURCE_DIR_QUICKJS_NG"), undefined)
+        assert.equal(await cacheValue("CANTON_QUICKJS_NG_SOURCE_DIR"), explicit)
         delete state.local!.native!.cmakeDefinitions
         await configure()
-        assert.equal(await cacheValue("JUCE_DIR"), undefined)
-        assert.equal(await cacheValue("FETCHCONTENT_SOURCE_DIR_JUCE"), automatic)
+        assert.equal(await cacheValue("CANTON_QUICKJS_NG_SOURCE_DIR"), undefined)
+        assert.equal(await cacheValue("FETCHCONTENT_SOURCE_DIR_QUICKJS_NG"), automatic)
     })
 
     await t.test("缺少归属的旧树干净重建，之后 build 成功", async () => {
@@ -158,8 +156,8 @@ target_link_libraries(TestPlugin_Standalone PRIVATE TestPlugin)
         await assert.rejects(readFile(sentinel), { code: "ENOENT" })
         assert.equal(await cacheValue("TEST_FLAG_EXTRA"), "neighbor-default")
         assert.equal((await service.inspect(state, "debug")).ready, true)
-        const model = await service.build(state, "debug", ["standalone"], testTask())
-        assert.ok((await readFile(service.productArtifacts(state, model, ["standalone"])[0]!.paths[0]!)).length > 0)
+        const model = await service.buildTargets(state, "debug", ["TestApp"], testTask())
+        assert.ok((await readFile(model.targets.find(target => target.name === "TestApp")!.artifacts[0]!)).length > 0)
         await mkdir(join(directory, "keep-after-invalid-record"))
         await write(join(directory, cmakeDefinitionsFileName), '["TEST_*"]')
         await assert.rejects(configure(), /归属记录损坏/)

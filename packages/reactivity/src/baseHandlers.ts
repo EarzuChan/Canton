@@ -1,9 +1,9 @@
-import { hasChanged, hasOwn, isArray, isIntegerKey, isObject, isSymbol, makeMap } from '@arrange/shared'
+import { hasChanged, hasOwn, isArray, isIntegerKey, isObject, isSymbol, makeMap } from '@canton/shared'
 import { arrayInstrumentations } from './arrayInstrumentations.ts'
 import { ReactiveFlags, TrackOpTypes, TriggerOpTypes } from './constants.ts'
 import { ITERATE_KEY, track, trigger } from './dep.ts'
-import { type Target, isReadonly, isShallow, reactive, reactiveMap, readonly, readonlyMap, shallowReactiveMap, shallowReadonlyMap, toRaw } from './reactive.ts'
-import { isRef } from './ref.ts'
+import { isReadonly, isRef, isShallow, reactiveMap, readonlyMap, shallowReactiveMap, shallowReadonlyMap, toRaw, toReactive, toReadonly } from './target.ts'
+import type { Target } from './types.ts'
 import { warn } from './warning.ts'
 
 const isNonTrackableKeys = makeMap(`__proto__,${ReactiveFlags.IS_REF}`)
@@ -67,11 +67,11 @@ class BaseReactiveHandler implements ProxyHandler<Target> {
 
         if (isRef(res)) {
             const value = targetIsArray && isIntegerKey(key) ? res : res.value
-            return isReadonly && isObject(value) ? readonly(value) : value
+            return isReadonly && isObject(value) ? toReadonly(value) : value
         }
 
         if (isObject(res)) {
-            return isReadonly ? readonly(res) : reactive(res)
+            return isReadonly ? toReadonly(res) : toReactive(res)
         }
 
         return res

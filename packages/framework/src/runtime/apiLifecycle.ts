@@ -1,5 +1,5 @@
 import { currentInstance, setCurrentInstance, type ArrangableInstance } from './arrangable.ts'
-import { pauseTracking, resetTracking, type DebuggerEvent } from '@arrange/reactivity'
+import { pauseTracking, resetTracking, type DebuggerEvent } from '@canton/reactivity'
 import { LifecycleHooks } from './enums.ts'
 import { callWithAsyncErrorHandling } from './errorHandling.ts'
 

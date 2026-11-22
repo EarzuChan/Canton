@@ -2,19 +2,6 @@ import { PNG } from "pngjs"
 import type { IconPixels } from "./PngIcon.ts"
 
 export const icoSizes = [16, 24, 32, 48, 64, 128, 256] as const
-export const icnsSlots = [
-    { type: "ic04", size: 16 },
-    { type: "ic11", size: 32 },
-    { type: "ic05", size: 32 },
-    { type: "ic12", size: 64 },
-    { type: "ic07", size: 128 },
-    { type: "ic13", size: 256 },
-    { type: "ic08", size: 256 },
-    { type: "ic14", size: 512 },
-    { type: "ic09", size: 512 },
-    { type: "ic10", size: 1024 },
-] as const
-
 export function encodeIconPng(image: IconPixels): Buffer {
     const png = new PNG({ width: image.size, height: image.size })
     png.data = image.data
@@ -63,55 +50,4 @@ export function encodeIco(images: ReadonlyMap<number, IconPixels>): Buffer {
         offset += entries[index].length
     }
     return Buffer.concat([header, ...entries])
-}
-
-function encodeIcnsArgb(image: IconPixels): Buffer {
-    const bytes: number[] = [65, 82, 71, 66]
-    const count = image.size * image.size
-    for (const channel of [3, 0, 1, 2]) {
-        const valueAt = (index: number) => image.data[index * 4 + channel]
-        const runAt = (index: number) => {
-            let length = 1
-            while (length < 130 && index + length < count && valueAt(index + length) === valueAt(index)) length++
-            return length
-        }
-        let offset = 0
-        while (offset < count) {
-            const run = runAt(offset)
-            if (run >= 3) {
-                bytes.push(run + 125, valueAt(offset))
-                offset += run
-            } else {
-                const first = offset++
-                while (offset - first < 128 && offset < count && runAt(offset) < 3) offset++
-                bytes.push(offset - first - 1)
-                for (let index = first; index < offset; index++) bytes.push(valueAt(index))
-            }
-        }
-    }
-    return Buffer.from(bytes)
-}
-
-export function encodeIcns(images: ReadonlyMap<number, IconPixels>): Buffer {
-    const pngs = new Map<number, Buffer>()
-    const chunks = icnsSlots.filter(slot => images.has(slot.size)).map(slot => {
-        let payload: Buffer
-        if (slot.type === "ic04" || slot.type === "ic05") payload = encodeIcnsArgb(images.get(slot.size)!)
-        else {
-            let png = pngs.get(slot.size)
-            if (!png) {
-                png = encodeIconPng(images.get(slot.size)!)
-                pngs.set(slot.size, png)
-            }
-            payload = png
-        }
-        const header = Buffer.alloc(8)
-        header.write(slot.type, 0, "ascii")
-        header.writeUInt32BE(payload.length + header.length, 4)
-        return Buffer.concat([header, payload])
-    })
-    const header = Buffer.alloc(8)
-    header.write("icns", 0, "ascii")
-    header.writeUInt32BE(header.length + chunks.reduce((sum, chunk) => sum + chunk.length, 0), 4)
-    return Buffer.concat([header, ...chunks])
 }

@@ -1,4 +1,3 @@
-import { windowsOnly, macOnly } from "./native-fixture.ts"
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -20,13 +19,13 @@ const banners = [
 ] as const
 
 for (const [label, banner, version, architecture] of banners) {
-    test(`MSVC 横幅解析与语言无关：${label}`, windowsOnly, () => {
+    test(`MSVC 横幅解析与语言无关：${label}`, () => {
         assert.deepEqual(parseMsvcBanner(banner), { version, architecture })
         assert.equal(parseMsvcArchitecture(banner), architecture)
     })
 }
 
-test("MSVC 横幅：x86 不是受支持的目标，缺少版本或架构时不臆测", windowsOnly, () => {
+test("MSVC 横幅：x86 不是受支持的目标，缺少版本或架构时不臆测", () => {
     assert.equal(parseMsvcArchitecture("用于 x86 的 Microsoft (R) C/C++ 优化编译器 19.50.35728 版"), undefined)
     assert.deepEqual(parseMsvcBanner("some other tool 1.2"), {})
     assert.deepEqual(parseMsvcBanner(""), {})
@@ -35,26 +34,26 @@ test("MSVC 横幅：x86 不是受支持的目标，缺少版本或架构时不�
 })
 
 async function toolDirectory(...files: string[]): Promise<{ directory: string, dispose: () => Promise<void> }> {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-locator-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-locator-"))
     await mkdir(directory, { recursive: true })
     for (const file of files) await writeFile(join(directory, file), "")
     return { directory, dispose: () => rm(directory, { recursive: true, force: true }) }
 }
 
-test("Windows 定位：无扩展名命令按 PATHEXT 解析，不选同目录下无扩展名的 sh 垫片", windowsOnly, async t => {
+test("Windows 定位：无扩展名命令按 PATHEXT 解析，不选同目录下无扩展名的 sh 垫片", async t => {
     const { directory, dispose } = await toolDirectory("pnpm", "pnpm.cmd", "pnpm.ps1")
     t.after(dispose)
     const env = { PATH: directory, PATHEXT: ".COM;.EXE;.BAT;.CMD" }
     assert.equal(await locateTool("pnpm", env), join(directory, "pnpm.cmd"))
 })
 
-test("Windows 定位：只有无扩展名文件时视为不存在", windowsOnly, async t => {
+test("Windows 定位：只有无扩展名文件时视为不存在", async t => {
     const { directory, dispose } = await toolDirectory("pnpm")
     t.after(dispose)
     assert.equal(await locateTool("pnpm", { PATH: directory, PATHEXT: ".EXE;.CMD" }), undefined)
 })
 
-test("Windows 定位：遵循 PATHEXT 顺序，.exe 先于 .cmd，目录顺序先于扩展名顺序", windowsOnly, async t => {
+test("Windows 定位：遵循 PATHEXT 顺序，.exe 先于 .cmd，目录顺序先于扩展名顺序", async t => {
     const first = await toolDirectory("tool.cmd")
     const second = await toolDirectory("tool.exe", "tool.cmd")
     t.after(first.dispose)
@@ -63,7 +62,7 @@ test("Windows 定位：遵循 PATHEXT 顺序，.exe 先于 .cmd，目录顺序�
     assert.equal(await locateTool("tool", { PATH: `${first.directory};${second.directory}`, PATHEXT: ".COM;.EXE;.BAT;.CMD" }), join(first.directory, "tool.cmd"))
 })
 
-test("Windows 定位：未设置 PATHEXT 时使用默认值，已带扩展名或完整路径的命令不受影响", windowsOnly, async t => {
+test("Windows 定位：未设置 PATHEXT 时使用默认值，已带扩展名或完整路径的命令不受影响", async t => {
     const { directory, dispose } = await toolDirectory("npm", "npm.cmd")
     t.after(dispose)
     assert.equal(await locateTool("npm", { PATH: directory }), join(directory, "npm.cmd"))
@@ -71,15 +70,7 @@ test("Windows 定位：未设置 PATHEXT 时使用默认值，已带扩展名或
     assert.equal(await locateTool(join(directory, "npm"), {}), join(directory, "npm.cmd"))
 })
 
-test("非 Windows 定位仍可使用无扩展名可执行文件", macOnly, async t => {
-    const { directory, dispose } = await toolDirectory("pnpm")
-    t.after(dispose)
-    const path = join(directory, "pnpm")
-    await (await import("node:fs/promises")).chmod(path, 0o755)
-    assert.equal(await locateTool("pnpm", { PATH: directory }, process.platform), path)
-})
-
-test("Windows 真机：Node 自带的 npm 解析为 .cmd，node 解析为 .exe", windowsOnly, async () => {
+test("Windows 真机：Node 自带的 npm 解析为 .cmd，node 解析为 .exe", async () => {
     assert.match((await locateTool("npm"))!, /npm\.cmd$/i)
     assert.match((await locateTool("node"))!, /node\.exe$/i)
 })

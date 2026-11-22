@@ -1,12 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp, nextTick, onBeforeMount, onMounted, onScopeDispose, ref, watch, type ArrangeApp } from '@arrange/framework'
-import { Text } from '@arrange/framework/foundation'
-import { defineArrangable } from '@arrange/framework/internal'
+import { createApp, nextTick, onBeforeMount, onMounted, onScopeDispose, ref, watch, type CantonApp } from '@canton/framework'
+import { Text } from '@canton/framework/foundation'
+import { defineArrangable } from '@canton/framework/internal'
 import { FrameScheduler, type SchedulerJob } from '../../packages/framework/src/runtime/scheduler.ts'
 import { scheduleFrameDeadline } from '../../packages/framework/src/runtime/frameDeadline.ts'
 import { RearrangeSession } from '../../packages/framework/src/runtime/rearrange.ts'
-import type { RearrangeHost } from '../../packages/framework/src/runtime/rearrangeNode.ts'
+import type { RearrangeHost } from '../../packages/framework/src/runtime/arrangable.ts'
 import { frameScope } from './frameScope.ts'
 import { recordingNative } from './recordingNative.ts'
 
@@ -134,7 +134,7 @@ test('setup 与挂载生命周期主动卸载立即清理，剩余结构和通�
         const events: string[] = []
         const errors: unknown[] = []
         const native = recordingNative()
-        let app: ArrangeApp
+        let app: CantonApp
         app = createApp(defineArrangable({
             setup(_props, { call }) {
                 onScopeDispose(() => events.push('释放'))
@@ -170,7 +170,7 @@ test('参数传播中的帧前观察或结构执行主动卸载撤销候选，�
         const errors: unknown[] = []
         const native = recordingNative()
         let released = 0
-        let app: ArrangeApp
+        let app: CantonApp
         const Child = defineArrangable({
             props: { count: { type: Number, required: true } },
             setup(props, { call }) {
@@ -209,7 +209,7 @@ test('setup 失败及卸载取消中的清理错误保留原错误并完成其�
         const errors: unknown[] = []
         const events: string[] = []
         const native = recordingNative()
-        let app: ArrangeApp
+        let app: CantonApp
         app = createApp(defineArrangable({
             setup() {
                 onScopeDispose(() => {

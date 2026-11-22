@@ -13,7 +13,7 @@ export interface CreateCommandOptions {
 }
 
 export function registerCreateCommand(program: ApplicationCommand, initializer: Pick<ProjectInitializer, "planCreate" | "apply">, syncService: Pick<SyncService, "run">, interaction: ProjectInteraction, reporter: Reporter): void {
-    program.command("create").description("创建完整 Arrange 工程").option("--registry <url>", "Framework npm 仓库地址").option("--fetch-content <url>", "Framework CMake FetchContent 的 Git 仓库地址")
+    program.command("create").description("创建完整 Canton 工程").option("--registry <url>", "Framework npm 仓库地址").option("--fetch-content <url>", "核验 Framework 版本 tag 的 Git 仓库地址")
         .action(async (options: CreateCommandOptions) => {
             let created = false
             let location = ''
@@ -26,10 +26,10 @@ export function registerCreateCommand(program: ApplicationCommand, initializer: 
                 created = true
                 location = projectLocationHint(state.rootDir)
                 interaction.message("工程已创建")
-                if (!await interaction.confirm("立即运行完整 sync，准备开发环境？")) return reporter.success(`工程已创建${location}，运行 arrange sync 准备开发环境`)
+                if (!await interaction.confirm("立即运行完整 sync，准备开发环境？")) return reporter.success(`工程已创建${location}，运行 canton sync 准备开发环境`)
                 const result = await syncService.run({}, state.rootDir)
                 if (result.status !== "completed") {
-                    reporter.error(`工程已创建；同步未完成${location}，运行 arrange sync 继续`)
+                    reporter.error(`工程已创建；同步未完成${location}，运行 canton sync 继续`)
                     return 1
                 }
                 reporter.success(`工程已创建，开发环境已就绪${location}`)

@@ -1,22 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as core from '@arrange/framework'
-import * as foundation from '@arrange/framework/foundation'
-import * as ui from '@arrange/framework/ui'
-import * as animation from '@arrange/framework/animation'
-import * as interop from '@arrange/framework/interop'
-import * as internal from '@arrange/framework/internal'
+import * as core from '@canton/framework'
+import * as foundation from '@canton/framework/foundation'
+import * as ui from '@canton/framework/ui'
+import * as animation from '@canton/framework/animation'
+import * as internal from '@canton/framework/internal'
 import { frameScope } from './frameScope.ts'
-import { requireSfaModule } from './sfaModules.ts'
+import { requireCtaModule } from './ctaModules.ts'
 
 test('分层入口、编译协议与动画通道共享响应式身份', () => {
     assert.equal(typeof core.Log, 'object')
 
-    assert.equal(requireSfaModule('@arrange/framework/foundation'), foundation)
-    assert.equal(requireSfaModule('@arrange/framework/ui'), ui)
-    assert.equal(requireSfaModule('@arrange/framework/animation'), animation)
-    assert.equal(requireSfaModule('@arrange/framework/interop'), interop)
-    assert.equal(requireSfaModule('@arrange/framework/internal'), internal)
+    assert.equal(requireCtaModule('@canton/framework/foundation'), foundation)
+    assert.equal(requireCtaModule('@canton/framework/ui'), ui)
+    assert.equal(requireCtaModule('@canton/framework/animation'), animation)
+    assert.equal(requireCtaModule('@canton/framework/internal'), internal)
     assert.equal(core.ref, internal.ref)
     assert.ok(ui.M instanceof ui.Modifier)
 

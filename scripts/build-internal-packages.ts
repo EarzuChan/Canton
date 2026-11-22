@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import { repoRoot } from "./common.ts"
-import { assertArrangeVersionContract, readArrangeVersionContract } from "./version-contract.ts"
+import { assertCantonVersionContract, readCantonVersionContract } from "./version-contract.ts"
 
 type PackageManifest = {
     name?: unknown
     version?: unknown
-    arrange?: unknown
+    canton?: unknown
     bin?: unknown
     private?: unknown
     exports?: unknown
@@ -30,10 +30,10 @@ const packagesRoot = resolve(repoRoot, "packages")
 const cliPackagePath = resolve(repoRoot, "cli", "package.json")
 const forbiddenPublicFields = ["main", "module", "types", "unpkg", "jsdelivr"] as const
 const forbiddenExportKeys = new Set(["types", "require", "default"])
-const allowedExportKeys = new Set(["arrange-ts", "import"])
-const internalPackagePattern = /^@arrange\//
-const publicPackageNames = new Set(["@arrange/framework"])
-const publicBundleDeps = new Map<string, readonly string[]>([['@arrange/framework', ['@arrange/vite-plugin', '@arrange/reactivity', '@arrange/compiler', '@arrange/shared']]])
+const allowedExportKeys = new Set(["canton-ts", "import"])
+const internalPackagePattern = /^@canton\//
+const publicPackageNames = new Set(["@canton/framework"])
+const publicBundleDeps = new Map<string, readonly string[]>([['@canton/framework', ['@canton/vite-plugin', '@canton/reactivity', '@canton/compiler', '@canton/shared']]])
 
 function fail(message: string): never {
     throw new Error(message)
@@ -59,7 +59,7 @@ function assertExportTarget(pkgDir: string, pkgName: string, target: ExportTarge
     }
     for (const [key, value] of Object.entries(target)) {
         if (forbiddenExportKeys.has(key)) fail(`${pkgName} export ${path}.${key} is forbidden in TS-first packages`)
-        if (!allowedExportKeys.has(key)) fail(`${pkgName} export ${path}.${key} is not an Arrange TS-first condition`)
+        if (!allowedExportKeys.has(key)) fail(`${pkgName} export ${path}.${key} is not an Canton TS-first condition`)
         if (typeof value === "string") assertTsEntry(pkgDir, pkgName, value, `${path}.${key}`)
         else if (value && typeof value === "object") assertExportTarget(pkgDir, pkgName, value as ExportTarget, `${path}.${key}`)
         else fail(`${pkgName} export ${path}.${key} has invalid target`)
@@ -71,14 +71,14 @@ function assertNoDistDirectory(pkgDir: string, pkgName: string): void {
     if (!existsSync(distPath)) return
     rmSync(distPath, { recursive: true, force: true })
     if (existsSync(distPath)) fail(`${pkgName} dist directory remains after removal`)
-    console.log('[ArrangePackageBuild]', `removed forbidden package dist: ${pkgName}`)
+    console.log('[CantonPackageBuild]', `removed forbidden package dist: ${pkgName}`)
 }
 
 function assertNoPublicDistFields(manifest: PackageManifest, pkgName: string): void {
     for (const field of forbiddenPublicFields) {
         if (field in manifest) fail(`${pkgName} must not declare public ${field}`)
     }
-    if ("bin" in manifest) fail(`${pkgName} must not declare CLI bin; Arrange CLI lives in @arrange/cli`)
+    if ("bin" in manifest) fail(`${pkgName} must not declare CLI bin; Canton CLI lives in @canton/cli`)
     if (Array.isArray(manifest.files) && manifest.files.some((item) => String(item).includes("dist"))) {
         fail(`${pkgName} must not publish dist in files`)
     }
@@ -117,48 +117,48 @@ function assertPublicPackageContract(manifest: PackageManifest, pkgName: string)
 
     const expectedBundleDeps = publicBundleDeps.get(pkgName) ?? []
     const actual = manifest.bundledDependencies ?? manifest.bundleDependencies
-    if (!Array.isArray(actual)) fail(`${pkgName} must bundle internal Arrange packages`)
+    if (!Array.isArray(actual)) fail(`${pkgName} must bundle internal Canton packages`)
     const actualNames = new Set(actual.map(String))
     for (const dep of expectedBundleDeps) {
         if (!actualNames.has(dep)) fail(`${pkgName} must bundle ${dep}`)
     }
 
-    if (pkgName === "@arrange/framework") {
-        const arrange = manifest.arrange
-        if (!arrange || typeof arrange !== "object" || Array.isArray(arrange)) {
-            fail(`${pkgName} must declare arrange package metadata`)
+    if (pkgName === "@canton/framework") {
+        const canton = manifest.canton
+        if (!canton || typeof canton !== "object" || Array.isArray(canton)) {
+            fail(`${pkgName} must declare canton package metadata`)
         }
-        const compatibility = (arrange as Record<string, unknown>).cliCompatibility
+        const compatibility = (canton as Record<string, unknown>).cliCompatibility
         if (typeof compatibility !== "number" || !Number.isInteger(compatibility) || compatibility <= 0) {
-            fail(`${pkgName} arrange.cliCompatibility must be a positive integer`)
+            fail(`${pkgName} canton.cliCompatibility must be a positive integer`)
         }
     }
 }
 
 function assertCliPackageContract(): void {
     const manifest = readJson(cliPackagePath)
-    if (manifest.name !== "@arrange/cli") fail("cli/package.json must publish @arrange/cli")
-    if (manifest.version !== contract.cliVersion) fail(`@arrange/cli version must be ${contract.cliVersion}`)
-    if (manifest.private === true) fail("@arrange/cli must be publishable")
+    if (manifest.name !== "@canton/cli") fail("cli/package.json must publish @canton/cli")
+    if (manifest.version !== contract.cliVersion) fail(`@canton/cli version must be ${contract.cliVersion}`)
+    if (manifest.private === true) fail("@canton/cli must be publishable")
     const bin = manifest.bin
-    if (!bin || typeof bin !== "object" || Array.isArray(bin) || (bin as Record<string, unknown>).arrange !== "./dist/Entry.js") {
-        fail("@arrange/cli 必须以 ./dist/Entry.js 提供 arrange 命令")
+    if (!bin || typeof bin !== "object" || Array.isArray(bin) || (bin as Record<string, unknown>).canton !== "./dist/Entry.js") {
+        fail("@canton/cli 必须以 ./dist/Entry.js 提供 canton 命令")
     }
     if (!Array.isArray(manifest.files) || !manifest.files.includes("dist")) {
-        fail("@arrange/cli 必须发布编译后的 dist 目录")
+        fail("@canton/cli 必须发布编译后的 dist 目录")
     }
     const publishConfig = manifest.publishConfig
     if (!publishConfig || typeof publishConfig !== "object" || (publishConfig as Record<string, unknown>).access !== "public") {
-        fail("@arrange/cli publishConfig.access must be public")
+        fail("@canton/cli publishConfig.access must be public")
     }
-    assertNoWorkspaceOrCatalogSpecs(manifest, "@arrange/cli")
+    assertNoWorkspaceOrCatalogSpecs(manifest, "@canton/cli")
     for (const [, name] of dependencyEntries(manifest)) {
-        if (name === "@arrange/framework") fail("@arrange/cli must not directly depend on @arrange/framework")
+        if (name === "@canton/framework") fail("@canton/cli must not directly depend on @canton/framework")
     }
 }
 
 function assertNoSourceDirectInternalImports(path: string, source: string): void {
-    const directImportPattern = /from\s+["'](@arrange\/[^"']*\/(?:src|dist)\/[^"']*)["']|import\s*\(\s*["'](@arrange\/[^"']*\/(?:src|dist)\/[^"']*)["']\s*\)/g
+    const directImportPattern = /from\s+["'](@canton\/[^"']*\/(?:src|dist)\/[^"']*)["']|import\s*\(\s*["'](@canton\/[^"']*\/(?:src|dist)\/[^"']*)["']\s*\)/g
     let match: RegExpExecArray | null
     while ((match = directImportPattern.exec(source))) {
         fail(`${path} bypasses package exports: ${match[1] ?? match[2]}`)
@@ -181,13 +181,13 @@ function walkFiles(dir: string, visit: (path: string) => void): void {
 
 const packageDirs = readdirSync(packagesRoot).map((name) => resolve(packagesRoot, name)).filter((path) => statSync(path).isDirectory() && existsSync(resolve(path, "package.json")))
 
-const contract = readArrangeVersionContract()
-assertArrangeVersionContract()
+const contract = readCantonVersionContract()
+assertCantonVersionContract()
 
 for (const pkgDir of packageDirs) {
     const manifest = readJson(resolve(pkgDir, "package.json"))
     const pkgName = typeof manifest.name === "string" ? manifest.name : fail(`${pkgDir} missing package name`)
-    if (!internalPackagePattern.test(pkgName)) fail(`${pkgName} is not an Arrange internal package`)
+    if (!internalPackagePattern.test(pkgName)) fail(`${pkgName} is not an Canton internal package`)
     if (manifest.version !== contract.frameworkVersion) fail(`${pkgName} version must be ${contract.frameworkVersion}`)
     assertNoPublicDistFields(manifest, pkgName)
     assertNoWorkspaceOrCatalogSpecs(manifest, pkgName)
@@ -201,11 +201,11 @@ for (const pkgDir of packageDirs) {
 
 for (const root of ["packages", "scripts", "tests"]) {
     walkFiles(resolve(repoRoot, root), (path) => {
-        if (!/\.(?:ts|tsx|js|jsx|sfa|json)$/.test(path)) return
+        if (!/\.(?:ts|tsx|js|jsx|cta|json)$/.test(path)) return
         if (path.endsWith("package.json")) return
         assertNoSourceDirectInternalImports(path, readFileSync(path, "utf8"))
     })
 }
 
 assertCliPackageContract()
-console.log('[ArrangePackageBuild]', "verified TS-first package and publish boundary contract")
+console.log('[CantonPackageBuild]', "verified TS-first package and publish boundary contract")

@@ -74,7 +74,7 @@ export class ProjectRegistry {
         try {
             const info = await lstat(root)
             if (!info.isDirectory()) return "replaced"
-            const config = await lstat(join(root, verification ? "cmake/NativeDependencies.json" : "arrange.project.yaml")).catch(error => {
+            const config = await lstat(join(root, verification ? "cmake/NativeDependencies.json" : "canton.project.yaml")).catch(error => {
                 if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
                 throw error
             })

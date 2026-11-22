@@ -59,18 +59,18 @@ export function registerMaintenanceCommands(program: ApplicationCommand, input: 
         signal.throwIfAborted()
         return !isCancel(answer) && answer
     }
-    program.command("clean").description("清理当前工程的生成结果").option("--ui-only", "仅清理 UI 输出").option("--native-only", "仅清理原生构建树").option("--artifacts-only", "仅清理受管交付物").option("--artifacts", "同时清理受管交付物").option("--flavor <flavor>", "原生配置：debug 或 release").option("--scan", "只查看计划")
-        .action(async (options: { uiOnly?: boolean, nativeOnly?: boolean, artifactsOnly?: boolean, artifacts?: boolean, flavor?: string, scan?: boolean }) => {
-            if ([options.uiOnly, options.nativeOnly, options.artifactsOnly].filter(Boolean).length > 1 || options.artifacts && (options.uiOnly || options.nativeOnly || options.artifactsOnly)) throw new Error("清理范围参数互斥")
-            if (options.flavor && !["debug", "release"].includes(options.flavor) || options.flavor && (options.uiOnly || options.artifactsOnly)) throw new Error("--flavor 只接受原生范围的 debug 或 release")
-            const clean: CleanOptions = { ui: !options.nativeOnly && !options.artifactsOnly, native: !options.uiOnly && !options.artifactsOnly, artifacts: !!(options.artifacts || options.artifactsOnly), flavor: options.flavor as "debug" | "release" | undefined }
+    program.command("clean").description("清理当前工程的生成结果").option("--ui-only", "仅清理 UI 输出").option("--native-only", "仅清理原生构建树").option("--flavor <flavor>", "原生配置：debug 或 release").option("--scan", "只查看计划")
+        .action(async (options: { uiOnly?: boolean, nativeOnly?: boolean, flavor?: string, scan?: boolean }) => {
+            if (options.uiOnly && options.nativeOnly) throw new Error("清理范围参数互斥")
+            if (options.flavor && !["debug", "release"].includes(options.flavor) || options.flavor && options.uiOnly) throw new Error("--flavor 只接受原生范围的 debug 或 release")
+            const clean: CleanOptions = { ui: !options.nativeOnly, native: !options.uiOnly, flavor: options.flavor as "debug" | "release" | undefined }
             const root = process.cwd()
-            const plan = options.scan ? await input.projects.run(root, { configuration: "read", ui: clean.ui ? "read" : undefined, native: clean.native ? "read" : undefined, artifacts: clean.artifacts ? "read" : undefined, observe: true }, "查看工程清理计划", async () => input.cleaner.plan(await input.store.load(root), clean)) : await input.cleaner.plan(await input.store.load(root), clean)
+            const plan = options.scan ? await input.projects.run(root, { configuration: "read", ui: clean.ui ? "read" : undefined, native: clean.native ? "read" : undefined, observe: true }, "查看工程清理计划", async () => input.cleaner.plan(await input.store.load(root), clean)) : await input.cleaner.plan(await input.store.load(root), clean)
             for (const entry of plan) terminal.reporter.info(`${entry.reason}：${entry.path}`)
             if (!plan.length || options.scan) return terminal.reporter.success(plan.length ? "清理计划已展示，未修改" : "没有可清理内容")
             const identities = await Promise.all(plan.map(entry => treeIdentity(entry.path)))
             if (!await ask("确认清理以上内容？")) return terminal.reporter.warn("已取消清理")
-            await input.projects.run(root, { configuration: "write", ui: clean.ui ? "write" : undefined, native: clean.native ? "write" : undefined, artifacts: clean.artifacts ? "write" : undefined }, "arrange clean", async () => {
+            await input.projects.run(root, { configuration: "write", ui: clean.ui ? "write" : undefined, native: clean.native ? "write" : undefined }, "canton clean", async () => {
                 const current = await input.store.load(root)
                 const next = await input.cleaner.plan(current, clean)
                 if (JSON.stringify(next) !== JSON.stringify(plan) || JSON.stringify(await Promise.all(next.map(entry => treeIdentity(entry.path)))) !== JSON.stringify(identities)) throw new Error("清理计划在确认后发生变化，请重新运行")
@@ -78,7 +78,7 @@ export function registerMaintenanceCommands(program: ApplicationCommand, input: 
             })
             terminal.reporter.success("工程清理完成")
         })
-    const storage = program.command("storage").description("管理本用户 Arrange 存储")
+    const storage = program.command("storage").description("管理本用户 Canton 存储")
     storage.command("inspect").description("查看工程登记与受管资源").action(async () => {
         const items = await inspectStorage()
         if (!items.length) return terminal.reporter.success("存储为空，没有内容")
@@ -98,7 +98,7 @@ export function registerMaintenanceCommands(program: ApplicationCommand, input: 
         const selectedItems = candidates.filter(item => selected.includes(item.id))
         const identities = await Promise.all(selectedItems.map(item => treeIdentity(item.path)))
         if (!await ask("确认清理所选资源？")) return terminal.reporter.warn("已取消清理")
-        await input.operations.run([{ ...input.lifetime, mode: "write" }, ...selectedItems.map(item => ({ kind: "directory" as const, path: item.path, mode: "write" as const }))], "arrange storage clean", async () => {
+        await input.operations.run([{ ...input.lifetime, mode: "write" }, ...selectedItems.map(item => ({ kind: "directory" as const, path: item.path, mode: "write" as const }))], "canton storage clean", async () => {
             if (JSON.stringify(identities) !== JSON.stringify(await Promise.all(selectedItems.map(item => treeIdentity(item.path))))) throw new Error("所选资源在确认后变化，请重新查看")
             await input.maintenance.clean(selectedItems)
         }, true)
@@ -112,7 +112,7 @@ export function registerMaintenanceCommands(program: ApplicationCommand, input: 
         if (options.scan) return
         if (!item.repairable) throw new Error(`此依赖源码不能自动修复：${item.cleanup.reason}；请使用 storage inspect 查看具体原因`)
         if (!await ask("确认重新获取此源码快照，并使相关准备状态失效？")) return terminal.reporter.warn("已取消修复")
-        await input.operations.run([{ ...input.lifetime, mode: "write" }, ...item.references.paths.map(path => ({ kind: "directory" as const, path, mode: "write" as const }))], "arrange storage repair", () => terminal.tasks.run({ id: "source-repair", title: "修复共享依赖源码" }, task => input.maintenance.repair(key, task)))
+        await input.operations.run([{ ...input.lifetime, mode: "write" }, ...item.references.paths.map(path => ({ kind: "directory" as const, path, mode: "write" as const }))], "canton storage repair", () => terminal.tasks.run({ id: "source-repair", title: "修复共享依赖源码" }, task => input.maintenance.repair(key, task)))
         terminal.reporter.success("依赖源码修复完成，请重新运行 native SETUP")
     })
     const registerRecovery = (command: ApplicationCommand, user: boolean): void => {

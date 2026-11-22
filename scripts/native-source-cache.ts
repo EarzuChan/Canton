@@ -11,9 +11,9 @@ import { currentNativeSession } from "./native-session.ts"
 export async function cachedNativeDefinitions(definitions: Readonly<Record<string, string>>): Promise<Readonly<Record<string, string>>> {
     const user = new UserDirectories()
     const { host, operations, signal } = currentNativeSession()
-    const executor = new Executor(process.platform, signal, host)
+    const executor = new Executor(signal, host)
     const cache = new SourceCache(user, new GitSource(executor), signal, operations)
-    const log = (line: string) => console.log("[ArrangeNativeSource]", line)
+    const log = (line: string) => console.log("[CantonNativeSource]", line)
     const task: TaskOutput = {
         title: "验收依赖源码", line: log, waiting: text => { if (text) log(text) }, stage: text => { if (text) log(text) }, progress: () => { }, process: spec => {
             const decoders = { stdout: new LineDecoder(log), stderr: new LineDecoder(log) }
@@ -28,9 +28,8 @@ export async function cachedNativeDefinitions(definitions: Readonly<Record<strin
     return operations.run([{ kind: "directory", path: user.dependencySources, mode: "read" }], "准备验收依赖源码", async () => {
         const manifest = await readNativeDependencies(repoRoot)
         const result: Record<string, string> = { ...definitions }
-        for (const [name, key, override] of [["juce", "FETCHCONTENT_SOURCE_DIR_JUCE", "JUCE_DIR"], ["quickjs_ng", "FETCHCONTENT_SOURCE_DIR_QUICKJS_NG", "ARRANGE_QUICKJS_NG_SOURCE_DIR"]] as const) {
-            if (result[key] || result[override]) continue
-            result[key] = (await cache.ensure(manifest[name], name === "juce" ? "JUCE" : "QuickJS-NG", task)).directory
+        if (!result.FETCHCONTENT_SOURCE_DIR_QUICKJS_NG && !result.CANTON_QUICKJS_NG_SOURCE_DIR) {
+            result.FETCHCONTENT_SOURCE_DIR_QUICKJS_NG = (await cache.ensure(manifest.quickjs_ng, "QuickJS-NG", task)).directory
         }
         return result
     })

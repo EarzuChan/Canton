@@ -28,6 +28,3 @@ export function validateSemver(value: string): string | undefined {
 }
 
 const codePattern = /^[A-Za-z0-9]{4}$/
-export function validateFourCharCode(value: string): string | undefined {
-    return codePattern.test(value) ? undefined : "请输入恰好四个 ASCII 字母或数字"
-}

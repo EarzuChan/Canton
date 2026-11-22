@@ -1,4 +1,4 @@
-import { createApp } from '@arrange/framework'
-import DrawApp from './DrawApp.sfa'
+import { createApp } from '@canton/framework'
+import DrawApp from './DrawApp.cta'
 
 createApp(DrawApp).mount()

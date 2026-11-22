@@ -50,7 +50,7 @@ export class BuildInventory {
                     const record = await readCurrentRecord(recordPath, buildOwnerRecordSchema)
                     if (buildPathKey(record.rootDir) !== basename(path)) throw new InspectionError({ state: "damaged", path: recordPath, reason: "owner 工程路径与构建目录身份不匹配" })
                     owner = record.rootDir
-                    configurations = (await directoryNames(path)).filter(name => /^(?:mac-)?[ax][dr]$/.test(name)).map(name => join(path, name))
+                    configurations = (await directoryNames(path)).filter(name => /^[ax][dr]$/.test(name)).map(name => join(path, name))
                 }
                 owned = true
                 facts.push({ label: "ownership", check: { state: "ready", path: recordPath, reason: `归属已确认：${owner}` } })

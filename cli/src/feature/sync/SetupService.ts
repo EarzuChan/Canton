@@ -3,8 +3,6 @@ import { ToolchainService } from "../platform/ToolchainService.ts"
 import { NodeJsService } from "../nodejs/NodeJsService.ts"
 import { CmakeService } from "../cmake/CmakeService.ts"
 import { FrameworkService } from "../framework/FrameworkService.ts"
-import { frameworkSourceProblem, type FrameworkSourceProbe } from "../framework/FrameworkSourceProbe.ts"
-import { localFrameworkOriginProblem } from "../framework/FrameworkOrigin.ts"
 import type { SetupInteraction } from "./SetupInteraction.ts"
 import { assertSnapshots } from "../../util/FileUtils.ts"
 import { errorMessage } from "../../util/Utils.ts"
@@ -15,7 +13,7 @@ import type { ProjectState } from "../project/ProjectState.ts"
 import { ResourcePlanChanged } from "../../util/ResourcePlanChanged.ts"
 
 export class SetupService {
-    constructor(private readonly store: ProjectStateStore, private readonly tools: ToolchainService, private readonly node: NodeJsService, private readonly cmake: CmakeService, private readonly framework: FrameworkService, private readonly interaction: SetupInteraction, private readonly tasks: TaskRunner, private readonly signal: AbortSignal, private readonly source?: FrameworkSourceProbe, private readonly beforeApply?: (state: ProjectState, scope: SetupScope) => Promise<void>) { }
+    constructor(private readonly store: ProjectStateStore, private readonly tools: ToolchainService, private readonly node: NodeJsService, private readonly cmake: CmakeService, private readonly framework: FrameworkService, private readonly interaction: SetupInteraction, private readonly tasks: TaskRunner, private readonly signal: AbortSignal, private readonly beforeApply?: (state: ProjectState, scope: SetupScope) => Promise<void>) { }
 
     async scan(rootDir: string, scope: SetupScope): Promise<SetupScanReport> {
         this.signal.throwIfAborted()
@@ -30,8 +28,6 @@ export class SetupService {
             if (isAbortError(error)) throw error
             fatal.push({ key: "framework", message: errorMessage(error) })
         }
-        const originProblem = localFrameworkOriginProblem(state)
-        if (originProblem) fatal.push({ key: "framework-origin", message: originProblem })
         const inspected = await this.tools.inspect(state, scope)
         this.signal.throwIfAborted()
         const proposedLocal = inspected.local
@@ -50,12 +46,6 @@ export class SetupService {
                 const result = await this.cmake.inspect(preparedState, flavor)
                 if (result.ready) idle.push(`native ${flavor}`)
                 else applicable.push({ kind: "configure-native", flavor })
-            }
-            // 要配置构建树时才联网预检，且在安装 UI 依赖之前报告：原生源码取不到时不必先白等 UI 安装
-            if (this.source && applicable.some(task => task.kind === "configure-native")) {
-                const message = frameworkSourceProblem(await this.source.check(preparedState))
-                this.signal.throwIfAborted()
-                if (message) fatal.push({ key: "native-source", message })
             }
         }
         return { scope, state, snapshots: loaded.snapshots, proposedLocal, fatal, resolvable, idle, applicable }

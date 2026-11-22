@@ -15,7 +15,7 @@ import { isAbortError } from "../src/feature/platform/ProcessSpec.ts"
 import { write } from "./fixture.ts"
 
 async function harness(t: TestContext) {
-    const root = await mkdtemp(join(tmpdir(), "arrange-operation-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-operation-"))
     const user = new UserDirectories(join(root, "user"))
     const hosts: OperationHost[] = []
     const children: ChildProcess[] = []
@@ -48,11 +48,11 @@ test("内核锁不因时间推移转移，关闭句柄后允许下一持有者",
 test("路径别名和 Windows 大小写共享资源身份，嵌套目录冲突，独立目录不冲突", async t => {
     const input = await harness(t)
     await write(join(input.root, "real", "keep"), "x")
-    await symlink(join(input.root, "real"), join(input.root, "alias"), process.platform === "win32" ? "junction" : "dir")
+    await symlink(join(input.root, "real"), join(input.root, "alias"), "junction")
     const first = await canonicalResource({ ...input.resource, path: join(input.root, "real", "new") })
     const alias = await canonicalResource({ ...input.resource, path: join(input.root, "alias", "new") })
     assert.deepEqual(first, alias)
-    if (process.platform === "win32") assert.deepEqual(first, await canonicalResource({ ...first, path: first.path.toUpperCase() }))
+    assert.deepEqual(first, await canonicalResource({ ...first, path: first.path.toUpperCase() }))
     assert.equal(resourcesConflict(first, { ...first, path: join(first.path, "child") }), true)
     assert.equal(resourcesConflict(first, { ...first, path: `${first.path}-different` }), false)
     assert.equal(resourcesConflict({ ...first, mode: "read" }, { ...first, mode: "read" }), false)

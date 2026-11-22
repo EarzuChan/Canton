@@ -1,7 +1,8 @@
-import { capitalize, extend, hasChanged, hasOwn, isMap, toRawType } from '@arrange/shared'
+import { capitalize, extend, hasChanged, hasOwn, isMap, toRawType } from '@canton/shared'
 import { ReactiveFlags, TrackOpTypes, TriggerOpTypes } from './constants.ts'
 import { ITERATE_KEY, MAP_KEY_ITERATE_KEY, track, trigger } from './dep.ts'
-import { type Target, isReadonly, isShallow, toRaw, toReactive, toReadonly } from './reactive.ts'
+import { isReadonly, isShallow, toRaw, toReactive, toReadonly } from './target.ts'
+import type { Target } from './types.ts'
 import { warn } from './warning.ts'
 
 type CollectionTypes = IterableCollections | WeakCollections

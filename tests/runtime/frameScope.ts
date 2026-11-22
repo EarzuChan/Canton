@@ -1,4 +1,4 @@
-import { effectScope } from '@arrange/framework'
+import { effectScope } from '@canton/framework'
 import { FrameScheduler } from '../../packages/framework/src/runtime/scheduler.ts'
 import { bindFrameScheduler } from '../../packages/framework/src/runtime/animationOwner.ts'
 

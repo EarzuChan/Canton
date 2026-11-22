@@ -1,9 +1,9 @@
 import { defineArrangable, shallowRef, watch } from '../runtime/index.ts'
 import type { ArrangableProps, PropType } from '../runtime/index.ts'
-import { MinSizeMeasurePolicy } from '../measurePolicy.ts'
-import { M, Modifier } from '../modifier.ts'
-import type { TextStyleProp } from '../native.ts'
-import type { TextAlignment } from '../primitives.ts'
+import { MinSizeMeasurePolicy } from '../layout/measurePolicy.ts'
+import { M, Modifier } from '../modifier/modifier.ts'
+import type { TextStyleProp } from '../native/protocol.ts'
+import type { TextAlignment } from '../values/primitives.ts'
 import { Layout } from './Layout.ts'
 
 export type TextProps = ArrangableProps<typeof Text>

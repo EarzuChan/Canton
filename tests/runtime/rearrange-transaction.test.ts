@@ -5,7 +5,7 @@ import { defineArrangable } from '../../packages/framework/src/runtime/apiDefine
 import { RearrangeSession } from '../../packages/framework/src/runtime/rearrange.ts'
 import { nextTick } from '../../packages/framework/src/runtime/scheduler.ts'
 import { onMounted, onUnmounted, onUpdated } from '../../packages/framework/src/runtime/apiLifecycle.ts'
-import type { RearrangeHost } from '../../packages/framework/src/runtime/rearrangeNode.ts'
+import type { RearrangeHost } from '../../packages/framework/src/runtime/arrangable.ts'
 import type { ArrangableDefinition } from '../../packages/framework/src/runtime/arrangable.ts'
 
 function controlledHost() {

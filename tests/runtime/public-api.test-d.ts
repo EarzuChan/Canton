@@ -1,7 +1,7 @@
-import { painter, Alignment, Arrangement, ContentScale, M } from '@arrange/framework/ui'
-import { Column, Image, Input, Text, type BoxProps, type ColumnProps, type ImageProps, type InputProps, type RowProps, type TextProps } from '@arrange/framework/foundation'
-import { createScrollState, ref, type PropType, type ArrangableProps } from '@arrange/framework'
-import { defineArrangable, callArrangable } from '@arrange/framework/internal'
+import { painter, Alignment, Arrangement, ContentScale, M } from '@canton/framework/ui'
+import { Column, Image, Input, Text, type BoxProps, type ColumnProps, type ImageProps, type InputProps, type RowProps, type TextProps } from '@canton/framework/foundation'
+import { createScrollState, ref, type PropType, type ArrangableProps } from '@canton/framework'
+import { defineArrangable, callArrangable } from '@canton/framework/internal'
 
 const text = ref('原生输入')
 const inputProps = { value: '初始内容', onSubmit: (value: string) => { text.value = value } } satisfies InputProps
@@ -28,8 +28,16 @@ const invalidArrangement: RowProps = { horizontalArrangement: Arrangement.spaced
 const invalidArrangementName: ColumnProps = { verticalArrangement: Arrangement.End }
 // @ts-expect-error 文本对齐不接受拼写错误
 const invalidTextAlignment: TextProps = { textAlign: 'middel' }
-// @ts-expect-error Modifier 对齐不接受任意字符串
-M.align('Centre')
+// @ts-expect-error 父布局特权 Modifier 已移除（ADR 002，改由布局 Handle 提供）
+M.align(Alignment.Center)
+// @ts-expect-error 同上
+M.weight(1)
+// @ts-expect-error 同上
+M.matchParentSize()
+// @ts-expect-error 旧 CPU 模糊已移除（ADR 006）
+M.blur(1, 0)
+// @ts-expect-error 同上
+M.backdropBlur(1, 0)
 // @ts-expect-error spacedBy 对齐不接受二维值
 Arrangement.spacedBy(8, 0, Alignment.TopEnd)
 

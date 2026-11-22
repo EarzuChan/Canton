@@ -1,7 +1,7 @@
-import type { NativeTransactionTarget } from '../../packages/framework/src/native.ts'
-import { ARRANGE_RUNTIME_VERSION } from '../../packages/framework/src/native.ts'
+import type { NativeTransactionTarget } from '../../packages/framework/src/native/protocol.ts'
+import { CANTON_RUNTIME_VERSION } from '../../packages/framework/src/native/protocol.ts'
 
-// 补齐真实宿主必然提供的全部成员，测试按需覆盖；interop 仅在传入时出现
+// 补齐真实宿主必然提供的全部成员，测试按需覆盖
 export function createFakeNative(overrides: Partial<NativeTransactionTarget> = {}): NativeTransactionTarget {
     let handle = 1n, pixelVersion = 1
     return {
@@ -27,7 +27,7 @@ export function createFakeNative(overrides: Partial<NativeTransactionTarget> = {
         releaseBinding: () => { },
         modifierInstances: () => [],
         registerModifierBinding: () => ({ identity: handle++, generation: 1n }),
-        runtimeVersion: ARRANGE_RUNTIME_VERSION,
+        runtimeVersion: CANTON_RUNTIME_VERSION,
         createNode: () => { },
         deleteNode: () => { },
         insertChild: () => { },

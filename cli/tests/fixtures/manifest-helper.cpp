@@ -2,7 +2,7 @@
 #include <iostream>
 
 int main() {
-    if (std::getenv("ARRANGE_TEST_HELPER_FAIL")) return 7;
+    if (std::getenv("CANTON_TEST_HELPER_FAIL")) return 7;
     std::cout << "{\"Name\":\"\u4e2d\u6587 & Product\"}";
     return 0;
 }

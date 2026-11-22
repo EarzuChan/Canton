@@ -13,7 +13,6 @@ import { commandInterface } from '../src/business/CommandInterface.ts'
 import { cancelled } from '../src/terminal/PromptController.ts'
 import { Executor } from '../src/feature/platform/Executor.ts'
 import { EmulatedTty } from './terminal-emulator.ts'
-import { registerDevCommand } from '../src/business/command/Dev.ts'
 import { ApplicationCommand } from '../src/business/ApplicationCommand.ts'
 import { cliVersion } from '../src/CliMetadata.ts'
 import { createServer } from 'node:http'
@@ -154,81 +153,6 @@ test('显式正常结束作用域只请求阶段停止并保留就绪提示到�
     assert.match((await output.lines()).join('\n'), /开发会话已结束/)
 })
 
-test('dev 命令收到服务就绪回调后提示正常停止，Esc 收尾为开发会话已结束', async t => {
-    const { session, send, output, host } = fixture()
-    let onStarted!: () => void
-    const started = new Promise<void>(resolve => { onStarted = resolve })
-    const running = session.run(async (ui, signal) => {
-        const cli = new ApplicationCommand({ close: async () => { } }).exitOverride()
-        registerDevCommand(cli, {
-            run: async (_root, options) => {
-                onStarted()
-                options.onRunning?.()
-                await new Promise<void>(resolve => options.stopSignal!.addEventListener('abort', () => resolve(), { once: true }))
-                options.onStopping?.()
-                return { kind: 'ended', reason: 'user' }
-            }
-        }, signal, commandInterface(ui, signal))
-        await cli.parseAsync(['node', 'arrange', 'dev'])
-        return cli.resultCode
-    })
-    t.after(async () => {
-        host.emit('SIGTERM')
-        await running
-        output.terminal.dispose()
-    })
-    await started
-    await until(() => output.written.some(frame => frame.includes('Ctrl+C / Esc 结束开发')))
-    assert.equal(session.signal.aborted, false)
-    send('\x1b')
-    await until(() => output.written.some(frame => frame.includes('按 Enter')))
-    const screen = (await output.screen()).join('\n')
-    assert.match(screen, /开发会话已结束/)
-    assert.doesNotMatch(screen, /开发会话已取消|已取消操作/)
-    assert.equal(session.signal.aborted, false)
-    send('\r')
-    assert.equal(await running, 0)
-})
-
-for (const outcome of ['正常结束', '取消返回零', '取消返回130', '取消异常', '取消清理失败'] as const) test(`dev ${outcome}只呈现一个最终结果及一条尾线`, async t => {
-    const { session, send, output, host } = fixture()
-    let ready!: () => void
-    const started = new Promise<void>(resolve => { ready = resolve })
-    const running = session.run(async (ui, signal) => {
-        const command = new ApplicationCommand({ close: async () => { } }).exitOverride()
-        registerDevCommand(command, {
-            run: async () => {
-                ready()
-                if (outcome === '正常结束') return { kind: 'ended', reason: 'process' }
-                await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
-                if (outcome === '取消异常') throw signal.reason
-                if (outcome === '取消清理失败') throw new Error('开发资源清理失败')
-                return { kind: 'cancelled' }
-            }
-        }, signal, commandInterface(ui, signal))
-        await command.parseAsync(['node', 'arrange', 'dev'])
-        return command.resultCode
-    })
-    t.after(async () => {
-        host.emit('SIGTERM')
-        await running
-        output.terminal.dispose()
-    })
-    await started
-    if (outcome !== '正常结束') send('\x03')
-    await until(() => output.written.some(frame => frame.includes('按 Enter')))
-    const expected = outcome === '正常结束' ? '开发会话已结束' : outcome === '取消清理失败' ? '开发资源清理失败' : '开发会话已取消'
-    const screen = (await output.screen()).join('\n')
-    assert.match(screen, new RegExp('└  ' + expected))
-    assert.equal(screen.split('\n').filter(line => line.startsWith('└')).length, 1)
-    send('\r')
-    assert.equal(await running, outcome === '正常结束' ? 0 : outcome === '取消清理失败' ? 1 : 130)
-    const transcript = (await output.lines()).join('\n')
-    assert.equal(transcript.split('\n').filter(line => line.startsWith('└')).length, 1)
-    assert.ok(!transcript.includes('已取消操作'))
-    assert.equal(transcript.split(expected).length - 1, 1)
-})
-
 test('替换包含问题的区块撤销旧输入目标，旧代写入拒绝，新问题与拍扁保持一致', async () => {
     const { session, send, output } = fixture()
     const running = session.run(async ui => {
@@ -262,7 +186,7 @@ test('非零业务结果也统一停屏，按 Enter 后才恢复终端并保留�
     const { session, send, output, input } = fixture()
     let finished = false
     const running = session.run(async ui => {
-        ui.reporter.info('Usage: arrange [options] [command]')
+        ui.reporter.info('Usage: canton [options] [command]')
         return 7
     }).then(code => {
         finished = true
@@ -275,28 +199,26 @@ test('非零业务结果也统一停屏，按 Enter 后才恢复终端并保留�
     send('\r')
     assert.equal(await running, 7)
     assert.equal(input.isRaw, false)
-    assert.match((await output.lines()).join('\n'), /Usage: arrange/)
+    assert.match((await output.lines()).join('\n'), /Usage: canton/)
     output.terminal.dispose()
 })
 
 test('裸命令、命令组、各级帮助、版本与参数错误全部经过会话停屏', async t => {
     const cases = [
-        { args: [], code: 1, text: /Usage: arrange/ },
-        { args: ['storage'], code: 1, text: /Usage: arrange storage/ },
-        { args: ['--help'], code: 0, text: /Usage: arrange/ },
-        { args: ['help', 'sync'], code: 0, text: /Usage: arrange sync/ },
-        { args: ['storage', '--help'], code: 0, text: /Usage: arrange storage/ },
+        { args: [], code: 1, text: /Usage: canton/ },
+        { args: ['storage'], code: 1, text: /Usage: canton storage/ },
+        { args: ['--help'], code: 0, text: /Usage: canton/ },
+        { args: ['storage', '--help'], code: 0, text: /Usage: canton storage/ },
         { args: ['--version'], code: 0, text: new RegExp(cliVersion.replaceAll('.', '\\.')) },
         { args: ['unknown-command'], code: 1, text: /unknown command/ },
-        { args: ['sync', '--unknown-option'], code: 1, text: /unknown option/ },
         { args: ['storage', 'repair'], code: 1, text: /missing required argument/ }
     ]
-    for (const entry of cases) await t.test(entry.args.join(' ') || 'arrange', { timeout: 5000 }, async t => {
+    for (const entry of cases) await t.test(entry.args.join(' ') || 'canton', { timeout: 5000 }, async t => {
         const { session, send, output, input, host } = fixture()
         let finished = false, released = false
         const running = session.run(async (ui, signal) => {
             const cli = createCliApplication({ signal, interactions: 'terminal', terminal: commandInterface(ui, signal) })
-            try { await cli.parseAsync(['node', 'arrange', ...entry.args]) }
+            try { await cli.parseAsync(['node', 'canton', ...entry.args]) }
             catch (error) {
                 if (error instanceof CommanderError) return error.exitCode
                 throw error
@@ -412,42 +334,6 @@ test('多个任务失败时每条详情只显示一次，不再拼成汇总行�
     assert.doesNotMatch(transcript, /任务甲：甲失败原因/)
 })
 
-test('dev 命令的失败结果已显示在进程面板上时不重复，退出码保持', async () => {
-    const { session, send, output } = fixture()
-    const message = 'ui 意外退出（退出码 3）'
-    const running = session.run(async (ui, signal) => {
-        const cli = new ApplicationCommand({ close: async () => { } }).exitOverride()
-        registerDevCommand(cli, {
-            run: async () => {
-                const progress = new WorkPresenter(ui.tasks).processes()
-                const child = await progress.open({ id: 'ui', title: 'UI' })
-                await child.finish({ kind: 'failed', message })
-                await progress.close({ kind: 'failed', message })
-                return { kind: 'failed', exitCode: 3, message }
-            }
-        }, signal, commandInterface(ui, signal))
-        await cli.parseAsync(['node', 'arrange', 'dev'])
-        return cli.resultCode
-    })
-    const { code, transcript } = await finishAndRead(output, send, running)
-    assert.equal(code, 3)
-    assert.equal(occurrences(transcript, message), 1)
-})
-
-test('dev 命令的失败结果没有显示在任何面板上时仍然输出', async () => {
-    const { session, send, output } = fixture()
-    const message = '开发地址已被占用：http://127.0.0.1:9178'
-    const running = session.run(async (ui, signal) => {
-        const cli = new ApplicationCommand({ close: async () => { } }).exitOverride()
-        registerDevCommand(cli, { run: async () => ({ kind: 'failed', exitCode: 1, message }) }, signal, commandInterface(ui, signal))
-        await cli.parseAsync(['node', 'arrange', 'dev'])
-        return cli.resultCode
-    })
-    const { code, transcript } = await finishAndRead(output, send, running)
-    assert.equal(code, 1)
-    assert.equal(occurrences(transcript, message), 1)
-})
-
 test('开发监管在进程面板打开前失败（端口被占用）时，错误文本仍然显示一次', async () => {
     const server = createServer((request, response) => response.end('ok'))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -533,122 +419,6 @@ test('鼠标回看和点击不夺取问题输入，PageUp 滚历史、Home End �
     send('\r')
     assert.equal(await run, 0)
     assert.match((await output.lines()).join('\n'), /历史 0/)
-    output.terminal.dispose()
-})
-
-for (const key of ['\x03', '\x1b']) test(`${key === '\x03' ? 'Ctrl+C' : 'Esc'} 取消真实子进程后停屏，完成清理并按 Enter 才拍扁`, async () => {
-    const { session, send, input, output } = fixture()
-    let cleaned = false
-    let finished = false
-    const run = session.run(async (ui, signal) => {
-        const work = new WorkPresenter(ui.tasks, signal)
-        await work.run({ id: 'long', title: '真实进程' }, async task => {
-            try {
-                await new Executor(process.platform, signal).run(task.process({ command: process.execPath, args: ['-e', 'process.stdout.write("开始运行\\n");setInterval(()=>{},50)'] }))
-            } finally { cleaned = true }
-        })
-    }).then(code => {
-        finished = true
-        return code
-    })
-    await until(() => output.written.some(frame => frame.includes('开始运行')))
-    send(key)
-    await until(() => output.written.some(frame => frame.includes('按 Enter')))
-    assert.equal(input.isRaw, true)
-    assert.equal(cleaned, true)
-    assert.equal(finished, false)
-    assert.equal(driverClosed(output), 0)
-    assert.match((await output.screen()).join('\n'), /已取消操作/)
-    send('\x03')
-    await delay(60)
-    send('\x1b')
-    await delay(60)
-    assert.equal(finished, false)
-    send('\r')
-    assert.equal(await run, 130)
-    assert.equal(input.isRaw, false)
-    assert.equal(driverClosed(output), 1)
-    assert.match((await output.lines()).join('\n'), /已取消操作/)
-    output.terminal.dispose()
-})
-
-test('全局异常保留原始失败而非取消，并清理提问、帧调度与监听', async () => {
-    const { session, input, output, host } = fixture()
-    const running = session.run(async ui => { assert.ok(isCancel(await text({ ...ui.prompt, message: '等待' }))) })
-    await delay(30)
-    host.emit('uncaughtException', new Error('原始异常'))
-    assert.equal(await running, 1)
-    assert.equal(input.isRaw, false)
-    assert.equal(driverClosed(output), 1)
-    const transcript = (await output.lines()).join('\n')
-    assert.match(transcript, /原始异常/)
-    assert.ok(!transcript.includes('└  已取消操作'))
-    assert.deepEqual(host.eventNames(), [])
-    output.terminal.dispose()
-})
-
-test('当前问题和任务批次不能被后续活跃交互越过，完成框保留至退出', async () => {
-    const { session, send, output } = fixture()
-    const running = session.run(async ui => {
-        const pending = text({ ...ui.prompt, message: '当前问题' })
-        assert.throws(() => ui.reporter.info('越过'), /回答/)
-        assert.throws(() => ui.tasks.group('越过'), /活跃交互/)
-        await pending
-        const group = ui.tasks.group('当前批次')
-        const task = group.task('工具')
-        task.start()
-        task.console('完整内容\r\n')
-        ui.reporter.info('等待共享资源')
-        assert.throws(() => ui.tasks.group('下一批'), /活跃交互/)
-        await task.finish('done')
-        group.complete()
-    })
-    await delay(30)
-    send('\r')
-    await until(() => output.written.some(frame => frame.includes('按 Enter')))
-    assert.match((await output.screen()).join('\n'), /╰─已完成/)
-    send('\r')
-    assert.equal(await running, 0)
-    assert.match((await output.lines()).join('\n'), /完整内容/)
-    const transcript = (await output.lines()).join('\n')
-    assert.ok(transcript.indexOf('等待共享资源') < transcript.indexOf('✓ 工具'), '等待消息保留在同一批次内，不追加到活跃任务之后')
-    output.terminal.dispose()
-})
-
-for (const key of ['\x03', '\x1b']) test(`${key === '\x03' ? 'Ctrl+C' : 'Esc'} 取消创建问题保留业务收尾，只在回车后退出`, async () => {
-    const { session, send, input, output, host } = fixture()
-    let finished = false
-    const running = session.run(async (ui, signal) => {
-        const cli = createCliApplication({ signal, interactions: 'terminal', terminal: commandInterface(ui, signal) })
-        await cli.parseAsync(['create'], { from: 'user' })
-        return cli.resultCode
-    }).then(code => {
-        finished = true
-        return code
-    })
-    await until(() => output.written.some(frame => frame.includes('项目名称')))
-    send(key)
-    await until(() => output.written.some(frame => frame.includes('按 Enter')))
-    assert.equal(session.signal.aborted, true)
-    assert.equal(finished, false)
-    assert.equal(input.isRaw, true)
-    assert.equal(driverClosed(output), 0)
-    const screen = (await output.screen()).join('\n')
-    assert.match(screen, /已取消创建；未写工程文件/)
-    assert.ok(!screen.includes('已取消操作'))
-    send('x\x03')
-    send('\x1b')
-    output.emit('resize')
-    await delay(70)
-    assert.equal(finished, false)
-    send('\r')
-    assert.equal(await running, 130)
-    assert.equal(driverClosed(output), 1)
-    assert.equal(input.isRaw, false)
-    const transcript = (await output.lines()).join('\n')
-    assert.equal(transcript.match(/已取消创建；未写工程文件/g)?.length, 1)
-    assert.ok(!transcript.includes('按 Enter'))
-    assert.deepEqual(host.eventNames(), [])
     output.terminal.dispose()
 })
 

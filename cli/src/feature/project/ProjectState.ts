@@ -1,15 +1,13 @@
 import { z } from "zod"
-import { validateBundleId, validateDisplayName, validateIconPath } from "./ProjectMetadata.ts"
+import { validateDisplayName, validateIconPath } from "./ProjectMetadata.ts"
 import { isConcreteVersion } from '../../util/Semver.ts'
 
-export const arrangeSubprojectSchema = z.enum(["ui", "native"])
-export type ArrangeSubproject = z.infer<typeof arrangeSubprojectSchema>
+export const cantonSubprojectSchema = z.enum(["ui", "native"])
+export type CantonSubproject = z.infer<typeof cantonSubprojectSchema>
 
 export const buildFlavorSchema = z.enum(["debug", "release"])
 export type BuildFlavor = z.infer<typeof buildFlavorSchema>
 
-export const nativeProductSchema = z.enum(["standalone", "vst3"])
-export type NativeProduct = z.infer<typeof nativeProductSchema>
 
 export const packageManagerNameSchema = z.enum(["pnpm", "npm"])
 export type PackageManagerName = z.infer<typeof packageManagerNameSchema>
@@ -17,7 +15,6 @@ export type PackageManagerName = z.infer<typeof packageManagerNameSchema>
 export const frameworkDefinitionSchema = z.object({
     version: z.string().refine(isConcreteVersion, "需要具体版本号"),
     nodeRegistryUrl: z.string().refine(value => !/[\r\n]/.test(value), "registry 不得包含换行").nullish(),
-    cmakeFetchContentUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "FetchContent URL 不得包含换行").nullish(),
 })
 export type FrameworkDefinition = z.infer<typeof frameworkDefinitionSchema>
 
@@ -32,8 +29,7 @@ export type UiProjectDefinition = z.infer<typeof uiProjectDefinitionSchema>
 
 export const nativeProjectDefinitionSchema = z.object({
     directory: z.string().min(1),
-    target: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.+-]*$/, "需要明确且合法的 CMake 插件根目标名称"),
-    pluginType: z.enum(["effect", "instrument"]).default("effect"),
+    target: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.+-]*$/, "需要明确且合法的 CMake 目标名称"),
 })
 export type NativeProjectDefinition = z.infer<typeof nativeProjectDefinitionSchema>
 
@@ -46,13 +42,8 @@ export type ArtifactDefinition = z.infer<typeof artifactDefinitionSchema>
 export const projectMetadataSchema = z.object({
     name: z.string().regex(/^[A-Za-z][A-Za-z0-9_]*$/, "名称须以字母开头，仅含字母、数字、下划线"),
     displayName: validatedText(validateDisplayName).optional(),
-    bundleId: validatedText(validateBundleId).optional(),
     icon: validatedText(validateIconPath).optional(),
     version: z.string().refine(isConcreteVersion, "需要具体版本号"),
-    vendorName: z.string().min(1).refine(value => !/[\r\n]/.test(value), "厂商名称不得包含换行"),
-    vendorCode: z.string().regex(/^[A-Za-z0-9]{4}$/),
-    pluginCode: z.string().regex(/^[A-Za-z0-9]{4}$/),
-    products: z.array(nativeProductSchema).min(1),
 })
 export type ProjectMetadata = z.infer<typeof projectMetadataSchema>
 
@@ -74,7 +65,6 @@ export type ToolPathDefinition = z.infer<typeof toolPathDefinitionSchema>
 
 export const localFrameworkDefinitionSchema = z.object({
     nodeRegistryUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "registry 不得包含换行").optional(),
-    cmakeFetchContentUrl: z.string().min(1).refine(value => !/[\r\n]/.test(value), "Framework 仓库地址不得包含换行").optional(),
 })
 export type LocalFrameworkDefinition = z.infer<typeof localFrameworkDefinitionSchema>
 

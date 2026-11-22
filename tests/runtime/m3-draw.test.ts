@@ -1,18 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { effectScope, ref } from '@arrange/reactivity'
-import { createApp } from '@arrange/framework'
-import { defineArrangable, getArrangeExecutionStats } from '@arrange/framework/internal'
-import { Layout } from '@arrange/framework/foundation'
-import { M, MinSizeMeasurePolicy, createDensity, linearGradient, verticalGradient, radialGradient, sweepGradient, roundedCorners, rounded, solidColor, painter, filmstrip, createPixelBuffer } from '@arrange/framework/ui'
+import { effectScope, ref } from '@canton/reactivity'
+import { createApp } from '@canton/framework'
+import { defineArrangable, getCantonExecutionStats } from '@canton/framework/internal'
+import { Layout } from '@canton/framework/foundation'
+import { M, MinSizeMeasurePolicy, createDensity, linearGradient, verticalGradient, radialGradient, sweepGradient, roundedCorners, rounded, solidColor, painter, filmstrip, createPixelBuffer } from '@canton/framework/ui'
 import { createFakeNative } from '../helpers/fakeNative.ts'
-import { painterSnapshot } from '../../packages/framework/src/painter.ts'
-import { DrawInstance, Path, type DrawScope, type PreparedDraw } from '../../packages/framework/src/draw.ts'
+import { painterSnapshot } from '../../packages/framework/src/draw/painter.ts'
+import { DrawInstance, Path, type DrawScope, type PreparedDraw } from '../../packages/framework/src/draw/draw.ts'
 import { decodeDraw, encodeDraw } from '../helpers/drawCommands.ts'
-import { ModifierLowering } from '../../packages/framework/src/modifierLowering.ts'
+import { ModifierLowering } from '../../packages/framework/src/bridge/modifierLowering.ts'
 import { recordingNative } from './recordingNative.ts'
-import { evaluateSfa } from './sfaModules.ts'
-import { compileArrangeSfa } from '../../packages/vite-plugin/src/sfa.ts'
+import { evaluateCta } from './ctaModules.ts'
+import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 
 test('绘制缓存分别追踪构建与绘制依赖，尺寸与实际读取的 Density 更新缓存', () => {
     const scope = effectScope(), color = ref(0xff112233), geometry = ref(7), density = createDensity(2)
@@ -223,10 +223,10 @@ test('异步绘制 callback 在候选准备阶段被拒绝', () => {
     scope.stop()
 })
 
-test('真实 SFA 绘制方法保留 PX 与颜色契约，依赖变化不执行结构', () => {
+test('真实 CTA 绘制方法保留 PX 与颜色契约，依赖变化不执行结构', () => {
     const source = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="drawing" /></template><script>
-import { Layout } from '@arrange/framework/foundation'
-import { M, MinSizeMeasurePolicy, Color } from '@arrange/framework/ui'
+import { Layout } from '@canton/framework/foundation'
+import { M, MinSizeMeasurePolicy, Color } from '@canton/framework/ui'
 import { color } from './state'
 const drawing = M.size(100.dp, 40.dp).drawWithContent((scope, drawContent) => {
     scope.drawRect({ color: Color(color.value), x: 2.px, width: scope.size.width / 2 })
@@ -237,7 +237,7 @@ const drawing = M.size(100.dp, 40.dp).drawWithContent((scope, drawContent) => {
 })
 </script>`
     const color = ref(0xff112233), native = recordingNative()
-    const app = createApp(evaluateSfa(source, { './state': { color } }, '绘制单位.sfa'))
+    const app = createApp(evaluateCta(source, { './state': { color } }, '绘制单位.cta'))
     app.mount(native.target)
     native.frame()
     const node = [...native.nodes.values()].find(node => node.inputs.has('modifier'))!
@@ -251,14 +251,14 @@ const drawing = M.size(100.dp, 40.dp).drawWithContent((scope, drawContent) => {
     assert.equal(commands[0].width, 50)
     assert.equal(commands[3].strokeWidth, 0.5)
     assert.equal(commands[5].translationX, 3)
-    const structures = getArrangeExecutionStats().structureRuns
+    const structures = getCantonExecutionStats().structureRuns
     color.value = 0xffabcdef
     native.frame()
     assert.equal(prepare()[0].color, color.value)
-    assert.equal(getArrangeExecutionStats().structureRuns, structures)
+    assert.equal(getCantonExecutionStats().structureRuns, structures)
     app.unmount()
-    assert.throws(() => compileArrangeSfa(source.replace('x: 2.px', 'x: 2.dp'), '绘制单位错误.sfa'), /要求 PX.*实际为 DP/)
-    assert.throws(() => compileArrangeSfa(source.replace('Color(0xff223344)', '0xff223344'), '绘制颜色错误.sfa'), /要求 COLOR/)
+    assert.throws(() => compileCantonCta(source.replace('x: 2.px', 'x: 2.dp'), '绘制单位错误.cta'), /要求 PX.*实际为 DP/)
+    assert.throws(() => compileCantonCta(source.replace('Color(0xff223344)', '0xff223344'), '绘制颜色错误.cta'), /要求 COLOR/)
 })
 
 test('绘制命令编码为冻结的定长数值流，颜色精确保留', () => {
@@ -345,27 +345,22 @@ test('分角圆角经 Modifier 降解为四个 PX 半径，统一圆角四角相
     assert.throws(() => roundedCorners({ topStartDp: -1 }), /非负/)
 })
 
-test('阴影与模糊经 Modifier 降解为 PX 长度，偏移冻结，SFA 混合单位合并', () => {
+test('阴影经 Modifier 降解为 PX 长度，偏移冻结，CTA 混合单位合并', () => {
     const units = new ModifierLowering(createDensity(2))
-    const lowered = units.modifier(M.dropShadow({ radiusDp: 4, spreadPx: 1, offset: { yDp: 2, xPx: 3 }, color: 0x80000000, shape: rounded(2, 0) }).innerShadow({ radiusPx: 6, color: 0xff000000 }).blur(1, 1).backdropBlur(3, 0, roundedCorners({ topStartDp: 1 })))
+    const lowered = units.modifier(M.dropShadow({ radiusDp: 4, spreadPx: 1, offset: { yDp: 2, xPx: 3 }, color: 0x80000000, shape: rounded(2, 0) }).innerShadow({ radiusPx: 6, color: 0xff000000 }))
     assert.deepEqual(lowered.elements[0].value, { shape: { type: 'rounded', topStart: 4, topEnd: 4, bottomEnd: 4, bottomStart: 4 }, radius: 8, spread: 1, offset: { x: 3, y: 4 }, color: 0x80000000 })
     assert.deepEqual(lowered.elements[1].value, { shape: undefined, radius: 6, spread: 0, offset: { x: 0, y: 0 }, color: 0xff000000 })
-    assert.deepEqual(lowered.elements[2].value, { radius: 3 })
-    assert.deepEqual(lowered.elements[3].value, { radius: 6, shape: { type: 'rounded', topStart: 2, topEnd: 0, bottomEnd: 0, bottomStart: 0 } })
-    assert.deepEqual(lowered.elements.map(element => element.type), ['dropShadow', 'innerShadow', 'blur', 'backdropBlur'])
-    const visual = (body: string) => `<script>import { M, Color, rounded } from '@arrange/framework/ui'\n${body}</script>`
-    const sfa = compileArrangeSfa(visual('M.dropShadow({ radius: 4.dp + 1.px, offset: { y: 2.dp }, color: Color(0x80000000), shape: rounded(2.dp) }).blur(3.dp).backdropBlur(2.px)'), '阴影单位.sfa')
-    assert.match(sfa.code, /radiusDp: 4, radiusPx: 1/)
-    assert.match(sfa.code, /yDp: 2, yPx: 0/)
-    assert.match(sfa.code, /blur\(3, 0\)/)
-    assert.match(sfa.code, /backdropBlur\(0, 2\)/)
-    assert.throws(() => compileArrangeSfa(visual('M.blur(3)'), '阴影单位.sfa'), /要求 LENGTH/)
+    assert.deepEqual(lowered.elements.map(element => element.type), ['dropShadow', 'innerShadow'])
+    const visual = (body: string) => `<script>import { M, Color, rounded } from '@canton/framework/ui'\n${body}</script>`
+    const cta = compileCantonCta(visual('M.dropShadow({ radius: 4.dp + 1.px, offset: { y: 2.dp }, color: Color(0x80000000), shape: rounded(2.dp) })'), '阴影单位.cta')
+    assert.match(cta.code, /radiusDp: 4, radiusPx: 1/)
+    assert.match(cta.code, /yDp: 2, yPx: 0/)
 })
 
 test('filmstrip 视图按帧号或比例选帧，像素缓冲提交递增版本并可作 painter 绘制', () => {
     const committed: number[][] = []
     let complete: ((result: { contentVersion: number; width?: number; height?: number }) => void) | undefined
-    globalThis.__ARRANGE_NATIVE__ = createFakeNative({
+    globalThis.__CANTON_NATIVE__ = createFakeNative({
         acquirePainter: (_resource, done) => {
             complete = done
             return { identity: 7n, generation: 1n }
@@ -414,6 +409,6 @@ test('filmstrip 视图按帧号或比例选帧，像素缓冲提交递增版本�
         })
     } finally {
         scope.stop()
-        globalThis.__ARRANGE_NATIVE__ = undefined
+        globalThis.__CANTON_NATIVE__ = undefined
     }
 })

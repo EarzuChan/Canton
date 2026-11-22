@@ -10,7 +10,7 @@ export async function canonicalResource(resource: Resource): Promise<Resource> {
     while (true) {
         try {
             const path = resolve(await realpath(ancestor), relative(ancestor, resolve(resource.path)))
-            return { ...resource, path: process.platform === "win32" ? path.toLowerCase() : path }
+            return { ...resource, path: path.toLowerCase() }
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
             const parent = dirname(ancestor)

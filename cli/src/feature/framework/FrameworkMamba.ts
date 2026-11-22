@@ -21,7 +21,7 @@ export function readCliCompatibility(value: unknown): number | null {
 
 export function frameworkIncompatibility(candidate: Pick<FrameworkVersionCandidate, 'cliCompatibility'>): string | null {
     const compatibility = readCliCompatibility(candidate.cliCompatibility)
-    if (compatibility === null) return '不兼容：未声明有效的 arrange.cliCompatibility'
+    if (compatibility === null) return '不兼容：未声明有效的 canton.cliCompatibility'
     return compatibility === cliCompatibility ? null : `不兼容：cliCompatibility 为 ${compatibility}，需要 ${cliCompatibility}`
 }
 

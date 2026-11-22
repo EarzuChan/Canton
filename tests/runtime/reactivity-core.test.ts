@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { EffectFlags, ReactiveEffect, batchUpdates, computed, effect, effectScope, getCurrentScope, onEffectCleanup, onScopeDispose, reactive, readonly, shallowReactive, shallowReadonly, isReactive, isReadonly, ref, stop, toRaw, watch } from '@arrange/reactivity'
+import { EffectFlags, ReactiveEffect, batchUpdates, computed, effect, effectScope, getCurrentScope, onEffectCleanup, onScopeDispose, reactive, readonly, shallowReactive, shallowReadonly, isReactive, isReadonly, ref, stop, toRaw, watch } from '@canton/reactivity'
 import { arrayInstrumentations } from '../../packages/reactivity/src/arrayInstrumentations.ts'
 import type { Dep } from '../../packages/reactivity/src/dep.ts'
 

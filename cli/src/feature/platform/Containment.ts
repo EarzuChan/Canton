@@ -1,5 +1,4 @@
 import type { ContainmentContext, ProcessContainer, ProcessContainment } from "./ProcessContainer.ts"
-import { PosixProcessGroupContainment } from "./PosixProcessGroup.ts"
 import { WindowsJobContainment } from "./WindowsJobContainer.ts"
 import { WindowsTreeScanContainment } from "./WindowsTreeScan.ts"
 
@@ -18,6 +17,6 @@ class WindowsContainment implements ProcessContainment {
     }
 }
 
-export function createContainment(platform: NodeJS.Platform): ProcessContainment {
-    return platform === "win32" ? new WindowsContainment() : new PosixProcessGroupContainment()
+export function createContainment(): ProcessContainment {
+    return new WindowsContainment()
 }

@@ -1,17 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ref } from '@arrange/framework'
-import { FlowRow, FlowColumn } from '@arrange/framework/foundation'
-import { M, IntrinsicSize, FlowRowMeasurePolicy, FlowColumnMeasurePolicy, Arrangement, createDensity } from '@arrange/framework/ui'
+import { ref } from '@canton/framework'
+import { FlowRow, FlowColumn } from '@canton/framework/foundation'
+import { M, IntrinsicSize, FlowRowMeasurePolicy, FlowColumnMeasurePolicy, Arrangement, createDensity } from '@canton/framework/ui'
 import { repeatable, tween, snap, spring, linearEasing, animatedNumberAsRef, nativeAnimationSpec, createTransition } from '../../packages/framework/src/animation/value.ts'
-import { ModifierLowering } from '../../packages/framework/src/modifierLowering.ts'
-import { compileArrangeSfa } from '../../packages/vite-plugin/src/sfa.ts'
+import { ModifierLowering } from '../../packages/framework/src/bridge/modifierLowering.ts'
+import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { frameScope } from './frameScope.ts'
 
-test('固有尺寸在 TS 和 SFA 使用正式 overload，长度与 Flow 间距仍经过 Density', () => {
+test('固有尺寸在 TS 和 CTA 使用正式 overload，长度与 Flow 间距仍经过 Density', () => {
     assert.deepEqual(M.width(IntrinsicSize.Min).height(IntrinsicSize.Max).elements.map(value => [value.type, value.value]), [['intrinsicWidth', { maximum: false }], ['intrinsicHeight', { maximum: true }]])
-    const source = '<template><FlowRow :modifier="M.width(IntrinsicSize.Min)" :horizontalArrangement="Arrangement.spacedBy(4.dp + 2.px)"/></template><script>import { FlowRow } from "@arrange/framework/foundation"\nimport { M, IntrinsicSize, Arrangement } from "@arrange/framework/ui"</script>'
-    const compiled = compileArrangeSfa(source, '固有尺寸.sfa')
+    const source = '<template><FlowRow :modifier="M.width(IntrinsicSize.Min)" :horizontalArrangement="Arrangement.spacedBy(4.dp + 2.px)"/></template><script>import { FlowRow } from "@canton/framework/foundation"\nimport { M, IntrinsicSize, Arrangement } from "@canton/framework/ui"</script>'
+    const compiled = compileCantonCta(source, '固有尺寸.cta')
     assert.match(compiled.code, /_unref\(IntrinsicSize\)\.Min/)
     assert.match(compiled.code, /spacedBy\(4, 2\)/)
     const units = new ModifierLowering(createDensity(2))

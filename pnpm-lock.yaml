@@ -81,12 +81,12 @@ importers:
 
   packages/compiler:
     dependencies:
-      '@arrange/shared':
-        specifier: 0.12.3
-        version: link:../shared
       '@babel/parser':
         specifier: 7.29.3
         version: 7.29.3
+      '@canton/shared':
+        specifier: 0.1.0
+        version: link:../shared
       entities:
         specifier: 7.0.1
         version: 7.0.1
@@ -112,21 +112,21 @@ importers:
 
   packages/framework:
     dependencies:
-      '@arrange/compiler':
-        specifier: 0.12.3
-        version: link:../compiler
-      '@arrange/reactivity':
-        specifier: 0.12.3
-        version: link:../reactivity
-      '@arrange/shared':
-        specifier: 0.12.3
-        version: link:../shared
-      '@arrange/vite-plugin':
-        specifier: 0.12.3
-        version: link:../vite-plugin
       '@babel/parser':
         specifier: 7.29.3
         version: 7.29.3
+      '@canton/compiler':
+        specifier: 0.1.0
+        version: link:../compiler
+      '@canton/reactivity':
+        specifier: 0.1.0
+        version: link:../reactivity
+      '@canton/shared':
+        specifier: 0.1.0
+        version: link:../shared
+      '@canton/vite-plugin':
+        specifier: 0.1.0
+        version: link:../vite-plugin
       entities:
         specifier: 7.0.1
         version: 7.0.1
@@ -151,23 +151,23 @@ importers:
 
   packages/reactivity:
     dependencies:
-      '@arrange/shared':
-        specifier: 0.12.3
+      '@canton/shared':
+        specifier: 0.1.0
         version: link:../shared
 
   packages/shared: {}
 
   packages/vite-plugin:
     dependencies:
-      '@arrange/compiler':
-        specifier: 0.12.3
-        version: link:../compiler
-      '@arrange/shared':
-        specifier: 0.12.3
-        version: link:../shared
       '@babel/parser':
         specifier: 7.29.3
         version: 7.29.3
+      '@canton/compiler':
+        specifier: 0.1.0
+        version: link:../compiler
+      '@canton/shared':
+        specifier: 0.1.0
+        version: link:../shared
       entities:
         specifier: 7.0.1
         version: 7.0.1

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 import { InspectionError } from "../../util/RecordInspection.ts"
 export { nativeBuildRootKey as buildPathKey } from "../cmake/BuildOwnerRecord.ts"
 
-export function storagePathIdentity(path: string): string { return process.platform === "win32" ? resolve(path).toLowerCase() : resolve(path) }
+export function storagePathIdentity(path: string): string { return resolve(path).toLowerCase() }
 export function storageId(kind: string, path: string): string { return `${kind}:${createHash("sha256").update(storagePathIdentity(path)).digest("hex").slice(0, 16)}` }
 export async function directoryNames(path: string): Promise<string[]> {
     try { return await readdir(path) } catch (error) {

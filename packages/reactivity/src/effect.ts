@@ -1,29 +1,9 @@
-import { extend, hasChanged } from '@arrange/shared'
-import type { ComputedRefImpl } from './computed.ts'
-import type { TrackOpTypes, TriggerOpTypes } from './constants.ts'
-import { type Link, globalVersion } from './dep.ts'
+import { extend, hasChanged } from '@canton/shared'
+import { type ComputedSubscriber, type DebuggerEvent, type DebuggerOptions, EffectFlags, type Link, type Subscriber } from './system.ts'
 import { activeEffectScope } from './effectScope.ts'
 import { warn } from './warning.ts'
 
 export type EffectScheduler = (...args: any[]) => any
-
-export type DebuggerEvent = {
-    effect: Subscriber
-} & DebuggerEventExtraInfo
-
-export type DebuggerEventExtraInfo = {
-    target: object
-    type: TrackOpTypes | TriggerOpTypes
-    key: any
-    newValue?: any
-    oldValue?: any
-    oldTarget?: Map<any, any> | Set<any>
-}
-
-export interface DebuggerOptions {
-    onTrack?: (event: DebuggerEvent) => void
-    onTrigger?: (event: DebuggerEvent) => void
-}
 
 export interface ReactiveEffectOptions extends DebuggerOptions {
     scheduler?: EffectScheduler
@@ -38,23 +18,11 @@ export interface ReactiveEffectRunner<T = any> {
 
 export let activeSub: Subscriber | undefined
 
-export enum EffectFlags {
-    ACTIVE = 1 << 0,
-    RUNNING = 1 << 1,
-    TRACKING = 1 << 2,
-    NOTIFIED = 1 << 3,
-    DIRTY = 1 << 4,
-    ALLOW_RECURSE = 1 << 5,
-    PAUSED = 1 << 6,
-    EVALUATED = 1 << 7,
-}
+// 任何依赖变化都推进全局版本，Computed 据此跳过无变化的重新检查
+export let globalVersion = 0
 
-export interface Subscriber extends DebuggerOptions {
-    deps?: Link
-    depsTail?: Link
-    flags: EffectFlags
-    next?: Subscriber
-    notify(): true | void
+export function bumpGlobalVersion(): void {
+    globalVersion++
 }
 
 const pausedQueueEffects = new WeakSet<ReactiveEffect>()
@@ -126,7 +94,7 @@ export class ReactiveEffect<T = any>
             return this.fn()
         } finally {
             if (__DEV__ && activeSub !== this) {
-                warn('活动响应式副作用未正确恢复，请检查 Arrange 内部作用域切换')
+                warn('活动响应式副作用未正确恢复，请检查 Canton 内部作用域切换')
             }
             if (this.flags & EffectFlags.ACTIVE) cleanupDeps(this)
             else {
@@ -293,7 +261,7 @@ function isDirty(sub: Subscriber): boolean {
     return false
 }
 
-export function refreshComputed(computed: ComputedRefImpl): undefined {
+export function refreshComputed(computed: ComputedSubscriber): undefined {
     if (
         computed.flags & EffectFlags.TRACKING && !(computed.flags & EffectFlags.DIRTY)
     ) {

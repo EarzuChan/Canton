@@ -2,15 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { resolve, join } from 'node:path'
-import * as core from '@arrange/framework'
-import { createApp, createFocusRequester, FocusManagerKey, inject, provide, ref, onMounted, nextTick, type FocusRequester, type FocusManager } from '@arrange/framework'
-import { Layout } from '@arrange/framework/foundation'
-import { M, MinSizeMeasurePolicy } from '@arrange/framework/ui'
-import { defineArrangable } from '@arrange/framework/internal'
+import * as core from '@canton/framework'
+import { createApp, createFocusRequester, FocusManagerKey, inject, provide, ref, onMounted, nextTick, type FocusRequester, type FocusManager } from '@canton/framework'
+import { Layout } from '@canton/framework/foundation'
+import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
+import { defineArrangable } from '@canton/framework/internal'
 import { recordingNative } from './recordingNative.ts'
-import { compileArrangeSfa } from '../../packages/vite-plugin/src/sfa.ts'
-import { checkSfaProject } from '../../packages/vite-plugin/src/typecheck.ts'
-import { evaluateSfa } from './sfaModules.ts'
+import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
+import { checkCtaProject } from '../../packages/compiler/src/typecheck.ts'
+import { evaluateCta } from './ctaModules.ts'
 
 test('焦点请求发送宿主命令；nextTick 不冒充原生焦点回执，unmount 取消请求', async () => {
     const native = recordingNative()
@@ -45,7 +45,7 @@ test('焦点请求发送宿主命令；nextTick 不冒充原生焦点回执，un
     assert.equal(manager.moveFocus('next'), false)
 })
 
-test('focusProperties 持有稳定 Requester 身份，普通 Modifier 描述可由 SFA 组合', () => {
+test('focusProperties 持有稳定 Requester 身份，普通 Modifier 描述可由 CTA 组合', () => {
     const a = createFocusRequester()
     const b = createFocusRequester()
     const chain = M.focusGroup().focusProperties({ right: b, next: a, canFocus: false }).focusRequester(a).focusable()
@@ -57,12 +57,12 @@ test('focusProperties 持有稳定 Requester 身份，普通 Modifier 描述可�
     assert.throws(() => M.onFocusChanged(null as never), /函数/)
     assert.throws(() => inject(FocusManagerKey), /活动 Arrangable/)
     assert.equal('useFocusManager' in core, false)
-    const compiled = compileArrangeSfa(`<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).onFocusChanged(changed).focusProperties({ right: target }).focusGroup().focusable()" /></template><script>
-import { createFocusRequester } from '@arrange/framework'
-import { M, MinSizeMeasurePolicy } from '@arrange/framework/ui'
+    const compiled = compileCantonCta(`<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).onFocusChanged(changed).focusProperties({ right: target }).focusGroup().focusable()" /></template><script>
+import { createFocusRequester } from '@canton/framework'
+import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
 const target = createFocusRequester()
 function changed(state: { isFocused: boolean; hasFocus: boolean }) {}
-</script>`, 'M3焦点.sfa')
+</script>`, 'M3焦点.cta')
     assert.match(compiled.code, /focusRequester.*onFocusChanged.*focusProperties.*focusGroup.*focusable/s)
 })
 
@@ -322,22 +322,22 @@ test('宿主安装失败后可重挂载，默认 FocusManager 绑定成功安装
     app.unmount()
 })
 
-test('SFA 通过 typed FocusManagerKey 注入消费，方向参数保留真实类型', () => {
+test('CTA 通过 typed FocusManagerKey 注入消费，方向参数保留真实类型', () => {
     const source = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).focusable()" /></template><script>
-import { createFocusRequester, FocusManagerKey, inject, onMounted, type FocusManager } from '@arrange/framework'
-import { M, MinSizeMeasurePolicy } from '@arrange/framework/ui'
+import { createFocusRequester, FocusManagerKey, inject, onMounted, type FocusManager } from '@canton/framework'
+import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
 const target = createFocusRequester()
 const manager: FocusManager | undefined = inject(FocusManagerKey)
 onMounted(() => manager?.moveFocus('next'))
 </script>`
     mkdirSync(resolve('tmp-refs'), { recursive: true })
-    const directory = mkdtempSync(resolve('tmp-refs/sfa-focus-'))
+    const directory = mkdtempSync(resolve('tmp-refs/cta-focus-'))
     try {
-        const file = join(directory, 'Focus.sfa')
+        const file = join(directory, 'Focus.cta')
         writeFileSync(file, source)
-        assert.deepEqual(checkSfaProject(resolve('tsconfig.json'), [file]), [])
+        assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [file]), [])
         writeFileSync(file, source.replace("const manager: FocusManager | undefined", 'const manager').replace("moveFocus('next')", "moveFocus('diagonal')"))
-        assert.ok(checkSfaProject(resolve('tsconfig.json'), [file]).some(diagnostic => /diagonal.*FocusDirection/.test(diagnostic.message)))
+        assert.ok(checkCtaProject(resolve('tsconfig.json'), [file]).some(diagnostic => /diagonal.*FocusDirection/.test(diagnostic.message)))
     } finally {
         rmSync(directory, { recursive: true })
     }
@@ -347,7 +347,7 @@ onMounted(() => manager?.moveFocus('next'))
         commands.push(args)
         return true
     }
-    const app = createApp(evaluateSfa(source, {}, '焦点注入.sfa'))
+    const app = createApp(evaluateCta(source, {}, '焦点注入.cta'))
     app.mount(native.target)
     native.frame()
     assert.deepEqual(commands, [['move', 0, 'next']])

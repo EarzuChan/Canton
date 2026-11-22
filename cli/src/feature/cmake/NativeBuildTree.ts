@@ -1,17 +1,16 @@
 import { createHash } from "node:crypto"
 import { lstat, mkdir, readdir } from "node:fs/promises"
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { z } from "zod"
 import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
 import { writeAtomicText } from "../../util/AtomicFile.ts"
-import { canonicalResource } from "../operation/Resource.ts"
 import { nativeVerificationFileName, nativeVerificationSchema } from "../../CliMetadata.ts"
 import { UserDirectories } from "../user/UserDirectories.ts"
 import { TransactionStore } from "../transaction/TransactionStore.ts"
 import { DeleteTransaction } from "../transaction/DeleteTransaction.ts"
 import { nativeVerificationRecordSchema as schema } from "./NativeVerificationRecord.ts"
 import { readCurrentRecord } from "../../util/RecordInspection.ts"
-
+import { canonicalResource } from "../operation/Resource.ts"
 
 // 验收目录只在可信归属下整体重建，连同第三方独立子构建缓存一起处理
 export class NativeBuildTree {
@@ -21,8 +20,6 @@ export class NativeBuildTree {
         this.signal.throwIfAborted()
         source = await this.canonical(source)
         directory = resolve(directory)
-        // macOS 的外部父目录允许系统或用户别名；只解析父目录，保留受管树自身的链接检查
-        if (process.platform === "darwin" && directory !== dirname(directory)) directory = resolve((await canonicalResource({ kind: "directory", path: dirname(directory), mode: "write" })).path, basename(directory))
         const normalized = (await canonicalResource({ kind: "directory", path: directory, mode: "write" })).path
         const ancestorPart = relative(normalized, source)
         if (!ancestorPart || (!isAbsolute(ancestorPart) && ancestorPart !== ".." && !ancestorPart.startsWith(`..${sep}`))) throw new Error("验收构建目录不能覆盖源码根或其祖先")
@@ -33,7 +30,7 @@ export class NativeBuildTree {
         const deletion = new DeleteTransaction(transactions, this.signal)
         for (const entry of await transactions.list()) if (entry.record?.kind === "delete") {
             const paths = deletion.paths(entry.record)
-            if (paths.some(entry => resolve(entry.path) === directory) && paths.every(entry => resolve(entry.root) === dirname(directory) && (resolve(entry.path) === directory || dirname(resolve(entry.path)) === dirname(directory) && /^\.arrange-delete-[a-f0-9-]{36}$/.test(entry.path.split(/[\\/]/).at(-1)!)))) await deletion.apply(entry.record)
+            if (paths.some(entry => resolve(entry.path) === directory) && paths.every(entry => resolve(entry.root) === dirname(directory) && (resolve(entry.path) === directory || dirname(resolve(entry.path)) === dirname(directory) && /^\.canton-delete-[a-f0-9-]{36}$/.test(entry.path.split(/[\\/]/).at(-1)!)))) await deletion.apply(entry.record)
         }
         const identity = createHash("sha256").update(JSON.stringify(configuration)).digest("hex")
         const recordPath = resolve(directory, nativeVerificationFileName)
@@ -61,7 +58,7 @@ export class NativeBuildTree {
     private async canonical(path: string): Promise<string> {
         const { realpath } = await import("node:fs/promises")
         const result = await realpath(path)
-        return process.platform === "win32" ? result.toLowerCase() : result
+        return result.toLowerCase()
     }
 
     private async assertAncestors(path: string): Promise<void> {

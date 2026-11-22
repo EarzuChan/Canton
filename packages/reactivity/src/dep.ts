@@ -1,13 +1,11 @@
-import { extend, isArray, isIntegerKey, isMap, isSymbol } from '@arrange/shared'
-import type { ComputedRefImpl } from './computed.ts'
+import { extend, isArray, isIntegerKey, isMap, isSymbol } from '@canton/shared'
 import { ReactiveFlags, type TrackOpTypes, TriggerOpTypes } from './constants.ts'
-import { type DebuggerEventExtraInfo, EffectFlags, ReactiveEffect, type Subscriber, activeSub, endBatch, shouldTrack, startBatch } from './effect.ts'
+import { ReactiveEffect, activeSub, bumpGlobalVersion, endBatch, shouldTrack, startBatch } from './effect.ts'
+import { type ComputedSubscriber, type DebuggerEventExtraInfo, type Dependency, EffectFlags, type Link, type Subscriber } from './system.ts'
 
 // 任意依赖触发都会推进版本，计算值可据此跳过无变化时的检查
-export let globalVersion = 0
 
-// 同一订阅同时挂在依赖与订阅者两条链上，便于独立退订和复用
-export class Link {
+class DepLink implements Link {
     version: number
 
     nextDep?: Link
@@ -22,7 +20,7 @@ export class Link {
     }
 }
 
-export class Dep {
+export class Dep implements Dependency {
     version = 0
     activeLink?: Link = undefined
 
@@ -37,7 +35,7 @@ export class Dep {
 
     readonly [ReactiveFlags.SKIP] = true
 
-    constructor(public computed?: ComputedRefImpl | undefined) {
+    constructor(public computed?: ComputedSubscriber | undefined) {
         if (__DEV__) {
             this.subsHead = undefined
         }
@@ -50,7 +48,7 @@ export class Dep {
 
         let link = this.activeLink
         if (link === undefined || link.sub !== activeSub) {
-            link = this.activeLink = new Link(activeSub, this)
+            link = this.activeLink = new DepLink(activeSub, this)
 
             if (!activeSub.deps) {
                 activeSub.deps = activeSub.depsTail = link
@@ -99,7 +97,7 @@ export class Dep {
 
     trigger(debugInfo?: DebuggerEventExtraInfo): void {
         this.version++
-        globalVersion++
+        bumpGlobalVersion()
         this.notify(debugInfo)
     }
 
@@ -123,7 +121,7 @@ export class Dep {
             for (let link = this.subs; link; link = link.prevSub) {
                 if (link.sub.notify()) {
 
-                    (link.sub as ComputedRefImpl).dep.notify()
+                    (link.sub as ComputedSubscriber).dep.notify()
                 }
             }
         } finally {
@@ -192,7 +190,7 @@ export function track(target: object, type: TrackOpTypes, key: unknown): void {
 export function trigger(target: object, type: TriggerOpTypes, key?: unknown, newValue?: unknown, oldValue?: unknown, oldTarget?: Map<unknown, unknown> | Set<unknown>): void {
     const depsMap = targetMap.get(target)
     if (!depsMap) {
-        globalVersion++
+        bumpGlobalVersion()
         return
     }
 

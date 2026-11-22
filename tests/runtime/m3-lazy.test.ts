@@ -1,10 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp, createLazyState, onMounted, onUnmounted, ref, nextTick } from '@arrange/framework'
-import { LazyColumn, LazyVerticalGrid, Text } from '@arrange/framework/foundation'
-import { defineArrangable } from '@arrange/framework/internal'
-import { GridItemSpan } from '../../packages/framework/src/primitives.ts'
-import type { Modifier } from '../../packages/framework/src/modifier.ts'
+import { createApp, createLazyState, onMounted, onUnmounted, ref, nextTick } from '@canton/framework'
+import { LazyColumn, LazyVerticalGrid, Text } from '@canton/framework/foundation'
+import { defineArrangable } from '@canton/framework/internal'
+import { GridItemSpan } from '../../packages/framework/src/values/primitives.ts'
+import type { Modifier } from '../../packages/framework/src/modifier/modifier.ts'
 import { recordingNative, type RecordedLayoutNode } from './recordingNative.ts'
 
 function lazyNode(nodes: Map<number, RecordedLayoutNode>): RecordedLayoutNode {

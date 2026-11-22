@@ -1,12 +1,12 @@
 {
-  "name": "@arrange/shared",
-  "version": "0.12.3",
-  "description": "Arrange 编译器与运行时共享契约和工具",
+  "name": "@canton/shared",
+  "version": "0.1.0",
+  "description": "Canton 编译器与运行时共享契约和工具",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
-      "arrange-ts": "./src/index.ts",
+      "canton-ts": "./src/index.ts",
       "import": "./src/index.ts"
     }
   },

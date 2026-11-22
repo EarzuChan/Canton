@@ -8,15 +8,15 @@ import { setTimeout as delay } from 'node:timers/promises'
 export class NativeReadiness {
     private constructor(private readonly directory: string, private readonly token: string) { }
 
-    static async open(): Promise<NativeReadiness> { return new NativeReadiness(await mkdtemp(join(tmpdir(), 'arrange-dev-ready-')), randomUUID()) }
+    static async open(): Promise<NativeReadiness> { return new NativeReadiness(await mkdtemp(join(tmpdir(), 'canton-dev-ready-')), randomUUID()) }
 
-    get environment(): Record<string, string> { return { ARRANGE_DEV_READY_FILE: join(this.directory, 'ready'), ARRANGE_DEV_READY_TOKEN: this.token } }
+    get environment(): Record<string, string> { return { CANTON_DEV_READY_FILE: join(this.directory, 'ready'), CANTON_DEV_READY_TOKEN: this.token } }
 
     async wait(signal: AbortSignal): Promise<void> {
         while (true) {
             signal.throwIfAborted()
             try {
-                if ((await readFile(this.environment.ARRANGE_DEV_READY_FILE!, 'utf8')) === this.token) return
+                if ((await readFile(this.environment.CANTON_DEV_READY_FILE!, 'utf8')) === this.token) return
             } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
             await delay(50, undefined, { signal })
         }

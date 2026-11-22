@@ -45,7 +45,7 @@ export class WriteRecovery {
                     if (wanted === null) await rm(file.path)
                     else {
                         await mkdir(dirname(file.path), { recursive: true })
-                        const temporary = join(dirname(file.path), `.arrange-recover-${record.id}.tmp`)
+                        const temporary = join(dirname(file.path), `.canton-recover-${record.id}.tmp`)
                         await rm(temporary, { force: true })
                         await writeFile(temporary, wanted, { flag: "wx", mode: info?.mode })
                         try {

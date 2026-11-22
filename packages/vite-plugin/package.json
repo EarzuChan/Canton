@@ -1,11 +1,11 @@
 {
-  "name": "@arrange/vite-plugin",
-  "version": "0.12.3",
+  "name": "@canton/vite-plugin",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
-      "arrange-ts": "./src/index.ts",
+      "canton-ts": "./src/index.ts",
       "import": "./src/index.ts"
     }
   },
@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "typescript": "^5.9.0",
-    "@arrange/compiler": "0.12.3",
-    "@arrange/shared": "0.12.3",
+    "@canton/compiler": "0.1.0",
+    "@canton/shared": "0.1.0",
     "@babel/parser": "7.29.3",
     "entities": "7.0.1",
     "estree-walker": "2.0.2",

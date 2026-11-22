@@ -1,13 +1,13 @@
-import { type Prettify, isArray, isFunction } from '@arrange/shared'
+import { type Prettify, isArray, isFunction } from '@canton/shared'
 import { type SetupContext, getCurrentInstance } from './arrangable.ts'
-import type { ArrangableObjectPropsOptions, ArrangablePropsOptions, ExtractPropTypes } from './arrangableProps.ts'
+import type { ArrangableObjectPropsOptions, ArrangablePropsOptions, ExtractPropTypes } from './propTypes.ts'
 import { warn } from './warning.ts'
 
 export function defineProps<PropNames extends string = string>(props: PropNames[]): Prettify<Readonly<{ [key in PropNames]?: any }>>
 export function defineProps<PP extends ArrangableObjectPropsOptions = ArrangableObjectPropsOptions>(props: PP): Prettify<Readonly<ExtractPropTypes<PP>>>
 export function defineProps<TypeProps>(): Readonly<TypeProps>
 export function defineProps(): never {
-    throw new Error('defineProps 只能在 SFA script 中由编译器处理')
+    throw new Error('defineProps 只能在 CTA script 中由编译器处理')
 }
 
 export type DefineProps<T> = Readonly<T>
@@ -24,7 +24,7 @@ type InferDefault<P, T> = ((props: P) => T & {}) | (T extends NativeType ? T : n
 type PropsWithDefaults<T, Defaults extends InferDefaults<T>> = Readonly<Omit<T, keyof Defaults>> & { readonly [K in keyof Defaults as K extends keyof T ? K : never]-?: K extends keyof T ? Defaults[K] extends undefined ? T[K] : NotUndefined<T[K]> : never }
 
 export function withDefaults<T, Defaults extends InferDefaults<T>>(props: Readonly<T>, defaults: Defaults): PropsWithDefaults<T, Defaults> {
-    throw new Error('withDefaults 只能在 SFA script 中由编译器处理')
+    throw new Error('withDefaults 只能在 CTA script 中由编译器处理')
 }
 
 export function useSlots(): SetupContext['slots'] {

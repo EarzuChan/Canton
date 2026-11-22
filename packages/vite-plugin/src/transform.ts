@@ -1,21 +1,20 @@
 import { transformWithOxc } from "vite"
-import { compileArrangeSfa, isSfaModule, isSfaQueryModule } from "./sfa.ts"
-import type { ArrangeTransformPlugin, ArrangeTransformPluginOptions, TransformThis } from "./types.ts"
+import { compileCantonCta, isCtaModule, isCtaQueryModule } from "./ctaTransform.ts"
+import type { CantonTransformPlugin, CantonTransformPluginOptions, TransformThis } from "./types.ts"
 
-export function createArrangeTransformPlugin(options: ArrangeTransformPluginOptions): ArrangeTransformPlugin {
+export function createCantonTransformPlugin(options: CantonTransformPluginOptions): CantonTransformPlugin {
     return {
         name: options.name,
         enforce: "pre",
         load(id: string): string | null {
-            if (!isSfaQueryModule(id)) return null
+            if (!isCtaQueryModule(id)) return null
             return ""
         },
         transform(this: TransformThis, code: string, id: string) {
-            if (!isSfaModule(id)) return null
-            if (isSfaQueryModule(id)) return ""
+            if (!isCtaModule(id)) return null
+            if (isCtaQueryModule(id)) return ""
 
-            const { code: transformed, warnings, map, dependencies } = compileArrangeSfa(code, id, options.hot())
-            for (const message of warnings) this.warn({ id, message })
+            const { code: transformed, map, dependencies } = compileCantonCta(code, id, options.hot())
             for (const dependency of dependencies) this.addWatchFile?.(dependency)
 
             return transformWithOxc(transformed, id, {

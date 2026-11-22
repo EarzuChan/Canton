@@ -1,12 +1,12 @@
-import { type DebuggerOptions, type ReactiveMarker, watch as baseWatch, type WatchCallback, type WatchEffect, type WatchHandle, type WatchOptions as BaseWatchOptions, type WatchSource } from '@arrange/reactivity'
-import { EMPTY_OBJ, extend, isFunction } from '@arrange/shared'
+import { type DebuggerOptions, type ReactiveMarker, watch as baseWatch, type WatchCallback, type WatchEffect, type WatchHandle, type WatchOptions as BaseWatchOptions, type WatchSource } from '@canton/reactivity'
+import { EMPTY_OBJ, extend, isFunction } from '@canton/shared'
 import { currentInstance } from './arrangable.ts'
 import { callWithAsyncErrorHandling } from './errorHandling.ts'
 import { queueJob, queuePostFlushCb, type SchedulerJob } from './scheduler.ts'
 import { findFrameScheduler } from './animationOwner.ts'
 import { warn } from './warning.ts'
 
-export type { OnCleanup, WatchCallback, WatchEffect, WatchHandle, WatchSource, WatchStopHandle } from '@arrange/reactivity'
+export type { OnCleanup, WatchCallback, WatchEffect, WatchHandle, WatchSource, WatchStopHandle } from '@canton/reactivity'
 
 type MaybeUndefined<T, I> = I extends true ? T | undefined : T
 

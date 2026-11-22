@@ -1,5 +1,5 @@
 import { currentInstance } from './arrangable.ts'
-import { Log } from '../diagnostics.ts'
+import { Log } from '../native/diagnostics.ts'
 
 const TAG = 'Arrangable'
 

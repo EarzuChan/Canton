@@ -95,7 +95,7 @@ export class DependencyInventory {
                 check = inspectionFailure(error, path)
                 allowed = false
             }
-            items.push({ id: `temporary:${name}`, kind: "temporary", path, root: temporary, ...await storageUsage(path, this.signal), facts: [{ label: "content", check }], references: emptyReferences, cleanup: { allowed, reason: pending.length ? "存在用户级事务，请先运行 arrange storage recover" : allowed ? "可识别的获取暂存内容，执行前核验占用" : "无法确认暂存内容归属，需人工检查" } })
+            items.push({ id: `temporary:${name}`, kind: "temporary", path, root: temporary, ...await storageUsage(path, this.signal), facts: [{ label: "content", check }], references: emptyReferences, cleanup: { allowed, reason: pending.length ? "存在用户级事务，请先运行 canton storage recover" : allowed ? "可识别的获取暂存内容，执行前核验占用" : "无法确认暂存内容归属，需人工检查" } })
         }
         return items
     }

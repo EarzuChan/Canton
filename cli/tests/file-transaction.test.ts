@@ -9,7 +9,7 @@ import { readSnapshot, type FileSnapshot } from "../src/util/FileUtils.ts"
 import { readJsonFile, writeJsonFile } from "../src/util/JsonFile.ts"
 
 async function temporaryRoot(t: TestContext): Promise<string> {
-    const root = await mkdtemp(resolve(tmpdir(), "arrange-file-transaction-"))
+    const root = await mkdtemp(resolve(tmpdir(), "canton-file-transaction-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     return root
 }
@@ -24,7 +24,7 @@ test("文件替换保留权限，新文件排他发布；成功不留下日志�
     assert.equal(await readFile(existing, "utf8"), "新内容")
     assert.equal(await readFile(created, "utf8"), "新文件")
     assert.equal((await stat(existing)).mode, originalMode)
-    assert.deepEqual(await readdir(resolve(root, ".arrange/transactions")), [])
+    assert.deepEqual(await readdir(resolve(root, ".canton/transactions")), [])
     assert.ok((await readdir(root, { recursive: true })).every(path => !path.endsWith(".tmp")))
 })
 
@@ -37,8 +37,8 @@ test("成功日志清理失败不把完成的文件替换报成失败", async t 
     const writer = new RetainedJournal()
     await writer.write(root, [{ before: await readSnapshot(path), after: "已完成" }])
     assert.equal(await readFile(path, "utf8"), "已完成")
-    const paths = await readdir(resolve(root, ".arrange/transactions"))
-    const inspection = await writer.inspectTransaction(resolve(root, ".arrange/transactions", paths[0]))
+    const paths = await readdir(resolve(root, ".canton/transactions"))
+    const inspection = await writer.inspectTransaction(resolve(root, ".canton/transactions", paths[0]))
     assert.equal(inspection.record.status, "complete")
     assert.deepEqual(inspection.states, ["expected"])
 })
@@ -57,9 +57,9 @@ test("多文件失败保留原文、目标和进度，移除无消费者的 hash
     const changes = await Promise.all(paths.map(async path => ({ before: await readSnapshot(path), after: "目标" })))
     const writer = new FailingWriter()
     await assert.rejects(writer.write(root, changes), /原文、目标内容及进度.*第二文件失败/)
-    const names = await readdir(resolve(root, ".arrange/transactions"))
+    const names = await readdir(resolve(root, ".canton/transactions"))
     assert.equal(names.length, 1)
-    const journalPath = resolve(root, ".arrange/transactions", names[0])
+    const journalPath = resolve(root, ".canton/transactions", names[0])
     const inspection = await writer.inspectTransaction(journalPath)
     assert.equal(inspection.record.status, "failed")
     assert.deepEqual(inspection.files.map(file => file.written), [true, false])
@@ -104,8 +104,8 @@ test("扫描后出现的新文件拒绝覆盖，失败日志原文仍记录原�
     const writer = new ConcurrentWriter()
     await assert.rejects(writer.write(root, [{ before: await readSnapshot(path), after: "不能覆盖" }]), /扫描后发生变化/)
     assert.equal(await readFile(path, "utf8"), "别人刚创建的文件")
-    const names = await readdir(resolve(root, ".arrange/transactions"))
-    const inspection = await writer.inspectTransaction(resolve(root, ".arrange/transactions", names[0]))
+    const names = await readdir(resolve(root, ".canton/transactions"))
+    const inspection = await writer.inspectTransaction(resolve(root, ".canton/transactions", names[0]))
     assert.equal(inspection.files[0].original, null)
     assert.deepEqual(inspection.states, ["conflict"])
     assert.ok((await readdir(root, { recursive: true })).every(name => !name.endsWith(".tmp")))
@@ -144,11 +144,11 @@ test("首文件发布后取消停止后续写入，保留失败日志和已完�
         }
     }
     const writer = new CancelledWriter(controller.signal)
-    await assert.rejects(writer.write(root, [{ before: await readSnapshot(first), after: "已完成首文件" }, { before: await readSnapshot(second), after: "不能写入次文件" }]), error => error instanceof Error && error.name === "AbortError" && error.cause === controller.signal.reason && error.message.includes(resolve(root, ".arrange/transactions")))
+    await assert.rejects(writer.write(root, [{ before: await readSnapshot(first), after: "已完成首文件" }, { before: await readSnapshot(second), after: "不能写入次文件" }]), error => error instanceof Error && error.name === "AbortError" && error.cause === controller.signal.reason && error.message.includes(resolve(root, ".canton/transactions")))
     assert.equal(await readFile(first, "utf8"), "已完成首文件")
     await assert.rejects(readFile(second), { code: "ENOENT" })
-    const names = await readdir(resolve(root, ".arrange/transactions"))
-    const inspection = await writer.inspectTransaction(resolve(root, ".arrange/transactions", names[0]))
+    const names = await readdir(resolve(root, ".canton/transactions"))
+    const inspection = await writer.inspectTransaction(resolve(root, ".canton/transactions", names[0]))
     assert.equal(inspection.record.status, "failed")
     assert.deepEqual(inspection.files.map(file => file.written), [true, false])
     assert.deepEqual(inspection.states, ["expected", "original"])
@@ -161,15 +161,15 @@ test("临时内容准备完毕时取消不发布，保留原文件且清理临�
     const controller = new AbortController()
     Object.defineProperty(controller.signal, "throwIfAborted", {
         value() {
-            if (readdirSync(root).some(name => name.startsWith(".arrange-") && name.endsWith(".tmp"))) controller.abort()
+            if (readdirSync(root).some(name => name.startsWith(".canton-") && name.endsWith(".tmp"))) controller.abort()
             AbortSignal.prototype.throwIfAborted.call(this)
         }
     })
     const writer = new FileTransaction(controller.signal)
-    await assert.rejects(writer.write(root, [{ before: await readSnapshot(path), after: "不能发布" }]), error => error instanceof Error && error.name === "AbortError" && error.cause === controller.signal.reason && error.message.includes(resolve(root, ".arrange/transactions")))
+    await assert.rejects(writer.write(root, [{ before: await readSnapshot(path), after: "不能发布" }]), error => error instanceof Error && error.name === "AbortError" && error.cause === controller.signal.reason && error.message.includes(resolve(root, ".canton/transactions")))
     assert.equal(await readFile(path, "utf8"), "保留原文")
-    const names = await readdir(resolve(root, ".arrange/transactions"))
-    const inspection = await writer.inspectTransaction(resolve(root, ".arrange/transactions", names[0]))
+    const names = await readdir(resolve(root, ".canton/transactions"))
+    const inspection = await writer.inspectTransaction(resolve(root, ".canton/transactions", names[0]))
     assert.equal(inspection.record.status, "failed")
     assert.equal(inspection.files[0].written, false)
     assert.deepEqual(inspection.states, ["original"])

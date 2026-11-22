@@ -31,7 +31,7 @@ const backValue = 'back'
 const cancelValue = 'cancel'
 
 export async function selectFrameworkVersion(terminal: CommandInterface, framework: FrameworkService, input: FrameworkVersionWizardInput = {}): Promise<VerifiedFrameworkVersion> {
-    return interactionStep(terminal, region => runSelection(region, framework, input), selected => ({ question: 'Arrange Framework 版本', answer: selected.version }))
+    return interactionStep(terminal, region => runSelection(region, framework, input), selected => ({ question: 'Canton Framework 版本', answer: selected.version }))
 }
 
 async function runSelection(region: PresentationRegion<CommandInterface>, framework: FrameworkService, input: FrameworkVersionWizardInput): Promise<VerifiedFrameworkVersion> {
@@ -44,7 +44,7 @@ async function runSelection(region: PresentationRegion<CommandInterface>, framew
         const terminal = region.replace()
         const selected = await select({
             ...terminal.prompt,
-            message: `选择 Arrange Framework 版本（CLI 兼容契约 ${cliCompatibility}）`,
+            message: `选择 Canton Framework 版本（CLI 兼容契约 ${cliCompatibility}）`,
             initialValue: preferred,
             options: [
                 ...candidates.map(candidateOption),
@@ -62,7 +62,7 @@ async function runSelection(region: PresentationRegion<CommandInterface>, framew
             const candidate = candidates.find(candidate => candidate.version === selected)
             if (candidate?.verification.kind !== 'ready') throw new Error('所选 Framework 不是已验证的候选版本')
             preferred = candidate.version
-            const accepted = await confirm({ ...region.replace().prompt, message: `确认使用 Arrange Framework ${candidate.version}？`, initialValue: true, active: '是', inactive: '否' })
+            const accepted = await confirm({ ...region.replace().prompt, message: `确认使用 Canton Framework ${candidate.version}？`, initialValue: true, active: '是', inactive: '否' })
             if (isCancel(accepted)) throw new PromptCancelled()
             if (accepted) return candidate.verification.verified
         }
@@ -73,7 +73,7 @@ async function refreshCandidates(region: PresentationRegion<CommandInterface>, f
     while (true) {
         const terminal = region.replace()
         try {
-            const metadata = await terminal.tasks.status('读取 Arrange Framework 版本', () => framework.candidates(input.registryUrl))
+            const metadata = await terminal.tasks.status('读取 Canton Framework 版本', () => framework.candidates(input.registryUrl))
             const custom = candidates.filter(candidate => candidate.custom && !metadata.some(item => item.version === candidate.version))
             candidates.splice(0, candidates.length, ...metadata.map(item => ({ version: item.version, metadata: item, custom: false, verification: { kind: 'pending' as const } })), ...custom.map(candidate => ({ ...candidate, verification: { kind: 'pending' as const } })))
             break
@@ -130,7 +130,7 @@ async function verifyCandidate(framework: FrameworkService, input: FrameworkSele
 async function addCustomVersion(region: PresentationRegion<CommandInterface>, framework: FrameworkService, input: FrameworkSelectionInput, candidates: Candidate[]): Promise<string | undefined> {
     while (true) {
         const terminal = region.replace()
-        const version = await requiredText(terminal.prompt, '自定义 Arrange Framework 版本', { placeholder: '例如 1.0.0', validate: validateSemver })
+        const version = await requiredText(terminal.prompt, '自定义 Canton Framework 版本', { placeholder: '例如 1.0.0', validate: validateSemver })
         const existing = candidates.find(candidate => candidate.version === version)
         if (existing?.verification.kind === 'ready') return version
         const candidate: Candidate = { version, custom: true, verification: { kind: 'pending' } }

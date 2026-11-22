@@ -1,0 +1,44 @@
+# 006 D3D11 渲染管线、HLSL 着色器与离屏层
+
+日期 2026-11-20。
+
+## 背景
+
+[ADR 001](1：Windows用户态目标、应用入口与受管工程.md) 已确定图形后端为 D3D11 + DXGI、着色器语言采用 HLSL。Arrange 时期受限于 JUCE 对接 Direct2D 且缺乏着色器接口，旧有 `M.blur` 与 `M.backdropBlur` 依赖 CPU 算模糊。本篇确定 Canton 的 D3D11 2D 渲染路线、HLSL 像素着色器 API 落点、离屏绘制原语，以及硬件与 WARP 的边界。
+
+## D3D11 2D 渲染底座与 WARP 边界
+
+- **纯 D3D11 自研 2D 管线（不以 Direct2D 为主渲染器）**：由 D3D11 配合 DXGI Flip Model 与 DirectComposition 统一承担 2D 绘制、离屏合成与呈现。不走 Direct2D 主渲染器，以避开自定义着色器须套 `ID2D1EffectImpl` / `ID2D1DrawTransform` COM 胶水以及 D2D/D3D 上下文来回切换的复杂度与性能损耗。
+  - 矩形、圆角矩形、椭圆、边框、渐变与内外阴影走 D3D11 SDF 批渲染；
+  - 文本由 DirectWrite 排版并光栅化进入 GPU 字形图集（Atlas），由 D3D11 批量绘制；
+  - 任意矢量 `Path`（`drawPath` / `clipPath`）生成覆盖率掩码或三角化网格交给 D3D11 合成，确保自定义着色器笔刷可同样作用于任意路径。
+- **色彩与混合约定**：首阶段合成管线统一采用预乘 Alpha sRGB（`DXGI_FORMAT_B8G8R8A8_UNORM`），与 DirectComposition 及常规 2D UI 混合保持一致。
+- **硬件与 WARP 兜底**：统一按 **D3D11 Feature Level 11_0 + HLSL SM 5.0** 实现**完整**着色器、滤镜链与离屏层能力，不做残缺降级分支。硬件适配器不可用、远程桌面或无头 CI 像素回归测试时，我们的宿主透明回退至 `D3D_DRIVER_TYPE_WARP`（当无显卡驱动的系统，Microsoft Basic Render Driver 就已经是我们取 Hardware 却取到 WARP，显式需要我们取 WARP 的场景是既有驱动不满足条件或者有问题时才这样子）。遇到驱动重置（`DXGI_ERROR_DEVICE_REMOVED` / `DEVICE_RESET`）时，宿主依据已缓存的着色器源码或字节码自动重建设备、SwapChain、字形图集与着色器资源，业务层无感。
+
+## 标准 HLSL `RuntimeEffect`、`RuntimeShader` 与热更新
+
+面向 2D 界面，着色器 API 仅开放**像素（片元）着色器**，对齐 Compose / Skia 拆分为不可变可缓存的 **`RuntimeEffect`**（已编译程序）与绑定参数的 **`RuntimeShader`**（实例）：
+
+- **100% 标准 HLSL，不造方言**：宿主提供固定 2D 顶点管线，用户只需编写标准 HLSL SM 5.0 像素着色器与 `cbuffer`。框架向像素着色器注入绘制区局部像素坐标 `fragCoord`（左上 `(0, 0)` 到 `(widthPx, heightPx)`）、归一化 `uv` 及内置常量，约定输出预乘 Alpha RGBA。
+- **自动反射免手算对齐**：宿主在编译阶段使用 `D3DReflect`（`ID3D11ShaderReflection`）自动解析 `cbuffer` 字段偏移、类型及纹理绑定槽；TS 侧按字段名写入标量、向量、数组、颜色（自动转为预乘 RGBA）及 `Painter` 子纹理输入，无需手算 HLSL 16 字节对齐。修改 uniform 仅更新常量缓冲，不重编着色器。
+- **编译与热更新双轨**：
+  - Dev / Live 模式使用 Windows 系统自带 `d3dcompiler_47.dll` 运行时编译，支持 Vite 修改 `.hlsl` 即时热替换；编译出错时输出带行号诊断并保留上一版有效着色器，不中断运行；
+  - Dist 模式支持在构建期将静态 `.hlsl` 预编译为 DXBC 字节码打包以消除冷启动编译卡顿，同时保留 `d3dcompiler_47.dll` 供运行期动态拼接与编译 HLSL 字符串。
+
+## Shader 双落点、离屏层与废除旧模糊修饰器
+
+完全对齐 Compose 粒度划分绘制原语：
+
+- **生成型着色器进 `Brush`（不进 `Painter`）**：将 `shaderBrush(shader)` 纳入 `Brush` 联合类型（`Painter` 仍专注有固有尺寸的位图、帧序列与像素缓冲），直接通用于 `M.background`、`M.border` 以及 `DrawScope` 的矢量填充与描边。
+- **后处理滤波型着色器进 `RenderEffect`**：提供可链式组合的 `RenderEffect.blur`（GPU 可分离两 Pass 高斯模糊，支持边缘策略）、`RenderEffect.colorFilter`、`RenderEffect.shader(runtimeShader, inputSlot)` 与 `RenderEffect.chain`（底层由 D3D11 离屏 RT 池做 Ping-Pong Pass），挂在 `M.graphicsLayer({ renderEffect, ... })` 或离屏层上。
+- **通用离屏原语支撑上层 Backdrop / 液态玻璃旁包**：内核不内建液态玻璃，也不新增黑盒式 `M.backdropEffect`。而是补齐三项通用正交原语，使类似 `KyantLiquidGlass` 的应用内 Backdrop、折射、色散、级联导出与倒影库可在旁包中完整实现：
+  1. **`RenderLayer`**（对齐 Compose `GraphicsLayer`：`createRenderLayer()`，支持 `DrawScope` 内 `recordLayer` / `drawLayer` 及层自身的 `renderEffect`、`alpha`、`blendMode`、`clip`/`shape` 与变换）；
+  2. **`BlendMode`**（`srcOver`、`plus`、`multiply`、`screen`、`dstIn`、`srcIn`、`clear` 等）；
+  3. **布局坐标观察（`onGloballyPositioned`）**，用于计算前景与背景录制层的精确相对偏移。
+- **废除旧 CPU 模糊修饰器**：移除 Arrange 遗留的 `M.blur` 与 `M.backdropBlur`，全部统一到 `RenderEffect` 与 `RenderLayer` 新体系。
+
+## 代价与后续边界
+
+- 不以 Direct2D 为主渲染器，框架需自行维护任意 `Path` 光栅化/三角化与 DirectWrite 字形图集缓存。
+- 移除旧 `M.blur` / `M.backdropBlur` 需同步清理相关旧测试与调用处；开箱即用的毛玻璃/液态玻璃体验改由官方或社区旁包提供，不写入核心 `Modifier`。
+- `native/` 原生扩展接入 D3D11 绘制与外部纹理的接口及构建选型见 [ADR 007](7：CMake构建、宿主交付与Native增强接口.md) 与 [ADR 009](9：宿主加载规矩、Native统一结构与扩展交付.md)。

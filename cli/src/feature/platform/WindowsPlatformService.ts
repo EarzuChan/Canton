@@ -71,7 +71,7 @@ export class WindowsPlatformService extends PlatformService {
             if (!candidate.native.developerCommand) throw new Error("未发现 Visual Studio C++ 工具安装，请安装 MSVC 并填写 VsDevCmd.bat 路径")
             await access(candidate.native.developerCommand)
             const env = await this.nativeEnvironment(candidate)
-            const compilerPath = candidate.nativeCompiler?.path ?? await locateTool("cl.exe", env, "win32")
+            const compilerPath = candidate.nativeCompiler?.path ?? await locateTool("cl.exe", env)
             if (!compilerPath) throw new Error("Visual Studio 环境中未找到 cl.exe")
             const compiler = await this.executor.run({ command: compilerPath, args: [], env, timeoutMs: toolProbeTimeoutMs })
             throwIfProcessCancelled(compiler)
@@ -82,7 +82,7 @@ export class WindowsPlatformService extends PlatformService {
             candidate.nativeCompiler = { path: compilerPath, version }
             for (const [key, command] of [["cmake", "cmake.exe"], ["ninja", "ninja.exe"]] as const) {
                 if (key === "ninja" && !candidate.native.generator.startsWith("Ninja")) continue
-                const path = candidate[key]?.path ?? await locateTool(command, env, "win32")
+                const path = candidate[key]?.path ?? await locateTool(command, env)
                 if (!path) issues.push({ key, label: command, message: `Visual Studio 环境中未找到 ${command}` })
                 else candidate[key] = { path }
             }

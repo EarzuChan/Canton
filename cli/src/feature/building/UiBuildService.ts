@@ -23,7 +23,7 @@ export class UiBuildService {
         const scriptFormat = uiScriptFormat(state)
         const build = await recordBuild(state, 'ui', { scriptFormat }, async () => {
             await mkdir(dirname(output), { recursive: true })
-            const stage = await mkdtemp(join(dirname(output), '.arrange-ui-build-'))
+            const stage = await mkdtemp(join(dirname(output), '.canton-ui-build-'))
             const input = join(stage, 'esm')
             const assembled = join(stage, 'dist')
             const backup = join(stage, 'previous')

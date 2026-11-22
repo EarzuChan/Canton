@@ -6,24 +6,22 @@ import { z } from "zod"
 import { containedDirectory } from "../project/ProjectPaths.ts"
 import type { ProjectState } from "../project/ProjectState.ts"
 import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
-import { encodeIcns, encodeIco, icnsSlots, icoSizes } from "./IconContainer.ts"
+import { encodeIco, icoSizes } from "./IconContainer.ts"
 import { resizeIcon } from "./IconResize.ts"
 import { iconFingerprint, loadProjectIconSource, projectIconSourcePath, readDecodedPngIconSource, type IconPixels, type IconSourceSummary } from "./PngIcon.ts"
 
-const derivedFileNames = { ico: "icon.ico", icns: "icon.icns", manifest: "icon.json" } as const
-const iconAssetsFormatVersion = 2
+const derivedFileNames = { ico: "icon.ico", manifest: "icon.json" } as const
+const iconAssetsFormatVersion = 3
 const fingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/)
 const manifestSchema = z.object({
     formatVersion: z.literal(iconAssetsFormatVersion),
     sourceFingerprint: fingerprintSchema,
     sourceSize: z.number().int().positive(),
     icoFingerprint: fingerprintSchema,
-    icnsFingerprint: fingerprintSchema,
 })
 
 export interface PreparedIconAssets {
     readonly ico: string
-    readonly icns: string
     readonly fingerprint: string
     readonly size: number
 }
@@ -40,11 +38,11 @@ function summarize(source: IconSourceSummary): IconSourceSummary { return { path
 export class IconAssetsService {
     constructor(private readonly signal?: AbortSignal) { }
 
-    private async paths(state: ProjectState, outputDirectory: string, anchor: string): Promise<{ directory: string, ico: string, icns: string, manifest: string }> {
+    private async paths(state: ProjectState, outputDirectory: string, anchor: string): Promise<{ directory: string, ico: string, manifest: string }> {
         const directory = containedDirectory(anchor, outputDirectory, "图标派生目录")
         await assertPlainDirectoryPath(anchor, directory)
-        const paths = { directory, ico: join(directory, derivedFileNames.ico), icns: join(directory, derivedFileNames.icns), manifest: join(directory, derivedFileNames.manifest) }
-        for (const path of [paths.ico, paths.icns, paths.manifest]) {
+        const paths = { directory, ico: join(directory, derivedFileNames.ico), manifest: join(directory, derivedFileNames.manifest) }
+        for (const path of [paths.ico, paths.manifest]) {
             const info = await lstat(path).catch(error => {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
                 return null
@@ -58,7 +56,7 @@ export class IconAssetsService {
         this.signal?.throwIfAborted()
         const source = await loadProjectIconSource(state)
         const paths = await this.paths(state, outputDirectory, anchor)
-        const files = await Promise.all([paths.ico, paths.icns, paths.manifest].map(async path => {
+        const files = await Promise.all([paths.ico, paths.manifest].map(async path => {
             try { return await readFile(path) } catch (error) {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
                 return null
@@ -69,10 +67,10 @@ export class IconAssetsService {
         const base = { source: summarize(source), ready: false, assets: null }
         if (files.some(file => file === null)) return { ...base, reason: "图标派生资源缺失，请运行 native SETUP" }
         let manifest: z.infer<typeof manifestSchema>
-        try { manifest = manifestSchema.parse(JSON.parse(files[2]!.toString("utf8"))) } catch { return { ...base, reason: "图标派生记录损坏，请运行 native SETUP" } }
+        try { manifest = manifestSchema.parse(JSON.parse(files[1]!.toString("utf8"))) } catch { return { ...base, reason: "图标派生记录损坏，请运行 native SETUP" } }
         if (manifest.sourceFingerprint !== source.fingerprint || manifest.sourceSize !== source.size) return { ...base, reason: "图标源内容已变化，请运行 native SETUP" }
-        if (manifest.icoFingerprint !== iconFingerprint(files[0]!) || manifest.icnsFingerprint !== iconFingerprint(files[1]!)) return { ...base, reason: "图标派生资源已变化，请运行 native SETUP" }
-        return { source: summarize(source), ready: true, assets: { ico: paths.ico, icns: paths.icns, fingerprint: source.fingerprint, size: source.size } }
+        if (manifest.icoFingerprint !== iconFingerprint(files[0]!)) return { ...base, reason: "图标派生资源已变化，请运行 native SETUP" }
+        return { source: summarize(source), ready: true, assets: { ico: paths.ico, fingerprint: source.fingerprint, size: source.size } }
     }
 
     async prepare(state: ProjectState, outputDirectory: string, anchor: string = state.rootDir): Promise<PreparedIconAssets | null> {
@@ -80,7 +78,7 @@ export class IconAssetsService {
         const paths = await this.paths(state, outputDirectory, anchor)
         const sourcePath = await projectIconSourcePath(state)
         if (!sourcePath) {
-            for (const path of [paths.ico, paths.icns, paths.manifest]) {
+            for (const path of [paths.ico, paths.manifest]) {
                 this.signal?.throwIfAborted()
                 await rm(path, { force: true })
             }
@@ -91,20 +89,18 @@ export class IconAssetsService {
         const previous = await this.inspect(state, outputDirectory, anchor)
         if (previous.ready) return previous.assets
         const { source, pixels } = await readDecodedPngIconSource(sourcePath)
-        const sizes = [...new Set([...icoSizes, ...icnsSlots.map(slot => slot.size)])].filter(size => size <= pixels.size)
+        const sizes = icoSizes.filter(size => size <= pixels.size)
         const images = new Map<number, IconPixels>()
         for (const size of sizes) {
             await setImmediate()
             images.set(size, resizeIcon(pixels, size, this.signal))
         }
         const ico = encodeIco(images)
-        const icns = encodeIcns(images)
-        const manifest = JSON.stringify({ formatVersion: iconAssetsFormatVersion, sourceFingerprint: source.fingerprint, sourceSize: source.size, icoFingerprint: iconFingerprint(ico), icnsFingerprint: iconFingerprint(icns) }, null, 2) + "\n"
+        const manifest = JSON.stringify({ formatVersion: iconAssetsFormatVersion, sourceFingerprint: source.fingerprint, sourceSize: source.size, icoFingerprint: iconFingerprint(ico) }, null, 2) + "\n"
         this.signal?.throwIfAborted()
         await mkdir(paths.directory, { recursive: true })
         const staged = [
             { path: paths.ico, content: ico },
-            { path: paths.icns, content: icns },
             { path: paths.manifest, content: Buffer.from(manifest) },
         ].map(file => ({ ...file, temporary: `${file.path}.${randomUUID()}.tmp` }))
         try {
@@ -121,6 +117,6 @@ export class IconAssetsService {
         } finally {
             for (const file of staged) await rm(file.temporary, { force: true }).catch(() => { })
         }
-        return { ico: paths.ico, icns: paths.icns, fingerprint: source.fingerprint, size: source.size }
+        return { ico: paths.ico, fingerprint: source.fingerprint, size: source.size }
     }
 }

@@ -3,14 +3,14 @@ import { createReadStream } from 'node:fs'
 import { lstat, readdir, rename, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { Plugin, ResolvedConfig } from 'vite'
-import { ARRANGE_PACKAGE_VERSION, ARRANGE_RUNTIME_VERSION } from '@arrange/framework/internal'
+import { CANTON_PACKAGE_VERSION, CANTON_PROTOCOL_VERSION } from '@canton/shared'
 
-const manifestName = 'arrange-ui.json'
+const manifestName = 'canton-ui.json'
 const maxEntryBytes = 64 * 1024 * 1024
 type Kind = 'module' | 'asset'
 
 export function bytecodeBuildInput(): boolean {
-    return !!process.env.ARRANGE_UI_BUILD_STAGE && process.env.ARRANGE_UI_BUILD_SCRIPT_FORMAT === 'bytecode'
+    return !!process.env.CANTON_UI_BUILD_STAGE && process.env.CANTON_UI_BUILD_SCRIPT_FORMAT === 'bytecode'
 }
 
 function portableName(path: string): boolean {
@@ -52,21 +52,21 @@ export function uiPackageHooks(): Pick<Plugin, 'configResolved' | 'writeBundle'>
     return {
         configResolved(value) {
             config = value
-            const stage = process.env.ARRANGE_UI_BUILD_STAGE
+            const stage = process.env.CANTON_UI_BUILD_STAGE
             if (stage && value.command === 'build' && resolve(value.root, value.environments.client?.build.outDir ?? value.build.outDir) !== resolve(stage)) {
-                throw new Error('Arrange CLI UI 构建必须将 ESM 输出写入指定的暂存目录')
+                throw new Error('Canton CLI UI 构建必须将 ESM 输出写入指定的暂存目录')
             }
         },
         writeBundle: {
             order: 'post',
             sequential: true,
             async handler(output, bundle) {
-                if (!output.dir || output.format !== 'es') throw new Error('Arrange UI 构建必须输出 ESM 目录')
+                if (!output.dir || output.format !== 'es') throw new Error('Canton UI 构建必须输出 ESM 目录')
                 const bytecode = bytecodeBuildInput()
                 const items = Object.values(bundle)
                 const entry = items.filter(item => item.type === 'chunk' && item.isEntry)
-                if (entry.length !== 1) throw new Error('Arrange UI 包必须有且仅有一个 ESM 入口')
-                if (bytecode && entry[0].fileName !== 'app.aex') throw new Error('字节码构建的 ESM 入口必须命名为 app.aex')
+                if (entry.length !== 1) throw new Error('Canton UI 包必须有且仅有一个 ESM 入口')
+                if (bytecode && entry[0].fileName !== 'app.cbc') throw new Error('字节码构建的 ESM 入口必须命名为 app.cbc')
                 const names = new Map<string, Kind>()
                 const folded = new Map<string, string>([[manifestName, manifestName]])
                 const directories = new Map<string, string>()
@@ -84,7 +84,7 @@ export function uiPackageHooks(): Pick<Plugin, 'configResolved' | 'writeBundle'>
                     names.set(path, kind)
                 }
                 for (const item of items) {
-                    if (item.type === 'chunk' && (bytecode ? !item.fileName.endsWith('.aex') : item.fileName.toLowerCase().endsWith('.aex'))) {
+                    if (item.type === 'chunk' && (bytecode ? !item.fileName.endsWith('.cbc') : item.fileName.toLowerCase().endsWith('.cbc'))) {
                         throw new Error(`ESM 模块名不符合 UI 构建模式：${item.fileName}`)
                     }
                     add(item.fileName, item.type === 'chunk' ? 'module' : 'asset')
@@ -95,7 +95,7 @@ export function uiPackageHooks(): Pick<Plugin, 'configResolved' | 'writeBundle'>
                 if (names.size > 8192) throw new Error('UI 包条目数量超过限制')
                 const entries = []
                 for (const path of [...names.keys()].sort()) entries.push(await describe(output.dir, path, names.get(path)!))
-                const contents = JSON.stringify({ format: 3, scriptFormat: bytecode ? 'esm' : 'js', framework: ARRANGE_PACKAGE_VERSION, protocol: ARRANGE_RUNTIME_VERSION, entry: entry[0].fileName, entries }) + '\n'
+                const contents = JSON.stringify({ format: 3, scriptFormat: bytecode ? 'esm' : 'js', framework: CANTON_PACKAGE_VERSION, protocol: CANTON_PROTOCOL_VERSION, entry: entry[0].fileName, entries }) + '\n'
                 if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw new Error('UI 包清单超过大小限制')
                 const target = join(output.dir, manifestName)
                 const staged = `${target}.${process.pid}.tmp`

@@ -1,4 +1,4 @@
-export type ArrangeVitePluginOptions = {
+export type CantonVitePluginOptions = {
     entry?: string
     host?: string
     port?: number
@@ -13,12 +13,12 @@ export type MiddlewareResponse = {
 
 export type MiddlewareHandler = (req: unknown, res: MiddlewareResponse) => void | Promise<void>
 
-export type ArrangeDevServer = {
+export type CantonDevServer = {
     config?: {
         root: string
         mode: string
         configFile?: string
-        arrangeViteApiRoot?: string
+        cantonViteApiRoot?: string
     }
     middlewares?: { use: (path: string, handler: MiddlewareHandler) => void }
 }
@@ -40,7 +40,7 @@ export type TransformThis = { warn: (warning: TransformWarning) => void; addWatc
 
 export type ConfigEnv = { command?: string; mode?: string }
 
-export type ArrangeViteConfig = {
+export type CantonViteConfig = {
     define: Record<string, string>
     server: { host: string; port: number; strictPort: boolean }
     build: {
@@ -59,20 +59,20 @@ export type ArrangeViteConfig = {
     }
 }
 
-export type ArrangeTransformPluginOptions = {
+export type CantonTransformPluginOptions = {
     name: string
     hot: () => boolean
 }
 
-export type ArrangeTransformPlugin = {
+export type CantonTransformPlugin = {
     name: string
     enforce: "pre"
     load: (id: string) => string | null
     transform: (this: TransformThis, code: string, id: string) => string | Promise<{ code: string; map?: object | null } | null> | null
 }
 
-export type ArrangeVitePlugin = ArrangeTransformPlugin & Pick<import('vite').Plugin, 'configEnvironment' | 'configResolved' | 'writeBundle'> & {
-    config: (config?: unknown, env?: ConfigEnv) => ArrangeViteConfig
-    configureServer: (server: ArrangeDevServer) => void
+export type CantonVitePlugin = CantonTransformPlugin & Pick<import('vite').Plugin, 'configEnvironment' | 'configResolved' | 'writeBundle'> & {
+    config: (config?: unknown, env?: ConfigEnv) => CantonViteConfig
+    configureServer: (server: CantonDevServer) => void
     handleHotUpdate: (ctx: HotUpdateContext) => HotUpdateModule[]
 }

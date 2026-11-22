@@ -1,31 +1,31 @@
 import test from "node:test"
-import { compileScript, parse } from '../../packages/compiler/src/sfa/index.ts'
+import { compileScript, parse } from '../../packages/compiler/src/index.ts'
 import assert from "node:assert/strict"
 import { join, resolve } from "node:path"
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import arrange from "../../packages/vite-plugin/src/plugin.ts"
+import canton from "../../packages/vite-plugin/src/plugin.ts"
 import { MODULE_SNAPSHOT_PATH, createModuleSnapshot } from '../../packages/vite-plugin/src/module-snapshot.ts'
-import { createServer } from 'vite'
+import { build, createServer } from 'vite'
 import ts from 'typescript'
-import { ARRANGE_DEFINES, ARRANGE_DEFINE_KEYS, ARRANGE_VERSION } from '../../packages/vite-plugin/src/constraints.ts'
-import { ARRANGE_PACKAGE_VERSION } from '../../packages/framework/src/version.ts'
+import { CANTON_DEFINES, CANTON_DEFINE_KEYS, CANTON_VERSION } from '../../packages/vite-plugin/src/constraints.ts'
+import { CANTON_PACKAGE_VERSION } from '../../packages/shared/src/version.ts'
 import { prepareUiFixture } from '../helpers/ui-fixture.ts'
 
-test("vite plugin config freezes Arrange dev server and app.js output defaults", () => {
-    const plugin = arrange()
+test("vite plugin config freezes Canton dev server and app.js output defaults", () => {
+    const plugin = canton()
     const config = plugin.config()
     assert.deepEqual(config.server, { host: "127.0.0.1", port: 9178, strictPort: true })
     assert.equal(config.build.rollupOptions.input, "src/main.ts")
     assert.equal(config.build.rollupOptions.output.entryFileNames, "app.js")
     assert.equal(config.build.rollupOptions.output.chunkFileNames, "chunks/[name]-[hash].js")
-    assert.equal(ARRANGE_VERSION, ARRANGE_PACKAGE_VERSION)
-    assert.deepEqual(ARRANGE_DEFINE_KEYS, ['__DEV__', '__TEST__'])
-    assert.deepEqual(config.define, { ...ARRANGE_DEFINES, 'process.env.NODE_ENV': '"development"' })
+    assert.equal(CANTON_VERSION, CANTON_PACKAGE_VERSION)
+    assert.deepEqual(CANTON_DEFINE_KEYS, ['__DEV__', '__TEST__'])
+    assert.deepEqual(config.define, { ...CANTON_DEFINES, 'process.env.NODE_ENV': '"development"' })
 })
 
 test("vite plugin registers the live ESM snapshot endpoint", () => {
-    const plugin = arrange()
+    const plugin = canton()
     const registrations: Array<{ path: string; handler: unknown }> = []
     plugin.configureServer({
         middlewares: {
@@ -35,45 +35,46 @@ test("vite plugin registers the live ESM snapshot endpoint", () => {
         },
     })
     assert.equal(registrations.length, 1)
+    assert.equal(MODULE_SNAPSHOT_PATH, "/@canton/modules")
     assert.equal(registrations[0].path, MODULE_SNAPSHOT_PATH)
     assert.equal(typeof registrations[0].handler, "function")
 })
 
 test('Vite 保留 ESM 模块边界并提供原生 HMR', { timeout: 30000 }, async t => {
-    const root = await realpath(await mkdtemp(join(tmpdir(), 'arrange-gallery-live-')))
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'canton-app-live-')))
     t.after(() => rm(root, { recursive: true, force: true }))
     await prepareUiFixture(root)
-    const server = await createServer({ root, configFile: false, plugins: [arrange()], server: { middlewareMode: true, hmr: false, fs: { allow: [root, resolve('.')] } } })
+    const server = await createServer({ root, configFile: false, plugins: [canton()], server: { middlewareMode: true, hmr: false, fs: { allow: [root, resolve('.')] } } })
     try {
         const snapshot = await createModuleSnapshot(server, 'src/main.ts')
-        assert.equal(snapshot.entry, '/@arrange/entry')
+        assert.equal(snapshot.entry, '/@canton/entry')
         assert.ok(snapshot.modules.length > 20)
         assert.match(snapshot.modules.find(module => module.url === '/src/main.ts')!.source, /import /)
         const client = snapshot.modules.find(module => module.url === '/@vite/client')!.source
         assert.match(client, /createHotContext/)
-        const updatedApp = await createModuleSnapshot(server, 'src/main.ts', ['/src/App.sfa?t=1790156770640&import'])
-        const updatedAppModule = updatedApp.modules.find(module => module.url === '/src/App.sfa?t=1790156770640&import')
-        assert.ok(updatedAppModule?.source.includes('__registerHot'), 'timestamped SFA HMR modules must retain their compiled update boundary')
-        const frameworkLog = snapshot.modules.filter(module => module.url.includes('/packages/framework/src/diagnostics.ts'))
+        const updatedApp = await createModuleSnapshot(server, 'src/main.ts', ['/src/App.cta?t=1790156770640&import'])
+        const updatedAppModule = updatedApp.modules.find(module => module.url === '/src/App.cta?t=1790156770640&import')
+        assert.ok(updatedAppModule?.source.includes('__registerHot'), 'timestamped CTA HMR modules must retain their compiled update boundary')
+        const frameworkLog = snapshot.modules.filter(module => module.url.includes('/packages/framework/src/native/diagnostics.ts'))
         assert.equal(frameworkLog.length, 1, 'App 与 HMR 必须共用同一个 framework Log 模块')
         assert.match(client, new RegExp(`from ["']${frameworkLog[0]!.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']`))
-        assert.ok(snapshot.modules.some(module => module.url.split('?')[0] === '/src/App.sfa'))
+        assert.ok(snapshot.modules.some(module => module.url.split('?')[0] === '/src/App.cta'))
     } finally { await server.close() }
 })
 
 test('真实 Vite 快照保留空格、Unicode 与字面百分号模块身份', { timeout: 30000 }, async t => {
-    const temporary = await realpath(await mkdtemp(join(tmpdir(), 'arrange-vite-module-paths-')))
+    const temporary = await realpath(await mkdtemp(join(tmpdir(), 'canton-vite-module-paths-')))
     t.after(() => rm(temporary, { recursive: true, force: true }))
     const root = join(temporary, '工程 with spaces %')
     const external = join(temporary, '外部 module with spaces %20.ts')
     await mkdir(join(root, 'src'), { recursive: true })
-    await mkdir(join(root, 'node_modules/@arrange'), { recursive: true })
-    await symlink(resolve('packages/framework'), join(root, 'node_modules/@arrange/framework'), process.platform === 'win32' ? 'junction' : 'dir')
+    await mkdir(join(root, 'node_modules/@canton'), { recursive: true })
+    await symlink(resolve('packages/framework'), join(root, 'node_modules/@canton/framework'), process.platform === 'win32' ? 'junction' : 'dir')
     await writeFile(join(root, 'src/百分比 100%.ts'), 'export const percentage = 100\n')
     await writeFile(join(root, 'src/literal%20.ts'), 'export const literal = 20\n')
     await writeFile(external, 'export const external = 3\n')
-    await writeFile(join(root, 'src/main.ts'), `import { createApp } from '@arrange/framework'\nimport { percentage } from './百分比 100%.ts'\nimport { literal } from './literal%20.ts'\nimport { external } from ${JSON.stringify(external.replaceAll('\\', '/'))}\nexport { createApp }\nexport const result = percentage + literal + external\n`)
-    const server = await createServer({ root, configFile: false, plugins: [arrange()], optimizeDeps: { entries: [join(root, 'src/main.ts')] }, server: { middlewareMode: true, hmr: false, fs: { allow: [temporary, resolve('.')] } } })
+    await writeFile(join(root, 'src/main.ts'), `import { createApp } from '@canton/framework'\nimport { percentage } from './百分比 100%.ts'\nimport { literal } from './literal%20.ts'\nimport { external } from ${JSON.stringify(external.replaceAll('\\', '/'))}\nexport { createApp }\nexport const result = percentage + literal + external\n`)
+    const server = await createServer({ root, configFile: false, plugins: [canton()], optimizeDeps: { entries: [join(root, 'src/main.ts')] }, server: { middlewareMode: true, hmr: false, fs: { allow: [temporary, resolve('.')] } } })
     try {
         const snapshot = await createModuleSnapshot(server, 'src/main.ts')
         const entry = snapshot.modules.find(module => module.url === '/src/main.ts')!
@@ -93,16 +94,16 @@ test('真实 Vite 快照保留空格、Unicode 与字面百分号模块身份', 
 })
 
 test("vite plugin leaves ordinary ESM entry to Vite import analysis", async () => {
-    const plugin = arrange()
+    const plugin = canton()
     const transformed = await plugin.transform.call({
         warn() {
         }
-    }, 'import { createApp } from "@arrange/framework";\n', "C:/demo/ui-src/src/main.ts")
+    }, 'import { createApp } from "@canton/framework";\n', "C:/fixture/src/main.ts")
     assert.equal(transformed, null)
 })
 
 test('live 动态 import 辅助名称不覆盖用户绑定', async () => {
-    const source = `const __arrangeImport = 7\nconst __arrangeImport_ = 8\nexport const result = import('./dep').then(module => module.value + __arrangeImport + __arrangeImport_)`
+    const source = `const __cantonImport = 7\nconst __cantonImport_ = 8\nexport const result = import('./dep').then(module => module.value + __cantonImport + __cantonImport_)`
     const server = { async transformRequest() { return { code: source } } } as unknown as Parameters<typeof createModuleSnapshot>[0]
     const snapshot = await createModuleSnapshot(server, 'entry.ts', ['/entry.ts'])
     const entry = snapshot.modules.find(module => module.url === '/entry.ts')!
@@ -119,11 +120,11 @@ test('live 动态 import 辅助名称不覆盖用户绑定', async () => {
 })
 
 test("vite plugin lets Vite propagate updates to accept boundaries", () => {
-    const plugin = arrange()
+    const plugin = canton()
     const sent: Array<{ type?: string; event?: string; data?: { path?: string; timestamp?: number } }> = []
-    const modules = [{ id: "App.sfa" }]
+    const modules = [{ id: "App.cta" }]
     const result = plugin.handleHotUpdate({
-        file: "C:\\demo\\ui-src\\src\\App.sfa",
+        file: "C:\\fixture\\src\\App.cta",
         modules,
         server: {
             ws: {
@@ -137,12 +138,12 @@ test("vite plugin lets Vite propagate updates to accept boundaries", () => {
     assert.equal(sent.length, 0)
 })
 
-test("vite plugin preserves SFA modules as Arrangable accept boundaries", () => {
-    const plugin = arrange()
+test("vite plugin preserves CTA modules as Arrangable accept boundaries", () => {
+    const plugin = canton()
     const sent: Array<{ type?: string; event?: string; data?: { path?: string; timestamp?: number } }> = []
     const result = plugin.handleHotUpdate({
-        file: "C:/demo/ui-src/src/Counter.sfa",
-        modules: [{ id: "Counter.sfa" }, { id: "Counter.sfa?type=script" }],
+        file: "C:/fixture/src/Counter.cta",
+        modules: [{ id: "Counter.cta" }, { id: "Counter.cta?type=script" }],
         server: {
             ws: {
                 send(event: { type?: string; event?: string; data?: { path?: string; timestamp?: number } }) {
@@ -157,10 +158,10 @@ test("vite plugin preserves SFA modules as Arrangable accept boundaries", () => 
 })
 
 test("vite plugin does not emit full reload for ordinary dependency updates", () => {
-    const plugin = arrange()
+    const plugin = canton()
     const sent: Array<{ type?: string; event?: string; data?: { path?: string; timestamp?: number } }> = []
     plugin.handleHotUpdate({
-        file: "C:/demo/ui-src/node_modules/@arrange/framework/src/index.ts", // C盘何意味？
+        file: "C:/fixture/node_modules/@canton/framework/src/index.ts", // C盘何意味？
         modules: [],
         server: {
             ws: {
@@ -173,20 +174,20 @@ test("vite plugin does not emit full reload for ordinary dependency updates", ()
     assert.deepEqual(sent, [])
 })
 
-test("vite plugin accepts Arrange arrangable template without warnings", async () => {
-    const plugin = arrange()
+test("vite plugin accepts Canton arrangable template without warnings", async () => {
+    const plugin = canton()
     const warnings: string[] = []
     await plugin.transform.call({
         warn(warning: { message: string }) {
             warnings.push(warning.message)
         }
-    }, '<template><Column><Text text="ok" /><Input placeholder="ok" /></Column></template>', 'App.sfa')
+    }, '<template><Column><Text text="ok" /><Input placeholder="ok" /></Column></template>', 'App.cta')
     assert.deepEqual(warnings, [])
 })
 
-test('SFA 的同步初始化与局部异步函数遵守 setup 边界', () => {
+test('CTA 的同步初始化与局部异步函数遵守 setup 边界', () => {
     const compile = (source: string) => {
-        const result = parse(source, { filename: '声明.sfa' })
+        const result = parse(source, { filename: '声明.cta' })
         if (result.errors.length) throw result.errors[0]
         return compileScript(result.descriptor, {})
     }
@@ -200,16 +201,57 @@ test('SFA 的同步初始化与局部异步函数遵守 setup 边界', () => {
 })
 
 
-test('SFA 转译源码映射保留脚本位置与原始文件', async () => {
+test('CTA 转译源码映射保留脚本位置与原始文件', async () => {
     const { SourceMapConsumer } = await import('source-map-js')
-    const plugin = arrange()
+    const plugin = canton()
     const source = '<template>\n    <Text :text="String(count)" />\n</template>\n<script>\nconst count: number = 17\n</script>'
-    const result = await plugin.transform.call({ warn() { } }, source, 'Mapped.sfa')
+    const result = await plugin.transform.call({ warn() { } }, source, 'Mapped.cta')
     assert.ok(result && typeof result === 'object' && result.map)
     const consumer = new SourceMapConsumer(result.map as import('source-map-js').RawSourceMap)
     const lines: number[] = []
     consumer.eachMapping(mapping => { if (mapping.originalLine) lines.push(mapping.originalLine) })
     assert.ok(lines.includes(5), JSON.stringify(lines))
     assert.ok(lines.includes(2), JSON.stringify(lines))
-    assert.ok(consumer.sourceContentFor('Mapped.sfa')?.includes('const count: number = 17'))
+    assert.ok(consumer.sourceContentFor('Mapped.cta')?.includes('const count: number = 17'))
+})
+
+
+test('Vite 的字节码构建输入采用 Canton 清单和 .cbc 模块路径', async t => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'canton-bytecode-input-')))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const outDir = join(root, 'output')
+    const savedStage = process.env.CANTON_UI_BUILD_STAGE
+    const savedFormat = process.env.CANTON_UI_BUILD_SCRIPT_FORMAT
+    process.env.CANTON_UI_BUILD_STAGE = outDir
+    process.env.CANTON_UI_BUILD_SCRIPT_FORMAT = 'bytecode'
+    try {
+        await mkdir(join(root, 'src'))
+        await mkdir(join(root, 'public'))
+        await writeFile(join(root, 'src/main.ts'), `if ((await import('./lazy.ts')).default !== 42) throw Error('bad chunk')`)
+        await writeFile(join(root, 'src/lazy.ts'), 'export default 42')
+        await writeFile(join(root, 'public/resource.js'), 'asset')
+        await build({
+            root, configFile: false, logLevel: 'silent', build: { outDir },
+            plugins: [canton(), {
+                name: 'split-test-modules',
+                enforce: 'post',
+                config: () => ({ build: { rollupOptions: { output: { codeSplitting: true } } } }),
+            }],
+        })
+        const manifest = JSON.parse(await readFile(join(outDir, 'canton-ui.json'), 'utf8'))
+        assert.equal(manifest.framework, CANTON_PACKAGE_VERSION)
+        assert.equal(manifest.protocol, 1)
+        assert.equal(manifest.scriptFormat, 'esm')
+        assert.equal(manifest.entry, 'app.cbc')
+        const chunk = manifest.entries.find((item: { path: string, kind: string }) => item.kind === 'module' && item.path.startsWith('chunks/'))
+        assert.ok(chunk)
+        assert.match(chunk.path, /^chunks\/lazy-.+\.cbc$/)
+        assert.ok((await readFile(join(outDir, 'app.cbc'), 'utf8')).includes('./' + chunk.path))
+        assert.equal(manifest.entries.find((item: { path: string }) => item.path === 'resource.js')?.kind, 'asset')
+    } finally {
+        if (savedStage === undefined) delete process.env.CANTON_UI_BUILD_STAGE
+        else process.env.CANTON_UI_BUILD_STAGE = savedStage
+        if (savedFormat === undefined) delete process.env.CANTON_UI_BUILD_SCRIPT_FORMAT
+        else process.env.CANTON_UI_BUILD_SCRIPT_FORMAT = savedFormat
+    }
 })

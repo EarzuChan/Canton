@@ -1,8 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { createScrollState, watch } from '../../packages/framework/src/index.ts'
-import { scrollStateInternal } from '../../packages/framework/src/state.ts'
-import { M } from '@arrange/framework/ui'
+import { scrollStateInternal } from '../../packages/framework/src/layout/state.ts'
+import { M } from '@canton/framework/ui'
 
 test('布局输出的范围变化不重新求值滚动 Modifier，偏移变化仍正常订阅', () => {
     const state = createScrollState()

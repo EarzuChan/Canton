@@ -1,4 +1,4 @@
-import { syncArrangeVersionContract } from "./version-contract.ts"
+import { syncCantonVersionContract } from "./version-contract.ts"
 
-syncArrangeVersionContract()
-console.log('[ArrangeVersion]', "synced Arrange version contract")
+syncCantonVersionContract()
+console.log('[CantonVersion]', "synced Canton version contract")

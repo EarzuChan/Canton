@@ -1,7 +1,7 @@
-import { EMPTY_OBJ, arrangeParameterName, hasOwn, isArray, isFunction, isObject } from '@arrange/shared'
-import type { ArrangablePropsOptions, NormalizedProps } from './arrangableProps.ts'
-import type { ArrangableDefinition } from './arrangable.ts'
-import { arrangeExecutionStats } from './executionStats.ts'
+import { EMPTY_OBJ, cantonParameterName, hasOwn, isArray, isFunction, isObject } from '@canton/shared'
+import type { ArrangablePropsOptions, NormalizedProps } from './propTypes.ts'
+import type { ArrangableDefinition, ParameterPlan } from './arrangable.ts'
+import { cantonExecutionStats } from './executionStats.ts'
 import { sameHotArrangable } from './arrangableHmr.ts'
 
 const declarationsCache = new WeakMap<object, NormalizedProps>()
@@ -14,7 +14,7 @@ export function normalizeDeclaredProps(raw: ArrangablePropsOptions | undefined):
     const names = isArray(raw) ? raw : Object.keys(raw ?? EMPTY_OBJ)
     for (const original of names) {
         if (typeof original !== 'string' || !original) throw new TypeError('参数声明名称必须为非空字符串')
-        const name = arrangeParameterName(original)
+        const name = cantonParameterName(original)
         if (name === 'key') throw new TypeError('key 是组合身份，不能声明为业务参数')
         if (hasOwn(declarations, name)) throw new TypeError(`重复参数声明：${name}`)
 
@@ -25,12 +25,6 @@ export function normalizeDeclaredProps(raw: ArrangablePropsOptions | undefined):
     return declarations
 }
 
-export interface ParameterPlan {
-    readonly definition: ArrangableDefinition
-    readonly names: readonly string[]
-    readonly fields: readonly { readonly name: string; readonly position: number }[]
-}
-
 const parameterPlans = new WeakSet<object>()
 
 // 只预连接声明和位置，getter 与默认值工厂仍在实际调用的实例内求值
@@ -39,8 +33,8 @@ export function prepareParameters(definition: ArrangableDefinition, names: reado
     const positions = new Map<string, number>()
     const fail = (message: string): never => { throw new TypeError(message + (source ? `\n来源：${source}` : '')) }
     for (const [position, original] of names.entries()) {
-        arrangeExecutionStats.parameterNameChecks++
-        const name = arrangeParameterName(original)
+        cantonExecutionStats.parameterNameChecks++
+        const name = cantonParameterName(original)
         if (!hasOwn(declarations, name)) fail(`Arrangable 未声明参数：${name}`)
         if (positions.has(name)) fail(`重复参数：${name}`)
         positions.set(name, position)
@@ -58,7 +52,7 @@ export function prepareParameters(definition: ArrangableDefinition, names: reado
 
 const hotPlans = new WeakMap<ParameterPlan, ParameterPlan>()
 
-// 父级在 setup 中按导入时的定义预备计划；子组件热更新后实例可能仍沿用同一 SFA 的另一版本定义，此时按实例定义重建并缓存
+// 父级在 setup 中按导入时的定义预备计划；子组件热更新后实例可能仍沿用同一 CTA 的另一版本定义，此时按实例定义重建并缓存
 export function resolveParameterPlan(plan: ParameterPlan, definition: ArrangableDefinition, source?: string): ParameterPlan {
     if (!parameterPlans.has(plan)) throw new TypeError('参数位置计划不属于当前 Arrangable 定义')
     if (plan.definition === definition) return plan

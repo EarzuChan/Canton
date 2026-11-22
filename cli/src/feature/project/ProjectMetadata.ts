@@ -1,32 +1,9 @@
-import { defaultBundleIdPrefix } from "../../CliMetadata.ts"
-
 interface DisplayNameState {
     readonly project: { readonly project: { readonly name: string, readonly displayName?: string } }
 }
 
-interface BundleIdState {
-    readonly project: {
-        readonly project: { readonly bundleId?: string, readonly name: string, readonly vendorName: string, readonly vendorCode: string }
-    }
-}
-
 export function effectiveDisplayName(state: DisplayNameState): string {
     return state.project.project.displayName ?? state.project.project.name
-}
-
-export function effectiveBundleId(state: BundleIdState): string {
-    const metadata = state.project.project
-    return metadata.bundleId ?? generateDefaultBundleId({ vendorName: metadata.vendorName, vendorCode: metadata.vendorCode, projectName: metadata.name })
-}
-
-export function generateDefaultBundleId(input: { readonly vendorName: string, readonly vendorCode: string, readonly projectName: string }): string {
-    const manufacturer = asciiComponent(input.vendorName) || input.vendorCode.toLowerCase()
-    return `${defaultBundleIdPrefix}.${manufacturer}.${asciiComponent(input.projectName)}`
-}
-
-export function validateBundleId(value: string): string | undefined {
-    const label = "[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
-    return !/\s/.test(value) && new RegExp(`^${label}(?:\\.${label})+$`).test(value) ? undefined : "Bundle ID 须使用点分隔的 reverse-DNS 标识，仅含 ASCII 字母、数字与段内连字符"
 }
 
 export function validateDisplayName(value: string): string | undefined {
@@ -43,8 +20,4 @@ export function validateIconPath(value: string): string | undefined {
     if (parts.some(part => !part || part === "." || part === ".." || validateDisplayName(part))) return "图标路径不得包含空段、'.'、'..' 或非法文件名"
     if (!/\.png$/i.test(value)) return "图标源文件必须为 PNG"
     return undefined
-}
-
-function asciiComponent(value: string): string {
-    return value.replace(/[^A-Za-z0-9]/g, "").toLowerCase()
 }

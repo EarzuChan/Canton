@@ -1,20 +1,12 @@
 {
-  "name": "@arrange/compiler",
-  "version": "0.12.3",
+  "name": "@canton/compiler",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": {
-      "arrange-ts": "./src/sfa/index.ts",
-      "import": "./src/sfa/index.ts"
-    },
-    "./core": {
-      "arrange-ts": "./src/core/index.ts",
-      "import": "./src/core/index.ts"
-    },
-    "./template": {
-      "arrange-ts": "./src/template/index.ts",
-      "import": "./src/template/index.ts"
+      "canton-ts": "./src/index.ts",
+      "import": "./src/index.ts"
     }
   },
   "dependencies": {
@@ -24,7 +16,7 @@
     "source-map-js": "1.2.2",
     "magic-string": "0.30.21",
     "typescript": "^5.9.0",
-    "@arrange/shared": "0.12.3",
+    "@canton/shared": "0.1.0",
     "lru-cache": "10.1.0"
   },
   "license": "MIT",

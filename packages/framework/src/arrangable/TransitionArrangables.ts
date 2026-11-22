@@ -1,9 +1,9 @@
 import { Box } from './LayoutingArrangables.ts'
-import { arrangeScope, defineArrangable, onMounted, shallowRef, watch } from "../runtime/index.ts"
+import { cantonScope, defineArrangable, onMounted, shallowRef, watch } from "../runtime/index.ts"
 import type { Arrangable, ArrangableProps, PropType } from "../runtime/index.ts"
 import { animatedNumberAsRef, tween } from "../animation/value.ts"
 import type { AnimationSpec } from "../animation/value.ts"
-import { M } from "../modifier.ts"
+import { M } from "../modifier/modifier.ts"
 
 export type VisibilityTransform = Readonly<{ alpha?: number; translationX?: number; translationY?: number; scaleX?: number; scaleY?: number }>
 const clampAlpha = (value: number) => Math.max(0, Math.min(1, value))
@@ -98,7 +98,7 @@ export const Crossfade = defineArrangable({
 
         return () => call(0, Box, {}, {
             default: () => {
-                for (const item of entries.value) arrangeScope(0, () => call(0, CrossfadeLayer, {
+                for (const item of entries.value) cantonScope(0, () => call(0, CrossfadeLayer, {
                     entry: () => item,
                     active: () => Object.is(item.value, props.targetState),
                     animationSpec: () => props.animationSpec,

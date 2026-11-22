@@ -1,4 +1,4 @@
-import { effectScope, onScopeDispose } from '@arrange/reactivity'
+import { effectScope, onScopeDispose } from '@canton/reactivity'
 import { getCurrentInstance, setCurrentInstance, type ArrangableDefinition, type ArrangableInstance, type StructureProgram } from './arrangable.ts'
 import { bindFrameScheduler } from './animationOwner.ts'
 
@@ -34,27 +34,9 @@ export function applyArrangableHmr(id: string, definition: ArrangableDefinition)
 
         const scope = compatible ? instance.structure : instance.structure.parent
         if (scope) {
-            invalidateConstants(scope)
-            instance.rearrangeSession.schedule(scope, true)
+            scope.invalidateConstants()
+            scope.schedule(true)
         }
-    }
-}
-
-function invalidateConstants(root: ArrangableInstance['structure']): void {
-    const scopes = [root]
-    const visited = new Set<ArrangableInstance>()
-
-    while (scopes.length) {
-        const scope = scopes.pop()!
-
-        for (const entry of scope.entries) if (entry.kind === 'call') {
-            if (visited.has(entry.instance)) continue
-            visited.add(entry.instance)
-            entry.instance.propStore.invalidateConstants()
-            scopes.push(entry.instance.structure)
-        } else scopes.push(entry.scope)
-
-        for (const retained of scope.retainedContents.values()) for (const entry of retained.entries.values()) scopes.push(entry.scope)
     }
 }
 
@@ -62,7 +44,7 @@ export function resolveHotArrangable(definition: ArrangableDefinition): Arrangab
     return definitions.get(definition)?.identity ?? definition
 }
 
-// 两个定义是否为同一 SFA 的不同热更新版本
+// 两个定义是否为同一 CTA 的不同热更新版本
 export function sameHotArrangable(left: ArrangableDefinition, right: ArrangableDefinition): boolean {
     const record = definitions.get(left)
     return record !== undefined && record === definitions.get(right)

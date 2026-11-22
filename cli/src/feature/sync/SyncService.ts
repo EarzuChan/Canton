@@ -70,7 +70,7 @@ export class SyncService {
                     } catch (error) {
                         if (isAbortError(error)) throw error
                         // 连不上 registry 只是“无法验证”，与 registry 明确给出的“不兼容”分开
-                        report.fatal.push({ path: "arrange.project.yaml", cause: error instanceof RegistryUnreachableError ? "framework-unverifiable" : "framework-incompatible", message: errorMessage(error) })
+                        report.fatal.push({ path: "canton.project.yaml", cause: error instanceof RegistryUnreachableError ? "framework-unverifiable" : "framework-incompatible", message: errorMessage(error) })
                     }
                     return { loadedStuff, state, report }
                 })

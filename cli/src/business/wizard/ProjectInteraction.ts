@@ -4,14 +4,12 @@ import type { InitializationPlan } from "../../feature/project/ProjectInitialize
 import type { ConfigRegistry } from "../../feature/config/ConfigRegistry.ts"
 import type { CommandInterface } from "../CommandInterface.ts"
 import { runCreateWizard } from "./Create.ts"
-import { runAdoptWizard } from "./Adopt.ts"
 import { confirmInitialization, confirmPrompt } from "./Project.ts"
 
 export class TerminalProjectInteraction implements ProjectInteraction {
     constructor(private readonly framework: FrameworkService, private readonly config: ConfigRegistry, private readonly output: CommandInterface) { }
 
     create(input: ProjectInteractionInput) { return runCreateWizard(this.output, this.framework, this.config, input) }
-    adopt(input: ProjectInteractionInput) { return runAdoptWizard(this.output, this.framework, this.config, input) }
     confirmInitialization(plan: InitializationPlan, verb: string) { return confirmInitialization(this.output, plan, verb) }
     confirm(message: string) { return confirmPrompt(this.output, message) }
     message(message: string): void { this.output.reporter.step(message) }

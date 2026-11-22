@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises"
 import { userDirectoryEnvironment, userDirectoryName } from "../../CliMetadata.ts"
 import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
 
-// 用户级根与工程级 .arrange 各自独立；路径解析不创建目录，资源协调由操作层按需建立
+// 用户级根与工程级 .canton 各自独立；路径解析不创建目录，资源协调由操作层按需建立
 export class UserDirectories {
     readonly root: string
 

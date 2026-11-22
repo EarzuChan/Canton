@@ -1,35 +1,13 @@
-import { isFunction } from '@arrange/shared'
+import { isFunction } from '@canton/shared'
 import { ReactiveFlags, TrackOpTypes } from './constants.ts'
-import { Dep, type Link, globalVersion } from './dep.ts'
-import { type DebuggerEvent, type DebuggerOptions, EffectFlags, type Subscriber, activeSub, batch, refreshComputed } from './effect.ts'
-import type { Ref } from './ref.ts'
+import { Dep } from './dep.ts'
+import { activeSub, batch, globalVersion, refreshComputed } from './effect.ts'
+import { type ComputedSubscriber, type DebuggerEvent, type DebuggerOptions, EffectFlags, type Link, type Subscriber } from './system.ts'
+import type { ComputedGetter, ComputedRef, ComputedSetter, WritableComputedOptions, WritableComputedRef } from './types.ts'
 import { warn } from './warning.ts'
 
-declare const ComputedRefSymbol: unique symbol
-declare const WritableComputedRefSymbol: unique symbol
-
-interface BaseComputedRef<T, S = T> extends Ref<T, S> {
-    [ComputedRefSymbol]: true
-}
-
-export interface ComputedRef<T = any> extends BaseComputedRef<T> {
-    readonly value: T
-}
-
-export interface WritableComputedRef<T, S = T> extends BaseComputedRef<T, S> {
-    [WritableComputedRefSymbol]: true
-}
-
-export type ComputedGetter<T> = (oldValue?: T) => T
-export type ComputedSetter<T> = (newValue: T) => void
-
-export interface WritableComputedOptions<T, S = T> {
-    get: ComputedGetter<T>
-    set: ComputedSetter<S>
-}
-
 // 响应式核心实现，不从 Framework 用户入口导出
-export class ComputedRefImpl<T = any> implements Subscriber {
+export class ComputedRefImpl<T = any> implements ComputedSubscriber {
     _value: any = undefined
     readonly dep: Dep = new Dep(this)
     readonly [ReactiveFlags.IS_REF] = true

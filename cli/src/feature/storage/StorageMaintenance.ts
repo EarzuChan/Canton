@@ -20,7 +20,7 @@ export class StorageMaintenance {
     async clean(selected: readonly StorageItem[]): Promise<void> {
         const current = await this.inventory.inspect()
         const pending = await new TransactionStore(this.user.root, this.user.transactions).list()
-        if (pending.length) throw new Error("用户级存在未完成事务，请先运行 arrange storage recover")
+        if (pending.length) throw new Error("用户级存在未完成事务，请先运行 canton storage recover")
         const entries: { root: string, path: string }[] = []
         for (const selectedItem of selected) {
             const item = current.find(item => item.id === selectedItem.id)
@@ -48,7 +48,7 @@ export class StorageMaintenance {
     async repair(key: string, task: TaskOutput): Promise<void> {
         if (!/^[a-f0-9]{16}$/.test(key)) throw new Error("依赖源码条目 ID 必须为 16 位十六进制")
         const path = join(this.user.dependencySources, "entries", key)
-        if ((await new TransactionStore(this.user.root, this.user.transactions).list()).length) throw new Error("用户级存在未完成事务，请先运行 arrange storage recover")
+        if ((await new TransactionStore(this.user.root, this.user.transactions).list()).length) throw new Error("用户级存在未完成事务，请先运行 canton storage recover")
         const record = await readSourceRecord(join(path, "complete.json"))
         if (record.key !== key) throw new Error("依赖源码条目与发布记录身份不符")
         const items = await this.inventory.inspect()

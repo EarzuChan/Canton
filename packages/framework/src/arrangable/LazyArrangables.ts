@@ -1,16 +1,16 @@
-import { computed, onScopeDispose, shallowRef } from '@arrange/reactivity'
+import { computed, onScopeDispose, shallowRef } from '@canton/reactivity'
 import { defineArrangable, onDeactivated } from '../runtime/index.ts'
 import { currentInstance, retainContent } from '../runtime/internal.ts'
 import { parameterInputs, parameterObject } from '../runtime/rearrange.ts'
 import type { ArrangableDefinition, ArrangableProps, PropType } from '../runtime/index.ts'
 import { isArrangableDefinition } from '../runtime/apiDefineArrangable.ts'
-import { acknowledgeLazyStateRequest, attachLazyState, createLazyState, lazyStateAppliedRequestVersion, lazyStatePublishedValue, lazyStateRequest, lazyStateStore, pauseLazyState, type LazyItemKey, type LazyState, type LazyStateOwner } from '../lazy.ts'
-import { LazyMeasurePolicy, BoxMeasurePolicy, ColumnMeasurePolicy, RowMeasurePolicy } from '../measurePolicy.ts'
-import { M, Modifier } from '../modifier.ts'
-import { GridCells, type GridCellsValue, type GridItemSpanValue, type Padding, PaddingValues, type HorizontalAlignment, type VerticalAlignment } from '../primitives.ts'
-import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native.ts'
+import { acknowledgeLazyStateRequest, attachLazyState, createLazyState, lazyStateAppliedRequestVersion, lazyStatePublishedValue, lazyStateRequest, lazyStateStore, pauseLazyState, type LazyItemKey, type LazyState, type LazyStateOwner } from '../layout/lazy.ts'
+import { LazyMeasurePolicy, BoxMeasurePolicy, ColumnMeasurePolicy, RowMeasurePolicy } from '../layout/measurePolicy.ts'
+import { M, Modifier } from '../modifier/modifier.ts'
+import { GridCells, type GridCellsValue, type GridItemSpanValue, type Padding, PaddingValues, type HorizontalAlignment, type VerticalAlignment } from '../values/primitives.ts'
+import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native/protocol.ts'
 import { Layout } from './Layout.ts'
-import type { LayoutContentProvider } from '../layoutContent.ts'
+import type { LayoutContentProvider } from '../layout/layoutContent.ts'
 
 const emptyPadding = PaddingValues({})
 const defaultCells = GridCells.Fixed(1)

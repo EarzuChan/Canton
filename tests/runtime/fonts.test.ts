@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { effectScope } from '@arrange/reactivity'
-import { DrawInstance, type DrawScope } from '../../packages/framework/src/draw.ts'
-import { FontWeight, defineFontFamily, normalizeFontStyle } from '../../packages/framework/src/font.ts'
-import type { NativeBindingHandle, NativeTransactionTarget } from '../../packages/framework/src/native.ts'
-import type { PainterCompletion } from '../../packages/framework/src/painter.ts'
+import { effectScope } from '@canton/reactivity'
+import { DrawInstance, type DrawScope } from '../../packages/framework/src/draw/draw.ts'
+import { FontWeight, defineFontFamily, normalizeFontStyle } from '../../packages/framework/src/draw/font.ts'
+import type { NativeBindingHandle, NativeTransactionTarget } from '../../packages/framework/src/native/protocol.ts'
+import type { PainterCompletion } from '../../packages/framework/src/draw/painter.ts'
 import { decodeDraw } from '../helpers/drawCommands.ts'
 import { createFakeNative } from '../helpers/fakeNative.ts'
 
@@ -65,7 +65,7 @@ function fontNative(readyImmediately = false): FontNative {
 
 test('defineFontFamily 走资源获取层，到达一个就登记一次，预加载在全部结束后释放', () => {
     const native = fontNative()
-    globalThis.__ARRANGE_NATIVE__ = native.target
+    globalThis.__CANTON_NATIVE__ = native.target
     try {
         const family = defineFontFamily(' Demo Sans ', { preload: true, faces: [{ src: 'fonts/a.ttf', weight: 700 }, { src: { path: 'fonts/b.ttf' }, style: 'italic' }] })
         assert.equal(family.name, 'Demo Sans')
@@ -82,29 +82,29 @@ test('defineFontFamily 走资源获取层，到达一个就登记一次，预加
         family.dispose()
         assert.equal(family.status, 'disposed')
         assert.deepEqual(native.log.slice(-3), ['remove Demo Sans', 'release', 'release'])
-    } finally { delete globalThis.__ARRANGE_NATIVE__ }
+    } finally { delete globalThis.__CANTON_NATIVE__ }
 })
 
 test('defineFontFamily：已缓存的字面立即就绪，全部失败则整体失败，参数在获取前校验', () => {
     const cached = fontNative(true)
-    globalThis.__ARRANGE_NATIVE__ = cached.target
+    globalThis.__CANTON_NATIVE__ = cached.target
     try {
         const family = defineFontFamily('Cached', { faces: [{ src: 'a.ttf' }] })
         assert.equal(family.status, 'ready')
         assert.deepEqual(cached.log, ['acquire a.ttf', 'define Cached 1'])
         const failing = fontNative()
-        globalThis.__ARRANGE_NATIVE__ = failing.target
+        globalThis.__CANTON_NATIVE__ = failing.target
         const broken = defineFontFamily('Broken', { preload: true, faces: [{ src: 'x.ttf' }] })
         failing.completions.get('x.ttf')!({ contentVersion: 1, error: '无法解码' })
         assert.equal(broken.status, 'failed')
         assert.deepEqual(failing.log, ['begin', 'acquire x.ttf', 'end'])
         assert.deepEqual(failing.defined, [])
         const rejected = fontNative()
-        globalThis.__ARRANGE_NATIVE__ = rejected.target
+        globalThis.__CANTON_NATIVE__ = rejected.target
         assert.throws(() => defineFontFamily('', { faces: [{ src: 'a.ttf' }] }), /族名/)
         assert.throws(() => defineFontFamily('A', { faces: [] }), /字面/)
         assert.throws(() => defineFontFamily('A', { faces: [{ src: 'a.ttf' }, { src: '' }] }), /src/)
         assert.throws(() => defineFontFamily('A', { faces: [{ src: 'a.ttf', weight: 0 }] }), /weight/)
         assert.deepEqual(rejected.log, [])
-    } finally { delete globalThis.__ARRANGE_NATIVE__ }
+    } finally { delete globalThis.__CANTON_NATIVE__ }
 })

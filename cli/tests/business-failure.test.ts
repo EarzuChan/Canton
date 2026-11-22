@@ -14,15 +14,15 @@ test('命令结果跨嵌套子命令收集，每次调用重置且不同应用�
         return options.failed ? 5 : undefined
     })
     const previousExitCode = process.exitCode
-    await command.parseAsync(['node', 'arrange', 'storage', 'inspect', 'test', '--failed'])
+    await command.parseAsync(['node', 'canton', 'storage', 'inspect', 'test', '--failed'])
     assert.equal(command.resultCode, 5)
     assert.equal(nested.resultCode, 5)
     const independent = new ApplicationCommand({ close: async () => { } }).exitOverride()
     independent.action(() => { })
-    await independent.parseAsync(['node', 'arrange'])
+    await independent.parseAsync(['node', 'canton'])
     assert.equal(independent.resultCode, 0)
     assert.equal(command.resultCode, 5)
-    await command.parseAsync(['node', 'arrange', 'storage', 'inspect', 'test'])
+    await command.parseAsync(['node', 'canton', 'storage', 'inspect', 'test'])
     assert.equal(command.resultCode, 0)
     assert.equal(nested.resultCode, 0)
     assert.equal(closed, 2)
@@ -33,7 +33,7 @@ test('命令失败与资源收尾同时失败时保留两个原始原因', async
     const primary = new Error('构建失败'), cleanup = new Error('资源释放失败')
     const command = new ApplicationCommand({ close: async () => { throw cleanup } }).exitOverride()
     command.command('build').action(() => { throw primary })
-    await assert.rejects(command.parseAsync(['node', 'arrange', 'build']), error => {
+    await assert.rejects(command.parseAsync(['node', 'canton', 'build']), error => {
         assert.ok(error instanceof AggregateError)
         assert.deepEqual(error.errors, [primary, cleanup])
         assert.match(error.message, /构建失败.*资源释放失败/)

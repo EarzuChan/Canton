@@ -1,19 +1,13 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
 import { createServer as createHttpServer } from "node:http"
-import { mkdtemp, rm } from "node:fs/promises"
 import { createServer as createTcpServer } from "node:net"
-import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { test, type TestContext } from "node:test"
+import { test } from "node:test"
 import { cliCompatibility, frameworkPackageName } from "../src/CliMetadata.ts"
 import { configRegistry } from "../src/feature/config/ConfigRegistry.ts"
 import { RegistryUnreachableError } from "../src/feature/framework/FrameworkErrors.ts"
 import { FrameworkRegistryClient } from "../src/feature/framework/FrameworkRegistryClient.ts"
 import { FrameworkService } from "../src/feature/framework/FrameworkService.ts"
-import { FrameworkSourceProbe, frameworkSourceProblem } from "../src/feature/framework/FrameworkSourceProbe.ts"
-import { Executor } from "../src/feature/platform/Executor.ts"
-import { locateTool } from "../src/feature/platform/ToolLocator.ts"
 import { ProjectStateStore } from "../src/feature/project/ProjectStateStore.ts"
 import { ConfigApplier } from "../src/feature/sync/ConfigApplier.ts"
 import { ConfigResolver } from "../src/feature/sync/ConfigResolver.ts"
@@ -109,85 +103,11 @@ test("sync：registry 明确给出不兼容 → 仍是 framework-incompatible", 
 
 test("sync：本机已安装匹配版本时优先使用，registry 不可达也不阻塞，且根本不联网", async t => {
     const state = await fixture(t)
-    await write(join(state.rootDir, state.project.ui.directory, "node_modules", frameworkPackageName, "package.json"), JSON.stringify({ version: state.project.framework.version, arrange: { cliCompatibility } }))
+    await write(join(state.rootDir, state.project.ui.directory, "node_modules", frameworkPackageName, "package.json"), JSON.stringify({ version: state.project.framework.version, canton: { cliCompatibility } }))
     const registry = new UnreachableRegistry()
     const wizard = new TestSyncWizard()
     const result = await runSync(registry, wizard).run({ configOnly: true }, state.rootDir)
     assert.equal(result.status, "completed")
     assert.equal(wizard.reports[0].fatal.length, 0)
     assert.equal(registry.calls, 0)
-})
-
-// ---- Arrange 原生源码预检：用真实的本地 git 仓库验证，不依赖外部网络 ----
-
-const git = await locateTool("git")
-
-async function repository(t: TestContext, tags: readonly string[]): Promise<string> {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-source-probe-"))
-    t.after(() => rm(directory, { recursive: true, force: true }))
-    const run = (...args: string[]) => execFileSync(git!, ["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", ...args], { cwd: directory, stdio: "ignore" })
-    run("init", "-q")
-    run("commit", "-q", "--allow-empty", "-m", "initial")
-    for (const tag of tags) run("tag", tag)
-    return directory
-}
-
-async function probeState(t: TestContext, url: string, version = "1.2.3") {
-    const state = await fixture(t, false)
-    state.project.framework.version = version
-    state.project.framework.cmakeFetchContentUrl = url
-    return state
-}
-
-const probe = new FrameworkSourceProbe(new Executor())
-assert.ok(git, "本机源码预检需要 git；缺少工具不能计为通过")
-
-test("预检：仓库可达且 tag 存在 → ok", async t => {
-    const state = await probeState(t, await repository(t, ["v1.2.3"]))
-    assert.deepEqual(await probe.check(state), { kind: "ok" })
-    assert.equal(frameworkSourceProblem({ kind: "ok" }), undefined)
-})
-
-test("预检：仓库可达但没有对应 tag → tag-missing，说明 tag、版本与本地源码出路", async t => {
-    const url = await repository(t, ["v9.9.9"])
-    const check = await probe.check(await probeState(t, url))
-    assert.equal(check.kind, "tag-missing")
-    const message = frameworkSourceProblem(check)!
-    assert.match(message, /没有 tag v1\.2\.3/)
-    assert.match(message, /Framework 1\.2\.3/)
-    assert.match(message, /FETCHCONTENT_SOURCE_DIR_ARRANGE/)
-})
-
-test("预检：仓库不存在或连不上 → unreachable，带地址与 git 的原因", async t => {
-    const url = join(tmpdir(), "arrange-no-such-repository")
-    const check = await probe.check(await probeState(t, url))
-    assert.equal(check.kind, "unreachable")
-    assert.match(frameworkSourceProblem(check)!, /无法访问 Arrange 源码仓库/)
-})
-
-test("预检：仓库地址里的凭据不出现在报错中", async t => {
-    const check = await probe.check(await probeState(t, `http://user:secret-token@127.0.0.1:${await closedPort()}/Arrange.git`))
-    assert.equal(check.kind, "unreachable")
-    assert.doesNotMatch(JSON.stringify(check), /secret-token/)
-    assert.doesNotMatch(frameworkSourceProblem(check)!, /secret-token/)
-})
-
-test("预检：已用 FETCHCONTENT_SOURCE_DIR_ARRANGE 覆盖本地源码时跳过，不联网", async t => {
-    const state = await probeState(t, join(tmpdir(), "arrange-no-such-repository"))
-    state.local = { native: { generator: "Ninja", architecture: "x64", cmakeDefinitions: { FETCHCONTENT_SOURCE_DIR_ARRANGE: "/local/arrange" } } }
-    assert.deepEqual(await probe.check(state), { kind: "skipped" })
-})
-
-test("预检：仓库地址或版本不由 CLI 托管时不知道 CMake 会取什么，跳过", async t => {
-    for (const unmanaged of ["cmake.fetch-content-repository", "framework.version"]) {
-        const state = await probeState(t, join(tmpdir(), "arrange-no-such-repository"))
-        state.project["managed-items"] = state.project["managed-items"].filter(id => id !== unmanaged)
-        assert.deepEqual(await probe.check(state), { kind: "skipped" }, unmanaged)
-    }
-})
-
-test("预检：找不到 git → git-missing，明确说需要 git", async t => {
-    const check = await new FrameworkSourceProbe(new Executor(), async () => undefined).check(await probeState(t, "https://example.invalid/Arrange.git"))
-    assert.deepEqual(check, { kind: "git-missing" })
-    assert.match(frameworkSourceProblem(check)!, /未找到 git/)
 })

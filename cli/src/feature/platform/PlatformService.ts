@@ -13,7 +13,7 @@ export interface NativeToolchainDiscovery {
 }
 
 export abstract class PlatformService {
-    abstract readonly name: "darwin" | "win32"
+    abstract readonly name: "win32"
     constructor(protected readonly executor: Executor) { }
     abstract nativeEnvironment(local: LocalDefinition): Promise<Record<string, string>>
     abstract discoverNative(local: LocalDefinition): Promise<NativeToolchainDiscovery>

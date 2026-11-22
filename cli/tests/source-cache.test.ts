@@ -17,14 +17,13 @@ import { readNativeDependencies } from "../src/feature/source/NativeDependencies
 import { NativeSourceService } from "../src/feature/source/NativeSourceService.ts"
 import { OperationHost } from "../src/feature/operation/OperationHost.ts"
 import { Operations } from "../src/feature/operation/Operations.ts"
-import { FrameworkSourceProbe } from "../src/feature/framework/FrameworkSourceProbe.ts"
 import { sourceLocalTimeoutMs, cliCompatibility } from "../src/CliMetadata.ts"
 
 const commit = "a".repeat(40)
 const spec: SourceSpec = { repository: "https://example.invalid/source.git", ref: "v1", commit }
 
 async function cacheFixture(t: TestContext) {
-    const root = await mkdtemp(join(tmpdir(), "arrange-source-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-source-"))
     const user = new UserDirectories(join(root, "user"))
     const signal = new AbortController()
     const host = new OperationHost(user)
@@ -98,7 +97,7 @@ test("缓存损坏或目录别名明确失败，不清理目录之外的内容",
     await mkdir(external)
     await write(join(external, "keep"), "external")
     await rm(source.directory, { recursive: true })
-    await symlink(external, source.directory, process.platform === "win32" ? "junction" : "dir")
+    await symlink(external, source.directory, "junction")
     await assert.rejects(input.cache.ensure(spec, "Fixture", testTask()), /符号链接/)
     assert.equal(await readFile(join(external, "keep"), "utf8"), "external")
 })
@@ -106,44 +105,39 @@ test("缓存损坏或目录别名明确失败，不清理目录之外的内容",
 test("依赖清单是唯一事实源，缺失、损坏或缺少固定 commit 明确失败", async t => {
     const input = await cacheFixture(t)
     const manifest = await readNativeDependencies(resolve(import.meta.dirname, "../.."))
-    assert.equal(manifest.juce.ref, "8.0.12")
-    assert.ok(manifest.juce.commit)
-    await write(join(input.root, "cmake", "Dependencies.cmake"), 'set(ARRANGE_JUCE_GIT_TAG "8" CACHE STRING "Tag")\n')
+    assert.ok(manifest.quickjs_ng.commit)
+    await write(join(input.root, "cmake", "Dependencies.cmake"), 'set(CANTON_QUICKJS_NG_GIT_TAG "v0" CACHE STRING "Tag")\n')
     await assert.rejects(readNativeDependencies(input.root), /依赖清单缺失/)
     const path = join(input.root, "cmake", "NativeDependencies.json")
     await write(path, "invalid json")
     await assert.rejects(readNativeDependencies(input.root), /依赖清单无效/)
     const { commit: _commit, ...unpinned } = spec
-    await write(path, JSON.stringify({ schema: 1, juce: unpinned, quickjs_ng: spec }))
+    await write(path, JSON.stringify({ schema: 1, quickjs_ng: unpinned }))
     await assert.rejects(readNativeDependencies(input.root), /依赖清单无效/)
-    await write(path, JSON.stringify({ schema: 1, juce: spec, quickjs_ng: spec }))
-    assert.equal((await readNativeDependencies(input.root)).juce.commit, spec.commit)
+    await write(path, JSON.stringify({ schema: 1, quickjs_ng: spec }))
+    assert.equal((await readNativeDependencies(input.root)).quickjs_ng.commit, spec.commit)
 })
 
-test("依赖按 Arrange 清单准备，尊重源码与版本覆盖；缓存预检无需 git 或网络", async t => {
+test("依赖按本地 Canton 源码的清单准备，尊重版本覆盖；未指定本地源码时不准备", async t => {
     const input = await cacheFixture(t)
     const state = stateFor(input.root)
-    const manifest = { schema: 1, juce: spec, quickjs_ng: { ...spec, repository: "https://example.invalid/qjs", ref: "v0" } }
+    const canton = join(input.root, "canton")
+    await write(join(canton, "cmake", "NativeDependencies.json"), JSON.stringify({ schema: 1, quickjs_ng: { ...spec, repository: "https://example.invalid/qjs", ref: "v0" } }))
+    await write(join(canton, "canton.version.json"), JSON.stringify({ frameworkVersion: state.project.framework.version, cliCompatibility, frameworkInternalProtocolCode: 1 }))
     const checkout = input.git.checkout
     input.git.checkout = async (...args) => {
         if (args[0].ref === "custom") args[0] = { ...args[0], commit: "b".repeat(40) }
-        const hash = await checkout(...args)
-        if (args[0].repository.includes("Arrange")) {
-            await write(join(args[1], "cmake", "NativeDependencies.json"), JSON.stringify(manifest))
-            await write(join(args[1], 'arrange.version.json'), JSON.stringify({ frameworkVersion: state.project.framework.version, cliCompatibility, frameworkInternalProtocolCode: 1 }))
-        }
-        return hash
+        return checkout(...args)
     }
+    const native = (definitions: Record<string, string> = {}) => ({ native: { generator: "Ninja", architecture: "x64" as const, cmakeDefinitions: { FETCHCONTENT_SOURCE_DIR_CANTON: canton, ...definitions } } })
     const service = new NativeSourceService(input.cache)
+    state.local = native()
     const definitions = await service.prepare(state, testTask())
-    assert.deepEqual(Object.keys(definitions).sort(), ["FETCHCONTENT_SOURCE_DIR_ARRANGE", "FETCHCONTENT_SOURCE_DIR_JUCE", "FETCHCONTENT_SOURCE_DIR_QUICKJS_NG"])
-    const probe = new FrameworkSourceProbe(new Executor(), async () => { throw new Error("不应找 git") }, service)
-    assert.equal((await probe.check(state)).kind, "ok")
-    state.local = { native: { generator: "Ninja", architecture: "x64", cmakeDefinitions: { JUCE_DIR: "/user/juce", ARRANGE_QUICKJS_NG_GIT_TAG: "custom" } } }
+    assert.deepEqual(Object.keys(definitions), ["FETCHCONTENT_SOURCE_DIR_QUICKJS_NG"])
+    state.local = native({ CANTON_QUICKJS_NG_GIT_TAG: "custom" })
     const overridden = await service.prepare(state, testTask())
-    assert.equal(overridden.FETCHCONTENT_SOURCE_DIR_JUCE, undefined)
     assert.notEqual(overridden.FETCHCONTENT_SOURCE_DIR_QUICKJS_NG, definitions.FETCHCONTENT_SOURCE_DIR_QUICKJS_NG)
-    state.project["managed-items"] = []
+    state.local = null
     assert.deepEqual(await service.prepare(state, testTask()), {})
 })
 
@@ -203,7 +197,7 @@ test("真实 Git 网络获取无总时长上限，静默等待可取消且不发
             if (process.args.includes("fetch")) assert.equal(process.timeoutMs, undefined)
             return super.run(process)
         }
-    }(process.platform, input.signal.signal, host)
+    }(input.signal.signal, host)
     const cache = new SourceCache(input.user, new GitSource(executor), input.signal.signal, input.operations)
     const pending = cache.ensure({ repository: `http://127.0.0.1:${address.port}/source.git`, ref: "v1", commit }, "网络等待夹具", testTask())
     const cancelled = assert.rejects(pending, isAbortError)

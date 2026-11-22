@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { painter, M } from '../../packages/framework/src/ui.ts'
 import { Column, Icon, Text } from '../../packages/framework/src/foundation.ts'
 import { createApp, diagnostics, DiagnosticsToast, Log, nextTick, ref, createScrollState, onScopeDispose } from '../../packages/framework/src/index.ts'
-import { scrollStateInternal } from '../../packages/framework/src/state.ts'
+import { scrollStateInternal } from '../../packages/framework/src/layout/state.ts'
 import { defineArrangable } from '../../packages/framework/src/internal.ts'
 import type { NativeTransactionTarget } from '../../packages/framework/src/internal.ts'
 import type { Modifier } from '../../packages/framework/src/ui.ts'
@@ -161,7 +161,7 @@ test('App 拒绝不一致的协议版本', () => {
 
 test("诊断 API 交付明确原生入口", () => {
     const native = diagnosticNative()
-    globalThis.__ARRANGE_NATIVE__ = native
+    globalThis.__CANTON_NATIVE__ = native
     try {
         Log.w("Demo", "测试警告", "测试详情")
         Log.v("Demo", "详细")
@@ -170,9 +170,9 @@ test("诊断 API 交付明确原生入口", () => {
         Log.e("Demo", "错误")
         DiagnosticsToast.e("Demo", "提示", "详情")
         diagnostics.setToastsEnabled(false)
-        diagnostics.requestReload("src/App.sfa")
+        diagnostics.requestReload("src/App.cta")
     } finally {
-        delete globalThis.__ARRANGE_NATIVE__
+        delete globalThis.__CANTON_NATIVE__
     }
     assert.ok(native.calls.some((call) => call[0] === "log" && call[1] === "w" && call[2] === "Demo" && JSON.stringify(call[3]) === '["测试警告","测试详情"]'))
     assert.deepEqual(native.calls.filter(call => call[0] === 'log').map(call => call[1]), ['w', 'v', 'd', 'i', 'e'])
@@ -185,11 +185,11 @@ test("诊断 API 交付明确原生入口", () => {
 
 test("Log 在原生调用前拒绝空 TAG", () => {
     const native = diagnosticNative()
-    globalThis.__ARRANGE_NATIVE__ = native
+    globalThis.__CANTON_NATIVE__ = native
     try {
         assert.throws(() => Log.i(" ", "bad"), /Tag/)
     } finally {
-        delete globalThis.__ARRANGE_NATIVE__
+        delete globalThis.__CANTON_NATIVE__
     }
     assert.deepEqual(native.calls, [])
 })
@@ -202,8 +202,8 @@ test('Icon 未指定 tint 保留 Painter 原色，指定 tint 只增加 colorFil
         return { identity: 99n, generation: 1n }
     }
     native.target.releasePainter = handle => retired.push(handle.identity)
-    const previous = globalThis.__ARRANGE_NATIVE__
-    globalThis.__ARRANGE_NATIVE__ = native.target
+    const previous = globalThis.__CANTON_NATIVE__
+    globalThis.__CANTON_NATIVE__ = native.target
     try {
         const app = createApp(defineArrangable({
             setup(_props, { call }) {
@@ -222,6 +222,6 @@ test('Icon 未指定 tint 保留 Painter 原色，指定 tint 只增加 colorFil
         app.unmount()
         assert.deepEqual(retired, [99n])
     } finally {
-        globalThis.__ARRANGE_NATIVE__ = previous
+        globalThis.__CANTON_NATIVE__ = previous
     }
 })

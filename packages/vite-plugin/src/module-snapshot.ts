@@ -8,9 +8,9 @@ import type { RawSourceMap } from 'source-map-js'
 import { composeSourceMap } from './source-map.ts'
 import { transformWithOxc, type ViteDevServer } from 'vite'
 
-export const MODULE_SNAPSHOT_PATH = '/@arrange/modules'
+export const MODULE_SNAPSHOT_PATH = '/@canton/modules'
 const CLIENT_PATH = '/@vite/client'
-const BOOT_PATH = '/@arrange/entry'
+const BOOT_PATH = '/@canton/entry'
 
 export interface ModuleSource {
     url: string
@@ -24,7 +24,7 @@ export interface ModuleSnapshot {
 }
 
 function hotRuntimeFilePath(): string {
-    return fileURLToPath(new URL(import.meta.resolve('@arrange/framework/internal').replace(/internal\.ts$/, 'hotRuntime.ts'))).replaceAll('\\', '/')
+    return fileURLToPath(import.meta.resolve('@canton/framework/hot-runtime')).replaceAll('\\', '/')
 }
 
 function hotRuntimePath(): string {
@@ -45,7 +45,7 @@ function imports(source: string, importer: string, map?: RawSourceMap | null, re
     const ast = parse(source, { sourceType: 'module', createImportExpressions: true })
     const identifiers = new Set<string>()
     walk(ast as any, { enter(node: any) { if (node.type === 'Identifier') identifiers.add(node.name) } })
-    let importHelper = '__arrangeImport'
+    let importHelper = '__cantonImport'
     while (identifiers.has(importHelper)) importHelper += '_'
     walk(ast as any, {
         enter(node: any) {

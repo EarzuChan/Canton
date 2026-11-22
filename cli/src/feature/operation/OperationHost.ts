@@ -39,7 +39,7 @@ export class OperationHost {
     private async openWorker(): Promise<void> {
         await this.directories.ensure(this.directories.operations)
         const filename = fileURLToPath(new URL(import.meta.url.endsWith(".ts") ? "./Worker.ts" : "./Worker.js", import.meta.url))
-        const worker = fork(filename, [this.directories.operations, randomUUID(), String(process.pid)], { stdio: ["ignore", "ignore", "pipe", "ipc"], detached: process.platform !== "win32", execArgv: filename.endsWith(".ts") ? ["--import", import.meta.resolve("tsx")] : [] })
+        const worker = fork(filename, [this.directories.operations, randomUUID(), String(process.pid)], { stdio: ["ignore", "ignore", "pipe", "ipc"], execArgv: filename.endsWith(".ts") ? ["--import", import.meta.resolve("tsx")] : [] })
         this.worker = worker
         let diagnostic = ""
         worker.stderr?.on("data", (bytes: Buffer) => { diagnostic = (diagnostic + bytes.toString("utf8")).slice(-4000) })

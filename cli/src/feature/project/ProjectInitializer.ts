@@ -11,13 +11,13 @@ import { assertPlainDirectoryPath } from "../../util/PlainDirectoryPath.ts"
 import { createInitialProjectState, type CreateProjectRequest } from "./CreateProject.ts"
 import { projectStateSchema, type ProjectState } from "./ProjectState.ts"
 import { projectFileNames } from "./ProjectStateStore.ts"
-import { nativeStarterFiles, uiStarterFiles, type InitialFile } from "./StarterFiles.ts"
+import { uiStarterFiles, type InitialFile } from "./StarterFiles.ts"
 import { TransactionStore, type TransactionRecord } from "../transaction/TransactionStore.ts"
 import { initializationItems, InitializationRecovery } from "../transaction/InitializationRecovery.ts"
 
 export type SubprojectInput = { readonly kind: "new" } | { readonly kind: "existing" } | { readonly kind: "copy", readonly sourceDir: string }
 
-export interface AdoptProjectRequest {
+interface InitializationInput {
     readonly state: ProjectState
     readonly ui: SubprojectInput
     readonly native: SubprojectInput
@@ -52,30 +52,21 @@ export class ProjectInitializer {
     constructor(private readonly writer: FileTransaction, private readonly defaultSignal?: AbortSignal) { }
 
     planCreate(request: CreateProjectRequest): Promise<InitializationPlan> {
-        return this.plan({ state: createInitialProjectState(request), ui: { kind: "new" }, native: { kind: "new" }, iconSource: request.iconSource })
+        return this.planInitialization({ state: createInitialProjectState(request), ui: { kind: "new" }, native: { kind: "new" }, iconSource: request.iconSource })
     }
 
     async create(request: CreateProjectRequest): Promise<ProjectState> {
         return this.apply(await this.planCreate(request))
     }
 
-    planAdopt(request: AdoptProjectRequest): Promise<InitializationPlan> {
-        return this.plan(request)
-    }
-
-    async adopt(request: AdoptProjectRequest): Promise<ProjectState> {
-        return this.apply(await this.planAdopt(request))
-    }
-
-    private async plan(request: AdoptProjectRequest): Promise<InitializationPlan> {
+    async planInitialization(request: InitializationInput): Promise<InitializationPlan> {
         const state = projectStateSchema.parse({ ...request.state, rootDir: resolve(request.state.rootDir) })
         if (request.iconSource !== undefined) state.project.project.icon = defaultProjectIconPath
-        if (request.native.kind !== "new" && state.project.project.icon === undefined) state.project["managed-items"] = state.project["managed-items"].filter(id => id !== "cmake.product-icon")
         const directories = [state.project.ui.directory, state.project.native.directory, state.project.artifacts.directory].map(directory => resolve(state.rootDir, directory))
         for (let i = 0; i < directories.length; i++) for (let j = i + 1; j < directories.length; j++) if (contains(directories[i], directories[j]) || contains(directories[j], directories[i])) throw new Error("UI、native 与 artifacts 目录必须相互独立")
         if (directories.some(directory => contains(directory, state.rootDir))) throw new Error("子项目和 artifacts 不能占用工程根或其祖先目录")
         const reservedPaths = [localWorkDirectory, ".git", "node_modules", ...Object.values(projectFileNames)].map(name => resolve(state.rootDir, name))
-        if (directories.some(directory => reservedPaths.some(path => contains(directory, path) || contains(path, directory)))) throw new Error("UI、native 与 artifacts 目录不能与 CLI 保留路径重叠：.arrange、.git、node_modules、arrange.project.yaml、arrange.local.yaml")
+        if (directories.some(directory => reservedPaths.some(path => contains(directory, path) || contains(path, directory)))) throw new Error("UI、native 与 artifacts 目录不能与 CLI 保留路径重叠：.canton、.git、node_modules、canton.project.yaml、canton.local.yaml")
         if (!contains(state.rootDir, directories[2])) throw new Error("artifacts 必须位于工程根内")
 
         const icons: IconPlan[] = []
@@ -108,7 +99,8 @@ export class ProjectInitializer {
             if (input.kind === "new") {
                 if (!contains(state.rootDir, directory)) throw new Error(`新建 ${scope} 必须位于工程根内`)
                 const definitions = configRegistry.files.filter(file => file.scope === (scope === "ui" ? "UI" : "Native"))
-                generated.push(...definitions.map(file => ({ path: file.path(state), content: file.make(state) })), ...(scope === "ui" ? uiStarterFiles(state) : nativeStarterFiles(state)))
+                generated.push(...definitions.map(file => ({ path: file.path(state), content: file.make(state) })))
+                if (scope === "ui") generated.push(...uiStarterFiles(state))
             } else {
                 const source = input.kind === "copy" ? resolve(input.sourceDir) : directory
                 const entry = resolve(source, scope === "ui" ? "package.json" : "CMakeLists.txt")
@@ -201,7 +193,7 @@ export class ProjectInitializer {
                 throw cancelled
             }
             await this.saveJournal(journalPath, record)
-            throw new Error(`工程初始化未完成；已写内容保留，接入计划记录于 ${journalPath}。请运行 arrange recover 检查并继续：${record.error}`, { cause: error })
+            throw new Error(`工程初始化未完成；已写内容保留，接入计划记录于 ${journalPath}。请运行 canton recover 检查并继续：${record.error}`, { cause: error })
         }
 
         record.status = "complete"

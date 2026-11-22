@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { adjustable, createValueDragState, editableRef, ref, type EditableValue } from '../../packages/framework/src/index.ts'
-import { dragStateInternal } from '../../packages/framework/src/gesture.ts'
+import { dragStateInternal } from '../../packages/framework/src/modifier/gesture.ts'
 import { frameScope } from './frameScope.ts'
 
 const none = { shift: false, alt: false, ctrl: false, meta: false, command: false }

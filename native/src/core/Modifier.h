@@ -1,0 +1,403 @@
+#pragma once
+#include "ScrollSnapshot.h"
+
+#include "EventSlot.h"
+#include "Animation.h"
+#include "Geometry.h"
+#include "DrawCommands.h"
+#include "Alignment.h"
+#include "DrawEnums.h"
+#include "Painter.h"
+#include "TextLayoutService.h"
+
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <utility>
+#include <string>
+#include <variant>
+#include <vector>
+
+namespace canton::core {
+    enum class DirtyFlag : std::uint32_t {
+        Structure = 1,
+        Layout = 2,
+        Paint = 4,
+        Transform = 8,
+        HitTest = 16,
+        Focus = 32,
+        Accessibility = 64,
+        Resource = 128,
+        EventSlot = 256,
+        Placement = 512,
+        // 诊断叠加层（错误屏、角标、toast）需要重建，不涉及用户场景
+        Diagnostics = 1024,
+    };
+
+    inline constexpr std::uint32_t dirtyMask(DirtyFlag flag) noexcept {
+        return static_cast<std::uint32_t>(flag);
+    }
+
+    struct ModifierPadding {
+        float start = 0.0f;
+        float top = 0.0f;
+        float end = 0.0f;
+        float bottom = 0.0f;
+        bool operator==(const ModifierPadding&) const = default;
+    };
+
+    enum class LayoutModifierKind {
+        Padding,
+        Width,
+        Height,
+        Size,
+        RequiredWidth,
+        RequiredHeight,
+        RequiredSize,
+        FillMaxWidth,
+        FillMaxHeight,
+        FillMaxSize,
+        WidthIn,
+        HeightIn,
+        SizeIn,
+        DefaultMinSize,
+        VerticalScroll,
+        HorizontalScroll,
+        IntrinsicWidth,
+        IntrinsicHeight,
+    };
+
+    struct LayoutModifierSemantics {
+        LayoutModifierKind kind = LayoutModifierKind::Padding;
+        ModifierPadding padding;
+        float value = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        float fraction = 1.0f;
+        float minWidth = -1.0f;
+        float maxWidth = -1.0f;
+        float minHeight = -1.0f;
+        float maxHeight = -1.0f;
+        float scrollValue = 0.0f;
+        bool enabled = true;
+        bool intrinsicMaximum = false;
+        EventSlotId eventSlot;
+        bool operator==(const LayoutModifierSemantics&) const = default;
+    };
+
+    enum class ParentDataKind { Weight, Align, MatchParentSize };
+
+    struct ParentDataModifierSemantics {
+        ParentDataKind kind = ParentDataKind::Weight;
+        float weight = 0.0f;
+        bool weightFill = true;
+        std::optional<LayoutAlignment> align;
+        bool matchParentSize = false;
+        bool operator==(const ParentDataModifierSemantics&) const = default;
+    };
+
+    enum class PaintStyleKind { Background, Border, Alpha };
+
+    enum class ShapeKind { Rectangle, Rounded, Circle };
+
+    struct PaintStyleSemantics {
+        PaintStyleKind kind = PaintStyleKind::Background;
+        std::uint32_t color = 0;
+        float strokeWidth = 1.0f;
+        ShapeKind shapeType = ShapeKind::Rectangle;
+        CornerRadii corners;
+        float alpha = 1.0f;
+        // 渐变存在时 color 不参与着色
+        GradientRef gradient;
+        bool operator==(const PaintStyleSemantics&) const = default;
+    };
+
+    struct ClipModifier {
+        PaintStyleSemantics shape;
+        bool operator==(const ClipModifier&) const = default;
+    };
+
+    enum class InputModifierKind { Clickable, Hoverable, Focusable, ContextClick, PointerIcon, KeyEvent, Wheel, Draggable, PointerInput };
+
+    enum class PointerIcon : std::uint8_t { Default, Hand, Text, Crosshair, ResizeHorizontal, ResizeVertical, Grab, Grabbing, None };
+
+    enum class DragAxis : std::uint8_t { Horizontal, Vertical, Both };
+
+    struct InputModifierSemantics {
+        InputModifierKind kind = InputModifierKind::Clickable;
+        bool enabled = true;
+        bool focusable = true;
+        // 主槽：click、contextClick、key、wheel 或拖动位移
+        EventSlotId eventSlot;
+        EventSlotId doubleClick;
+        EventSlotId enter;
+        EventSlotId exit;
+        EventSlotId dragStart;
+        EventSlotId dragStop;
+        EventSlotId interaction;
+        PointerIcon icon = PointerIcon::Default;
+        DragAxis axis = DragAxis::Both;
+        bool startImmediately = false;
+        bool pointerLock = false;
+        bool operator==(const InputModifierSemantics&) const = default;
+    };
+
+    // 按槽类型取输入 Modifier 的对应槽位
+    inline const EventSlotId& inputEventSlot(const InputModifierSemantics& input, EventSlotKind kind) {
+        switch (kind) {
+            case EventSlotKind::DoubleClick:
+                return input.doubleClick;
+            case EventSlotKind::HoverEnter:
+                return input.enter;
+            case EventSlotKind::HoverExit:
+                return input.exit;
+            case EventSlotKind::DragStart:
+                return input.dragStart;
+            case EventSlotKind::DragStop:
+                return input.dragStop;
+            case EventSlotKind::Interaction:
+                return input.interaction;
+            default:
+                return input.eventSlot;
+        }
+    }
+
+    inline EventSlotId& inputEventSlot(InputModifierSemantics& input, EventSlotKind kind) {
+        return const_cast<EventSlotId&>(inputEventSlot(std::as_const(input), kind));
+    }
+
+    struct TransformModifierSemantics {
+        float translationX = 0.0f;
+        float translationY = 0.0f;
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        float rotationZ = 0.0f;
+        float transformOriginX = 0.5f;
+        float transformOriginY = 0.5f;
+        float alpha = 1.0f;
+        bool clip = false;
+        bool operator==(const TransformModifierSemantics&) const = default;
+    };
+
+    struct OffsetModifier {
+        float x = 0.0f;
+        float y = 0.0f;
+        bool operator==(const OffsetModifier&) const = default;
+    };
+
+    struct ZIndexModifier {
+        float value = 0.0f;
+        bool operator==(const ZIndexModifier&) const = default;
+    };
+
+    enum class EffectKind : std::uint8_t { DropShadow, InnerShadow };
+
+    // 阴影长度均为 PX。radius 是设计工具的模糊半径，高斯标准差为其一半。
+    struct EffectModifier {
+        EffectKind kind = EffectKind::DropShadow;
+        PaintStyleSemantics shape;
+        float radius = 0.0f;
+        float spread = 0.0f;
+        Point offset;
+        std::uint32_t color = 0;
+        bool operator==(const EffectModifier&) const = default;
+    };
+
+    // 效果在层局部坐标中的输出外包盒；内容模糊不在此求，取决于子片段
+    // filmstrip 帧与九宫格切分的范围校验，修饰器与绘制命令共用
+    void validatePainterView(const PainterSnapshot& painter, ImageRepeat repeat, const ImageSlices& slices);
+    [[nodiscard]] Rect effectOutputBounds(const EffectModifier& effect, Rect layer) noexcept;
+
+    // 高斯标准差，外扩取三倍
+    [[nodiscard]] inline float effectSigma(const EffectModifier& effect) noexcept {
+        return effect.radius * 0.5f;
+    }
+
+    enum class FocusModifierKind { Requester, Properties, Group, Observer };
+
+    struct FocusModifier {
+        FocusModifierKind kind = FocusModifierKind::Properties;
+        std::uint32_t requester = 0;
+        std::array<std::uint32_t, 6> directions{};
+        bool canFocus = true;
+        EventSlotId eventSlot;
+        bool operator==(const FocusModifier&) const = default;
+    };
+
+    struct AnimateContentSizeModifier {
+        AnimationSpec animationSpec;
+        bool clip = true;
+        bool operator==(const AnimateContentSizeModifier&) const = default;
+    };
+
+    struct PaintModifier {
+        PainterSnapshot painter;
+        ContentScale contentScale = ContentScale::Fit;
+        ImageAlignment alignment = ImageAlignment::Center;
+        float alpha = 1.0f;
+        std::optional<std::uint32_t> tint;
+        bool sizeToIntrinsics = true;
+        ImageRepeat repeat = ImageRepeat::None;
+        ImageSlices slices;
+        bool operator==(const PaintModifier&) const = default;
+    };
+
+    struct TextPresentation {
+        TextStyle style;
+        std::uint32_t color = 0xff000000u;
+        bool singleLine = false;
+        int minLines = 1;
+        int maxLines = 0;
+        TextAlign textAlign = TextAlign::Start;
+        TextOverflow overflow = TextOverflow::Clip;
+        bool operator==(const TextPresentation&) const = default;
+    };
+
+    struct TextModifier : TextPresentation {
+        std::string text;
+        bool operator==(const TextModifier&) const = default;
+    };
+
+    struct TextFieldModifier {
+        TextPresentation presentation;
+        std::string value;
+        std::string placeholder;
+        bool enabled = true;
+        bool selectAllOnFocus = false;
+        EventSlotId onValueChange;
+        EventSlotId onSubmit;
+        EventSlotId onChange;
+        EventSlotId onBlur;
+        bool operator==(const TextFieldModifier&) const = default;
+    };
+
+    enum class DrawModifierKind { Behind, WithContent, WithCache };
+
+    struct DrawModifier {
+        DrawModifierKind kind = DrawModifierKind::Behind;
+        EventSlotId prepare;
+        std::uint64_t revision = 0;
+        bool transactional = false;
+        bool operator==(const DrawModifier&) const = default;
+    };
+
+    enum class SemanticsRole { None, Button, Slider, Switch, Checkbox, TextField, Image, Group };
+
+    // 最小语义：角色、文本与增减动作，先服务键盘与语义测试，平台无障碍桥接在后续
+    struct SemanticsModifier {
+        SemanticsRole role = SemanticsRole::None;
+        std::string label;
+        std::string description;
+        std::string valueText;
+        bool enabled = true;
+        EventSlotId increment;
+        EventSlotId decrement;
+        bool operator==(const SemanticsModifier&) const = default;
+    };
+
+    using ModifierValue = std::variant<LayoutModifierSemantics, PaintStyleSemantics, ClipModifier, InputModifierSemantics, TransformModifierSemantics, OffsetModifier, ParentDataModifierSemantics, ZIndexModifier, AnimateContentSizeModifier, PaintModifier, TextModifier, TextFieldModifier, FocusModifier, DrawModifier, SemanticsModifier, EffectModifier>;
+
+    struct ModifierDescriptor {
+        ModifierValue value;
+        // 可选协调 key；key 与数组下标均不是更新目标的运行时身份
+        std::string key;
+        bool operator==(const ModifierDescriptor&) const = default;
+    };
+
+    using ModifierDescriptors = std::vector<ModifierDescriptor>;
+
+    struct ModifierHandle {
+        std::uint64_t identity = 0;
+        std::uint64_t generation = 0;
+
+        bool valid() const noexcept {
+            return identity != 0 && generation != 0;
+        }
+
+        bool operator==(const ModifierHandle&) const = default;
+    };
+
+    struct PaintLayerFragment;
+    struct PaintFragment;
+
+    struct ModifierInstance {
+        ModifierHandle handle;
+        ModifierDescriptor descriptor;
+        Size measured;
+        Size childMeasured;
+        Point childOffset;
+        Rect bounds;
+        std::shared_ptr<const PaintLayerFragment> paintCache;
+        std::shared_ptr<const PaintFragment> fragmentCache;
+        SizeAnimation sizeAnimation;
+        std::shared_ptr<const TextLayout> textLayout;
+        std::optional<ScrollSnapshot> scrollSnapshot;
+        std::shared_ptr<const DrawCommands> preparedDraw;
+        Size preparedDrawSize;
+        EventSlotId preparedDrawCallback;
+        std::uint64_t preparedDrawRevision = 0;
+    };
+
+    struct ModifierReconcileResult {
+        std::uint32_t dirty = 0;
+        std::vector<ModifierHandle> retired;
+    };
+
+    class ModifierChain {
+       public:
+        const std::vector<ModifierInstance>& elements() const noexcept {
+            return elements_;
+        }
+
+        std::vector<ModifierInstance>& elements() noexcept {
+            return elements_;
+        }
+
+        ModifierReconcileResult reconcile(const ModifierDescriptors& descriptors);
+        ModifierInstance* find(ModifierHandle handle);
+        const ModifierInstance* find(ModifierHandle handle) const;
+        std::uint32_t update(ModifierHandle handle, const ModifierValue& value);
+        ParentDataModifierSemantics parentData() const;
+        float zIndex() const;
+
+       private:
+        std::vector<ModifierInstance> elements_;
+    };
+
+    inline const TextPresentation* textPresentation(const ModifierValue& value) {
+        if (const auto* text = std::get_if<TextModifier>(&value)) return text;
+        if (const auto* field = std::get_if<TextFieldModifier>(&value)) return &field->presentation;
+        return nullptr;
+    }
+
+    inline const std::string& modifierText(const ModifierValue& value) {
+        if (const auto* text = std::get_if<TextModifier>(&value)) return text->text;
+        const auto& field = std::get<TextFieldModifier>(value);
+        return field.value.empty() ? field.placeholder : field.value;
+    }
+
+    inline EventSlotId modifierEventSlot(const ModifierValue& value, EventSlotKind kind = EventSlotKind::None) {
+        if (const auto* field = std::get_if<TextFieldModifier>(&value)) {
+            if (kind == EventSlotKind::InputUpdate) return field->onValueChange;
+            if (kind == EventSlotKind::InputSubmit) return field->onSubmit;
+            if (kind == EventSlotKind::InputChange) return field->onChange;
+            if (kind == EventSlotKind::InputBlur) return field->onBlur;
+            return {};
+        }
+        EventSlotId slot;
+        if (const auto* input = std::get_if<InputModifierSemantics>(&value)) slot = inputEventSlot(*input, kind);
+        if (const auto* focus = std::get_if<FocusModifier>(&value)) slot = focus->eventSlot;
+        if (const auto* layout = std::get_if<LayoutModifierSemantics>(&value)) slot = layout->eventSlot;
+        if (const auto* draw = std::get_if<DrawModifier>(&value)) slot = draw->prepare;
+        if (const auto* semantics = std::get_if<SemanticsModifier>(&value)) slot = kind == EventSlotKind::SemanticsDecrement ? semantics->decrement : semantics->increment;
+        return kind == EventSlotKind::None || slot.kind == kind ? slot : EventSlotId{};
+    }
+
+    std::string_view modifierKindName(const ModifierValue& value);
+    bool sameModifierKind(const ModifierValue& left, const ModifierValue& right);
+    // 每个结果是对应旧描述的位置，未匹配时为 previous.size()
+    std::vector<std::size_t> matchModifierDescriptors(std::span<const ModifierDescriptor* const> previous, const ModifierDescriptors& next);
+    void validateModifierDescriptors(const ModifierDescriptors& descriptors);
+    void validateModifierValue(const ModifierValue& value);
+    std::uint32_t modifierInvalidation(const ModifierValue& before, const ModifierValue& after);
+}

@@ -1,6 +1,6 @@
-import { getCurrentScope, pauseTracking, ReactiveEffect, resetTracking, type EffectScope } from '@arrange/reactivity'
+import { getCurrentScope, pauseTracking, ReactiveEffect, resetTracking, type EffectScope } from '@canton/reactivity'
 import type { ArrangableInstance } from './arrangable.ts'
-import { arrangeExecutionStats } from './executionStats.ts'
+import { cantonExecutionStats } from './executionStats.ts'
 import { queueJob, SchedulerJobFlags, type SchedulerJob } from './scheduler.ts'
 import { callWithErrorHandling, ErrorCodes } from './errorHandling.ts'
 
@@ -24,7 +24,7 @@ export class ValueBinding {
         this.job.i = owner
         this.effect = this.createEffect()
         this.scope.cleanups.push(this.cleanup)
-        arrangeExecutionStats.activeValueBindings++
+        cantonExecutionStats.activeValueBindings++
 
         try { this.effect.run() } catch (error) {
             this.stop()
@@ -34,7 +34,7 @@ export class ValueBinding {
 
     private createEffect(): ReactiveEffect {
         const effect = this.scope.run(() => new ReactiveEffect(() => {
-            arrangeExecutionStats.valueEvaluations++
+            cantonExecutionStats.valueEvaluations++
             let value: unknown
             try { value = this.read() } catch (error) { throw this.annotate(error) }
             if (this.initialized && Object.is(value, this.value)) return
@@ -44,7 +44,7 @@ export class ValueBinding {
                 this.write(value, this.value)
                 this.value = value
                 this.initialized = true
-                arrangeExecutionStats.valueWrites++
+                cantonExecutionStats.valueWrites++
             } finally {
                 resetTracking()
             }
@@ -102,7 +102,7 @@ export class ValueBinding {
         if (this.stopped) return
         this.stopped = true
         this.job.flags = (this.job.flags ?? 0) | SchedulerJobFlags.DISPOSED
-        arrangeExecutionStats.activeValueBindings--
+        cantonExecutionStats.activeValueBindings--
         this.stopEffect(this.effect)
         const index = this.scope.cleanups.indexOf(this.cleanup)
         if (index >= 0) this.scope.cleanups.splice(index, 1)

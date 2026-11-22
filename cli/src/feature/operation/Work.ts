@@ -9,7 +9,7 @@ export interface TaskSpec {
     readonly id: string
     readonly title: string
     readonly detail?: string
-    // 工程根；需要保存非成功子控制台输出时用于定位 .arrange/logs
+    // 工程根；需要保存非成功子控制台输出时用于定位 .canton/logs
     readonly rootDir?: string
 }
 

@@ -1,10 +1,10 @@
 import { animationScheduler } from '../runtime/animationOwner.ts'
-import { requireArgb } from '../color.ts'
+import { requireArgb } from '../values/color.ts'
 import type { FrameScheduler, FrameParticipant } from '../runtime/scheduler.ts'
-import { computed, getCurrentScope, isRef, onScopeDispose, readonly, shallowReadonly, shallowRef } from "@arrange/reactivity"
-import { batchUpdates } from "@arrange/reactivity"
+import { computed, getCurrentScope, isRef, onScopeDispose, readonly, shallowReadonly, shallowRef } from "@canton/reactivity"
+import { batchUpdates } from "@canton/reactivity"
 import { watch } from "../runtime/index.ts"
-import type { Ref } from "@arrange/reactivity"
+import type { Ref } from "@canton/reactivity"
 
 export type AnimationTarget<T> = T | Ref<T> | (() => T)
 

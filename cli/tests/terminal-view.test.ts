@@ -152,14 +152,14 @@ test('资源等待作为所属任务的蓝色进展显示，并在等待结束�
     const batch = tasks.group('SETUP')
     const task = batch.task('配置 native · debug · cmake')
     task.start()
-    task.waiting('等待其他 Arrange CLI 释放源码缓存')
+    task.waiting('等待其他 Canton CLI 释放源码缓存')
     let rows = layoutDocument(document, 100).map(rowText)
     const taskRow = rows.findIndex(line => line.includes('配置 native · debug · cmake'))
-    assert.match(rows[taskRow + 1]!, /等待其他 Arrange CLI 释放源码缓存/)
+    assert.match(rows[taskRow + 1]!, /等待其他 Canton CLI 释放源码缓存/)
 
     task.waiting(undefined)
     rows = layoutDocument(document, 100).map(rowText)
-    assert.ok(!rows.some(line => line.includes('等待其他 Arrange CLI')))
+    assert.ok(!rows.some(line => line.includes('等待其他 Canton CLI')))
 })
 
 test('子控制台命中仅含边框矩形，外侧引导线和留白自然归历史', () => {

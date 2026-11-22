@@ -1,6 +1,6 @@
 import { SourceMapConsumer, SourceMapGenerator, type RawSourceMap } from 'source-map-js'
 
-// 连接代码搬移/插入与 SFA、Vite 原有映射，保留最初的源码位置
+// 连接代码搬移/插入与 CTA、Vite 原有映射，保留最初的源码位置
 export function composeSourceMap(map: RawSourceMap, previous?: RawSourceMap | null): RawSourceMap {
     if (!previous) return map
     const before = new SourceMapConsumer(previous)

@@ -1,5 +1,5 @@
 {
-  "name": "arrange",
+  "name": "canton",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -7,7 +7,6 @@
     "packages/*"
   ],
   "scripts": {
-    // 可能要重写也说不定
     "format": "node --import tsx scripts/format-code.ts --write",
     "format:check": "node --import tsx scripts/format-code.ts",
     "format:native": "node --import tsx scripts/format-native.ts --write",
@@ -17,17 +16,16 @@
     "test:native": "node --import tsx scripts/test-native.ts",
     "test:quickjs": "node --import tsx scripts/test-quickjs-app.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "typecheck:sfa": "node --import tsx scripts/typecheck-sfa.ts",
+    "typecheck:cta": "node --import tsx scripts/typecheck-cta.ts",
     "build:packages": "node --import tsx scripts/build-internal-packages.ts",
     "sync:version": "node --import tsx scripts/sync-version.ts",
     "verify:version": "node --import tsx scripts/verify-version.ts",
-    "sync:modifier-schema": "node --import tsx scripts/modifier-schema.ts",
-    "verify:modifier-schema": "node --import tsx scripts/modifier-schema.ts --check",
+    "sync:modifier-protocol": "node --import tsx scripts/modifier-native-protocol.ts",
+    "verify:modifier-protocol": "node --import tsx scripts/modifier-native-protocol.ts --check",
     "verify:native-fetchcontent": "node --import tsx scripts/verify-native-fetchcontent.ts",
     "pack:package": "node --import tsx scripts/pack-npm-package.ts",
     "publish:local": "node --import tsx scripts/publish-local.ts",
     "verify:npm-package": "node --import tsx scripts/verify-npm-package.ts",
-    "verify:npm-registry-package": "node --import tsx scripts/verify-npm-registry-package.ts",
     "verify:platform": "node --import tsx scripts/verify-platform.ts"
   },
   "devDependencies": {
@@ -37,7 +35,7 @@
     "typescript": "^5.9.0",
     "vite": "8.3.5"
   },
-  "version": "0.12.3",
+  "version": "0.1.0",
   "engines": {
     "node": ">=24"
   }

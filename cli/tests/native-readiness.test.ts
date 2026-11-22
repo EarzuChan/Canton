@@ -6,8 +6,8 @@ import { NativeReadiness } from '../src/feature/platform/NativeReadiness.ts'
 test('Native 就绪必须回报本次启动令牌，旧令牌不能提前开放运行态', async () => {
     const readiness = await NativeReadiness.open()
     try {
-        const file = readiness.environment.ARRANGE_DEV_READY_FILE!
-        const token = readiness.environment.ARRANGE_DEV_READY_TOKEN!
+        const file = readiness.environment.CANTON_DEV_READY_FILE!
+        const token = readiness.environment.CANTON_DEV_READY_TOKEN!
         const signal = new AbortController().signal
         await writeFile(file, 'previous-run')
         const waiting = readiness.wait(signal)

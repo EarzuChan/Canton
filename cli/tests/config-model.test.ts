@@ -13,18 +13,10 @@ import { registryRegion, registryCluster } from "../src/feature/nodejs/NodeJsStu
 
 import { projectDefinitionSchema } from "../src/feature/project/ProjectState.ts"
 import { fixture, stateFor, write } from "./fixture.ts"
-import { pluginVersionRegion } from "../src/feature/cmake/CmakeStuffs.ts"
 import { ConfigScanner } from "../src/feature/sync/ConfigScanner.ts"
 
 const state = stateFor("unused")
 const registry = configRegistry.items.find(item => item.id === registryRegion.managedItemId)!
-
-test("JUCE 插件版本使用 SemVer 数字核心，共享版本保留预发布与构建信息", () => {
-    const project = stateFor("unused")
-    project.project.project.version = "1.2.3-beta.4+local.7"
-    assert.match(pluginVersionRegion.make(project), /VERSION "1\.2\.3"/)
-    assert.equal(project.project.project.version, "1.2.3-beta.4+local.7")
-})
 
 test("文本位置是父级相对的 outer/inner，支持嵌套、中文及 CRLF", () => {
     const text = `前缀🙂\n${registryCluster.make(state)}后缀\n`
@@ -67,7 +59,7 @@ for (const value of [undefined, null, "", "https://registry.example"]) {
     test(`optional 文本值 ${String(value)} 的 missing/idle/outdated 与生成`, () => {
         const input = stateFor("unused")
         input.project.framework.nodeRegistryUrl = value
-        const expected = value == null ? "" : `@arrange:registry=${value}\n`
+        const expected = value == null ? "" : `@canton:registry=${value}\n`
         assert.equal(registryRegion.check(input, "").kind, "Resolvable")
         assert.equal(registryRegion.check(input, registryRegion.make(input)).kind, "Idle")
         const result = registryRegion.check(input, registryRegion.wrapper.make("自定义\n"))
@@ -87,7 +79,7 @@ test("受管正文除换行风格外逐字符比较，不 trim，不解析语义
     }()
     assert.equal(region.check(state, region.wrapper.make("value\n")).kind, "Idle")
     // 文件为 CRLF 时，仅换行风格不同不算过期
-    assert.equal(region.check(state, "# arrange:begin region:test\r\nvalue\r\n# arrange:end region:test\r\n").kind, "Idle")
+    assert.equal(region.check(state, "# canton:begin region:test\r\nvalue\r\n# canton:end region:test\r\n").kind, "Idle")
     for (const body of ["value \n", "\nvalue\n", "value\n# 注释\n"]) assert.equal(region.check(state, region.wrapper.make(body)).kind, "Applicable")
 })
 
@@ -147,7 +139,6 @@ test("非法配置不能生成期望，null 不被误作空字符串", () => {
     }()
     assert.equal(region.check(state, "").kind, "Fatal")
 })
-
 
 test("同级 Wrapper 嵌套不得提供可重叠的更新区间", () => {
     const a = new Wrapper("region:a")
@@ -236,7 +227,7 @@ test("注册只声明物理树和逻辑元数据，关联自动派生且错误�
     assert.deepEqual(registered.items, [{ ...metadata[0], regions: [region] }])
     assert.deepEqual(registered.files, [file])
     const projectName = configRegistry.items.find(item => item.id === "project.name")!
-    assert.deepEqual(projectName.regions.map(region => region.kind).sort(), ["json-region", "text-region"])
+    assert.deepEqual(projectName.regions.map(region => region.kind), ["json-region"])
     assert.throws(() => createConfigRegistry([file, file], metadata), /File 重复/)
     assert.throws(() => createConfigRegistry([file], [...metadata, ...metadata]), /ManagedItem 重复/)
     assert.throws(() => createConfigRegistry([file], []), /未知 ManagedItem/)

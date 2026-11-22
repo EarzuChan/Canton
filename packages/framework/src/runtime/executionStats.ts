@@ -1,5 +1,5 @@
 // 在实际执行入口计数；用于验证结构域与值域，不能由计划的 dirty 标志推算
-export const arrangeExecutionStats = {
+export const cantonExecutionStats = {
     structureRuns: 0,
     valueEvaluations: 0,
     valueWrites: 0,
@@ -17,6 +17,6 @@ export const arrangeExecutionStats = {
     nativeInsertOperations: 0,
 }
 
-export function getArrangeExecutionStats(): Readonly<typeof arrangeExecutionStats> {
-    return { ...arrangeExecutionStats }
+export function getCantonExecutionStats(): Readonly<typeof cantonExecutionStats> {
+    return { ...cantonExecutionStats }
 }

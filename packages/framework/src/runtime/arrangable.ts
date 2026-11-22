@@ -1,11 +1,9 @@
-import { effectScope, type EffectScope } from '@arrange/reactivity'
-import type { ArrangableObjectPropsOptions, ExtractPublicPropTypes, PropInputs, PropStore } from './arrangableProps.ts'
-import type { RearrangeHost, RearrangeNode } from './rearrangeNode.ts'
-import type { RearrangeSession, RearrangeScope } from './rearrange.ts'
+import { effectScope, type EffectScope } from '@canton/reactivity'
+import type { ArrangableObjectPropsOptions, Data, ExtractPublicPropTypes, PropInputs } from './propTypes.ts'
 import type { LifecycleHooks } from './enums.ts'
-import type { ParameterPlan } from './propDeclarations.ts'
+import type { FrameScheduler } from './scheduler.ts'
 
-export type Data = Record<string, unknown>
+export type { Data }
 export type StructureProgram = () => void
 export type Content = () => void
 export type Contents = Readonly<Record<string, Content | undefined>>
@@ -25,6 +23,12 @@ export interface ArrangableDefinition<P extends Data = any> {
 
 export type Arrangable<P extends Data = any> = ArrangableDefinition<P>
 export type ArrangableProps<D extends ArrangableDefinition> = string extends keyof D['props'] ? Data : ExtractPublicPropTypes<D['props']>
+
+export interface ParameterPlan {
+    readonly definition: ArrangableDefinition
+    readonly names: readonly string[]
+    readonly fields: readonly { readonly name: string; readonly position: number }[]
+}
 
 export interface CallMetadata {
     readonly parameters?: ParameterPlan
@@ -53,16 +57,69 @@ export interface AppContext {
     readonly host: RearrangeHost
 }
 
+// 节点只由 Layout 实现创建，这里声明重排与后端应用的职责边界
+export interface RearrangeNode {
+    readonly owner: ArrangableInstance
+    readonly children: readonly RearrangeNode[]
+    reconcileChildren(children: readonly RearrangeNode[]): void
+    deactivate(): void
+    activate(): void
+    retire(): void
+}
+
+// 应用原生候选并交付回执；RearrangeSession 负责前端实例和结构账本
+export interface RearrangeHost {
+    currentTime(): number
+    requestFrame(pending: boolean): void
+    begin(): void
+    reconcileRoots(roots: readonly RearrangeNode[]): void
+    apply(complete: (error?: Error) => void): void
+    beginContinuation?(): void
+    applyContinuation?(): void
+    rollback(): void
+}
+
+// 实例只经以下两个端口接触重组引擎，实现均在 rearrange：会话随实例创建即可用，结构账本在 setup 返回结构程序后建立
+export interface StructureScope {
+    readonly parent: StructureScope | null
+    // 热更新后让此范围内所有实例的常量参数重新求值
+    invalidateConstants(): void
+    // 排入下一帧重组
+    schedule(force?: boolean): void
+    // 并入正在准备的候选
+    enqueue(force?: boolean): void
+    isActive(): boolean
+}
+
+export interface ValueTask {
+    scope(): StructureScope
+    dirty(): boolean
+    run(): void
+}
+
+export interface InstanceSession {
+    readonly scheduler: FrameScheduler
+    readonly preparing: boolean
+    readonly reverting: boolean
+    readonly isDisposed: boolean
+    preserve(target: object, checkpoint: () => () => void): void
+    onCommit(callback: () => void): void
+    onCommitCleanup(callback: () => void): void
+    beforeApply(callback: () => void): void
+    onRollback(callback: () => void): void
+    runValue(update: ValueTask): void
+    continuePreparation(work: () => void): void
+}
+
 export class ArrangableInstance {
     readonly uid = nextInstanceId++
     readonly scope: EffectScope = effectScope(true)
     readonly provides: Record<PropertyKey, unknown>
     readonly hooks = new Map<LifecycleHooks, Function[]>()
     readonly ids: [string, number, number] = ['', 0, 0]
-    rearrangeSession!: RearrangeSession
+    rearrangeSession!: InstanceSession
     props!: Readonly<Data>
-    propStore!: PropStore
-    structure!: RearrangeScope
+    structure!: StructureScope
     node: RearrangeNode | null = null
     contents: Contents = Object.freeze({})
     setupContext!: SetupContext

@@ -19,19 +19,19 @@ test("真实 CMake 读取与 CLI 相同的依赖清单，默认 commit 校验且
     const directory = join(state.rootDir, "cmake")
     await write(join(directory, "Dependencies.cmake"), await readFile(resolve(import.meta.dirname, "../../cmake/Dependencies.cmake"), "utf8"))
     const dependency = { repository: "https://example.invalid/source", ref: "v1", commit }
-    await write(join(directory, "NativeDependencies.json"), JSON.stringify({ schema: 1, juce: dependency, quickjs_ng: dependency }))
+    await write(join(directory, "NativeDependencies.json"), JSON.stringify({ schema: 1, quickjs_ng: dependency }))
     const script = join(state.rootDir, "verify.cmake")
-    const body = `cmake_minimum_required(VERSION 3.24)\ninclude([[${join(directory, "Dependencies.cmake")}]])\narrange_validate_dependency(JUCE [[${source}]])\n`
+    const body = `cmake_minimum_required(VERSION 3.24)\ninclude([[${join(directory, "Dependencies.cmake")}]])\ncanton_validate_dependency(QUICKJS_NG [[${source}]])\n`
     const run = async (text: string) => {
         await write(script, text)
         return executor.run({ command: cmake, args: ["-P", script], cwd: state.rootDir })
     }
     const valid = await run(body)
     assert.equal(valid.exitCode, 0, valid.stderr)
-    await write(join(directory, "NativeDependencies.json"), JSON.stringify({ schema: 1, juce: { ...dependency, commit: "a".repeat(40) }, quickjs_ng: dependency }))
+    await write(join(directory, "NativeDependencies.json"), JSON.stringify({ schema: 1, quickjs_ng: { ...dependency, commit: "a".repeat(40) } }))
     const invalid = await run(body)
     assert.notEqual(invalid.exitCode, 0)
     assert.match(invalid.stderr, /does not match the pinned/)
-    const explicit = await run(body.replace("arrange_validate_dependency", "set(FETCHCONTENT_SOURCE_DIR_JUCE explicit)\narrange_validate_dependency"))
+    const explicit = await run(body.replace("canton_validate_dependency", "set(FETCHCONTENT_SOURCE_DIR_QUICKJS_NG explicit)\ncanton_validate_dependency"))
     assert.equal(explicit.exitCode, 0, explicit.stderr)
 })

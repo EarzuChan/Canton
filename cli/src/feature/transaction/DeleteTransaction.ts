@@ -25,7 +25,7 @@ export class DeleteTransaction {
         for (const entry of entries) {
             await assertOwnedPath(entry.root, entry.path)
             const identity = await treeIdentity(entry.path)
-            if (identity !== null) recorded.push({ ...entry, quarantine: join(dirname(entry.path), `.arrange-delete-${randomUUID()}`), identity, state: "pending" })
+            if (identity !== null) recorded.push({ ...entry, quarantine: join(dirname(entry.path), `.canton-delete-${randomUUID()}`), identity, state: "pending" })
         }
         return this.store.create("delete", { entries: recorded })
     }

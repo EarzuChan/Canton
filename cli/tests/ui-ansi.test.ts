@@ -28,7 +28,7 @@ test("折行按可见列硬断开，中文不跨行拆开，颜色在下一行�
     assert.equal(compound[1], `\x1b[0;1;31mdef${reset}`)
     const nested = wrap(`${bold}${red}abcd${reset}`, 2)
     assert.equal(nested[1], `${bold}${red}cd${reset}`)
-    for (const row of wrap("长行：C:\\Users\\某人\\AppData\\Local\\Arrange\\b\\feddfd43\\xd\\_deps\\quickjs_ng-src\\quickjs.c(75): warning C4668", 17)) assert.ok(visibleWidth(row) <= 17)
+    for (const row of wrap("长行：C:\\Users\\某人\\AppData\\Local\\Canton\\b\\feddfd43\\xd\\_deps\\quickjs_ng-src\\quickjs.c(75): warning C4668", 17)) assert.ok(visibleWidth(row) <= 17)
 })
 
 test("截断保留颜色并以省略号结尾，宽度恰好时不截断", () => {

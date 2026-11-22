@@ -1,8 +1,8 @@
-import { isArray } from '@arrange/shared'
+import { isArray } from '@canton/shared'
 import { TrackOpTypes } from './constants.ts'
 import { ARRAY_ITERATE_KEY, track } from './dep.ts'
 import { endBatch, pauseTracking, resetTracking, startBatch } from './effect.ts'
-import { isProxy, isReactive, isReadonly, isShallow, toRaw, toReactive, toReadonly } from './reactive.ts'
+import { isProxy, isReactive, isReadonly, isShallow, toRaw, toReactive, toReadonly } from './target.ts'
 
 // 数组适配器调用宿主已实现的方法，不改变工程的最低编译目标
 type NonMutatingArray = unknown[] & {

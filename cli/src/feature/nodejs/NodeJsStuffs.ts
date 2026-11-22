@@ -9,11 +9,11 @@ import { frameworkRegistryUrl } from "../framework/FrameworkOrigin.ts"
 
 export const registryRegion: TextRegion = new class extends TextRegion {
     readonly id = "node.registry"
-    readonly managedItemId = "node.npmrc.arrange-registry"
+    readonly managedItemId = "node.npmrc.canton-registry"
 
     protected override makeInner(state: ProjectState): string {
         const url = frameworkRegistryUrl(state)
-        return url == null ? "" : `@arrange:registry=${url}\n`
+        return url == null ? "" : `@canton:registry=${url}\n`
     }
 }()
 

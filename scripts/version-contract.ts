@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { repoRoot } from "./common.ts"
 
-export type ArrangeVersionContract = {
+export type CantonVersionContract = {
     frameworkVersion: string
     frameworkInternalProtocolCode: number
     cliVersion: string
@@ -14,18 +14,18 @@ type JsonObject = Record<string, unknown>
 const frameworkVersionPattern = /^\d+\.\d+\.\d+$/
 const semverPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
-export const versionFile = resolve(repoRoot, "arrange.version.json")
+export const versionFile = resolve(repoRoot, "canton.version.json")
 
-export function readArrangeVersionContract(): ArrangeVersionContract {
-    const parsed = JSON.parse(readFileSync(versionFile, "utf8").replace(/^\uFEFF/, "")) as Partial<ArrangeVersionContract>
+export function readCantonVersionContract(): CantonVersionContract {
+    const parsed = JSON.parse(readFileSync(versionFile, "utf8").replace(/^\uFEFF/, "")) as Partial<CantonVersionContract>
     const frameworkVersion = parsed.frameworkVersion
-    if (typeof frameworkVersion !== "string" || !frameworkVersionPattern.test(frameworkVersion)) throw new Error(`Arrange frameworkVersion must be <major>.<minor>.<patch>, got ${String(frameworkVersion)}`)
+    if (typeof frameworkVersion !== "string" || !frameworkVersionPattern.test(frameworkVersion)) throw new Error(`Canton frameworkVersion must be <major>.<minor>.<patch>, got ${String(frameworkVersion)}`)
     const frameworkInternalProtocolCode = parsed.frameworkInternalProtocolCode
-    if (typeof frameworkInternalProtocolCode !== "number" || !Number.isInteger(frameworkInternalProtocolCode) || frameworkInternalProtocolCode <= 0) throw new Error(`Arrange frameworkInternalProtocolCode must be a positive integer, got ${String(frameworkInternalProtocolCode)}`)
+    if (typeof frameworkInternalProtocolCode !== "number" || !Number.isInteger(frameworkInternalProtocolCode) || frameworkInternalProtocolCode <= 0) throw new Error(`Canton frameworkInternalProtocolCode must be a positive integer, got ${String(frameworkInternalProtocolCode)}`)
     const cliVersion = parsed.cliVersion
-    if (typeof cliVersion !== "string" || !semverPattern.test(cliVersion)) throw new Error(`Arrange cliVersion must be semver, got ${String(cliVersion)}`)
+    if (typeof cliVersion !== "string" || !semverPattern.test(cliVersion)) throw new Error(`Canton cliVersion must be semver, got ${String(cliVersion)}`)
     const cliCompatibility = parsed.cliCompatibility
-    if (typeof cliCompatibility !== "number" || !Number.isInteger(cliCompatibility) || cliCompatibility <= 0) throw new Error(`Arrange cliCompatibility must be a positive integer, got ${String(cliCompatibility)}`)
+    if (typeof cliCompatibility !== "number" || !Number.isInteger(cliCompatibility) || cliCompatibility <= 0) throw new Error(`Canton cliCompatibility must be a positive integer, got ${String(cliCompatibility)}`)
     return { frameworkVersion, frameworkInternalProtocolCode, cliVersion, cliCompatibility }
 }
 
@@ -54,8 +54,8 @@ function assertFileContains(path: string, expected: string): void {
     if (!source.includes(expected)) throw new Error(`${path} does not contain ${expected}`)
 }
 
-export function syncArrangeVersionContract(): void {
-    const contract = readArrangeVersionContract()
+export function syncCantonVersionContract(): void {
+    const contract = readCantonVersionContract()
     for (const path of packageJsonPaths()) {
         const manifest = readJson(path)
         manifest.version = contract.frameworkVersion
@@ -63,16 +63,16 @@ export function syncArrangeVersionContract(): void {
             const dependencies = manifest[field]
             if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) continue
             const dependencyRecord = dependencies as Record<string, unknown>
-            for (const name of Object.keys(dependencyRecord)) if (name.startsWith("@arrange/")) dependencyRecord[name] = contract.frameworkVersion
+            for (const name of Object.keys(dependencyRecord)) if (name.startsWith("@canton/")) dependencyRecord[name] = contract.frameworkVersion
         }
         writeJson(path, manifest)
     }
 
     const frameworkManifestPath = resolve(repoRoot, "packages/framework/package.json")
     const frameworkManifest = readJson(frameworkManifestPath)
-    const arrange = frameworkManifest.arrange
-    if (!arrange || typeof arrange !== "object" || Array.isArray(arrange)) frameworkManifest.arrange = {};
-    (frameworkManifest.arrange as Record<string, unknown>).cliCompatibility = contract.cliCompatibility
+    const canton = frameworkManifest.canton
+    if (!canton || typeof canton !== "object" || Array.isArray(canton)) frameworkManifest.canton = {};
+    (frameworkManifest.canton as Record<string, unknown>).cliCompatibility = contract.cliCompatibility
     writeJson(frameworkManifestPath, frameworkManifest)
 
     const cliManifestPath = resolve(repoRoot, "cli/package.json")
@@ -81,18 +81,18 @@ export function syncArrangeVersionContract(): void {
     cliManifest.compatibility = contract.cliCompatibility
     writeJson(cliManifestPath, cliManifest)
 
-    const runtimeVersionPath = resolve(repoRoot, "packages/framework/src/version.ts")
+    const runtimeVersionPath = resolve(repoRoot, "packages/shared/src/version.ts")
     writeFileSync(runtimeVersionPath, [
-        `export const ARRANGE_PACKAGE_VERSION = ${JSON.stringify(contract.frameworkVersion)}`,
-        `export const ARRANGE_PROTOCOL_VERSION = ${contract.frameworkInternalProtocolCode}`,
+        `export const CANTON_PACKAGE_VERSION = ${JSON.stringify(contract.frameworkVersion)}`,
+        `export const CANTON_PROTOCOL_VERSION = ${contract.frameworkInternalProtocolCode}`,
         "",
     ].join("\n"))
 
-    const nativeHeaderPath = resolve(repoRoot, "native/arrange_core/include/arrange/core/Version.h")
+    const nativeHeaderPath = resolve(repoRoot, "native/src/core/Version.h")
     writeFileSync(nativeHeaderPath, [
         "#pragma once",
         "",
-        "namespace arrange::core {",
+        "namespace canton::core {",
         `    inline constexpr unsigned RuntimeVersion = ${contract.frameworkInternalProtocolCode}u;`,
         "    inline constexpr unsigned ProtocolVersion = RuntimeVersion;",
         `    inline constexpr const char* PackageVersion = ${JSON.stringify(contract.frameworkVersion)};`,
@@ -101,11 +101,11 @@ export function syncArrangeVersionContract(): void {
         "",
     ].join("\n"))
 
-    const nativeSourcePath = resolve(repoRoot, "native/arrange_core/src/Version.cpp")
+    const nativeSourcePath = resolve(repoRoot, "native/src/core/Version.cpp")
     writeFileSync(nativeSourcePath, [
-        "#include <arrange/core/Version.h>",
+        "#include <core/Version.h>",
         "",
-        "namespace arrange::core {",
+        "namespace canton::core {",
         "    const char* version() noexcept {",
         "        return PackageVersion;",
         "    }",
@@ -114,32 +114,32 @@ export function syncArrangeVersionContract(): void {
     ].join("\n"))
 }
 
-export function assertArrangeVersionContract(): void {
-    const contract = readArrangeVersionContract()
+export function assertCantonVersionContract(): void {
+    const contract = readCantonVersionContract()
     for (const path of packageJsonPaths()) {
         const manifest = readJson(path)
-        assertEqual(manifest.version, contract.frameworkVersion, `${path} version diverges from arrange.version.json`)
+        assertEqual(manifest.version, contract.frameworkVersion, `${path} version diverges from canton.version.json`)
         for (const field of ["dependencies", "devDependencies", "peerDependencies"] as const) {
             const dependencies = manifest[field]
             if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) continue
             for (const [name, spec] of Object.entries(dependencies as Record<string, unknown>)) {
-                if (name.startsWith("@arrange/")) {
-                    assertEqual(spec, contract.frameworkVersion, `${path} ${field}.${name} diverges from arrange.version.json`)
+                if (name.startsWith("@canton/")) {
+                    assertEqual(spec, contract.frameworkVersion, `${path} ${field}.${name} diverges from canton.version.json`)
                 }
             }
         }
     }
-    assertFileContains(resolve(repoRoot, "packages/framework/src/version.ts"), `ARRANGE_PACKAGE_VERSION = ${JSON.stringify(contract.frameworkVersion)}`)
-    assertFileContains(resolve(repoRoot, "packages/framework/src/version.ts"), `ARRANGE_PROTOCOL_VERSION = ${contract.frameworkInternalProtocolCode}`)
-    assertFileContains(resolve(repoRoot, "native/arrange_core/include/arrange/core/Version.h"), `RuntimeVersion = ${contract.frameworkInternalProtocolCode}u`)
-    assertFileContains(resolve(repoRoot, "native/arrange_core/include/arrange/core/Version.h"), `PackageVersion = ${JSON.stringify(contract.frameworkVersion)}`)
+    assertFileContains(resolve(repoRoot, "packages/shared/src/version.ts"), `CANTON_PACKAGE_VERSION = ${JSON.stringify(contract.frameworkVersion)}`)
+    assertFileContains(resolve(repoRoot, "packages/shared/src/version.ts"), `CANTON_PROTOCOL_VERSION = ${contract.frameworkInternalProtocolCode}`)
+    assertFileContains(resolve(repoRoot, "native/src/core/Version.h"), `RuntimeVersion = ${contract.frameworkInternalProtocolCode}u`)
+    assertFileContains(resolve(repoRoot, "native/src/core/Version.h"), `PackageVersion = ${JSON.stringify(contract.frameworkVersion)}`)
 
     const cliManifest = readJson(resolve(repoRoot, "cli/package.json"))
-    assertEqual(cliManifest.version, contract.cliVersion, "cli/package.json version diverges from arrange.version.json")
-    assertEqual(cliManifest.compatibility, contract.cliCompatibility, "cli/package.json compatibility diverges from arrange.version.json")
+    assertEqual(cliManifest.version, contract.cliVersion, "cli/package.json version diverges from canton.version.json")
+    assertEqual(cliManifest.compatibility, contract.cliCompatibility, "cli/package.json compatibility diverges from canton.version.json")
 
     const frameworkManifest = readJson(resolve(repoRoot, "packages/framework/package.json"))
-    const arrange = frameworkManifest.arrange
-    if (!arrange || typeof arrange !== "object" || Array.isArray(arrange)) throw new Error("packages/framework/package.json arrange metadata missing")
-    assertEqual((arrange as Record<string, unknown>).cliCompatibility, contract.cliCompatibility, "framework cliCompatibility diverges from arrange.version.json")
+    const canton = frameworkManifest.canton
+    if (!canton || typeof canton !== "object" || Array.isArray(canton)) throw new Error("packages/framework/package.json canton metadata missing")
+    assertEqual((canton as Record<string, unknown>).cliCompatibility, contract.cliCompatibility, "framework cliCompatibility diverges from canton.version.json")
 }

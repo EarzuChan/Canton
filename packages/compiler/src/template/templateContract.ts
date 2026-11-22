@@ -1,11 +1,12 @@
-import { ElementTypes, NodeTypes, type CompilerOptions, type RootNode, type SourceLocation, type TemplateChildNode } from '../core/index.ts'
-import { camelize } from '@arrange/shared'
+import { ElementTypes, NodeTypes, type RootNode, type SourceLocation, type TemplateChildNode } from './ast.ts'
+import type { CompilerOptions } from './options.ts'
+import { camelize } from '@canton/shared'
 
 // 在结构转换之前检查源码契约，不能让被转换掉的指令绕过校验
 export function validateTemplateContract(root: RootNode, options: CompilerOptions): string[] { // Options 未被使用喵
     const slots = new Set<string>()
 
-    const fail = (message: string, loc: SourceLocation): never => { throw Object.assign(new SyntaxError(message), { code: 'ARRANGE_TEMPLATE', loc }) }
+    const fail = (message: string, loc: SourceLocation): never => { throw Object.assign(new SyntaxError(message), { code: 'CANTON_TEMPLATE', loc }) }
 
     const visit = (children: TemplateChildNode[]) => {
         for (let index = children.length - 1; index >= 0; index--) {
@@ -22,7 +23,7 @@ export function validateTemplateContract(root: RootNode, options: CompilerOption
             const names = new Set<string>()
             for (const prop of node.props) {
                 if (prop.type === NodeTypes.DIRECTIVE) {
-                    if (!['bind', 'if', 'else-if', 'else', 'for', 'slot'].includes(prop.name)) fail(`Arrange 模板不支持 a-${prop.name}`, prop.loc)
+                    if (!['bind', 'if', 'else-if', 'else', 'for', 'slot'].includes(prop.name)) fail(`Canton 模板不支持 a-${prop.name}`, prop.loc)
                     if (prop.modifiers.length && !(prop.name === 'bind' && prop.modifiers.every(modifier => modifier.content === 'camel'))) fail(`a-${prop.name} 不支持这些修饰符`, prop.loc)
                     if (prop.name === 'bind' && (!prop.exp || prop.exp.type === NodeTypes.SIMPLE_EXPRESSION && !prop.exp.content.trim())) fail('参数绑定必须显式提供表达式', prop.loc)
                     if (prop.name === 'slot' && (node.tag !== 'Template' || prop.exp || prop.arg && (prop.arg.type !== NodeTypes.SIMPLE_EXPRESSION || !prop.arg.isStatic || prop.arg.content.includes('.')))) fail('具名内容必须使用 Template 和静态槽位名，不接受槽位参数或修饰符', prop.loc)

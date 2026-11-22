@@ -7,7 +7,7 @@ import { readSnapshot, type FileSnapshot } from "../../util/FileUtils.ts"
 import type { FileTransaction } from "../transaction/FileTransaction.ts"
 import { inspectionFailure, InspectionError, type InspectionState } from "../../util/RecordInspection.ts"
 
-export const projectFileNames = { project: "arrange.project.yaml", local: "arrange.local.yaml" } as const
+export const projectFileNames = { project: "canton.project.yaml", local: "canton.local.yaml" } as const
 export interface StateDiagnostic { readonly path: string, readonly message: string, readonly state: InspectionState }
 
 export class ProjectStateStore {

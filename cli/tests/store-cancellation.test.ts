@@ -12,7 +12,7 @@ import { readSnapshot } from "../src/util/FileUtils.ts"
 
 test("saveLocal 准备好临时内容后取消不提交本机配置，保留失败记录并传递 AbortError", async t => {
     for (const existing of [false, true]) await t.test(existing ? "保留已有本机配置" : "不发布新本机配置", async t => {
-        const root = await mkdtemp(resolve(tmpdir(), "arrange-store-cancel-"))
+        const root = await mkdtemp(resolve(tmpdir(), "canton-store-cancel-"))
         t.after(() => rm(root, { recursive: true, force: true }))
         const projectPath = resolve(root, projectFileNames.project)
         const localPath = resolve(root, projectFileNames.local)
@@ -23,7 +23,7 @@ test("saveLocal 准备好临时内容后取消不提交本机配置，保留失�
         const controller = new AbortController()
         Object.defineProperty(controller.signal, "throwIfAborted", {
             value() {
-                if (readdirSync(root).some(name => name.startsWith(".arrange-") && name.endsWith(".tmp"))) controller.abort()
+                if (readdirSync(root).some(name => name.startsWith(".canton-") && name.endsWith(".tmp"))) controller.abort()
                 AbortSignal.prototype.throwIfAborted.call(this)
             }
         })
@@ -36,15 +36,15 @@ test("saveLocal 准备好临时内容后取消不提交本机配置，保留失�
             assert.equal(error.name, "AbortError")
             assert.equal(error.cause, controller.signal.reason)
             assert.ok(error.message.startsWith("写入已取消"))
-            assert.ok(error.message.includes(resolve(root, ".arrange", "transactions")))
+            assert.ok(error.message.includes(resolve(root, ".canton", "transactions")))
             return true
         })
         assert.equal(await readFile(projectPath, "utf8"), originalProject)
         if (existing) assert.equal(await readFile(localPath, "utf8"), originalLocal)
         else await assert.rejects(readFile(localPath), { code: "ENOENT" })
-        const journals = await readdir(resolve(root, ".arrange/transactions"))
+        const journals = await readdir(resolve(root, ".canton/transactions"))
         assert.equal(journals.length, 1)
-        const inspection = await writer.inspectTransaction(resolve(root, ".arrange/transactions", journals[0]))
+        const inspection = await writer.inspectTransaction(resolve(root, ".canton/transactions", journals[0]))
         assert.equal(inspection.record.status, "failed")
         assert.equal(inspection.files[0].path, localPath)
         assert.equal(inspection.files[0].original, existing ? originalLocal : null)

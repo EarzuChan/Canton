@@ -1,4 +1,3 @@
-import { cmakeListsFile } from "../cmake/CmakeStuffs.ts"
 import type { ManagedFile } from "../managed/ManagedFile.ts"
 import type { ManagedItem, ManagedItemMetadata, Region } from "../managed/ManageItems.ts"
 import { npmrcFile, packageJsonFile } from "../nodejs/NodeJsStuffs.ts"
@@ -32,13 +31,8 @@ export function createConfigRegistry(files: readonly ManagedFile[], metadata: re
     return Object.freeze({ files: Object.freeze([...files]), items: Object.freeze([...items.values()].map(item => Object.freeze({ ...item, regions: Object.freeze(item.regions) }))) })
 }
 
-export const configRegistry = createConfigRegistry([packageJsonFile, npmrcFile, cmakeListsFile], [
-    { id: "project.name", label: "项目机器名与产品显示名（UI 包名和 CMake 产品名）" },
-    { id: "framework.version", label: "Framework 版本（CMake GIT_TAG 和 npm 依赖）" },
-    { id: "cmake.fetch-content-repository", label: "CMake FetchContent 仓库地址" },
-    { id: "cmake.plugin-version", label: "插件版本" },
-    { id: "cmake.plugin-identity", label: "插件厂商与标识" },
-    { id: "cmake.plugin-formats", label: "插件格式" },
-    { id: "cmake.product-icon", label: "产品图标（CLI 生成的原生成品资源）" },
-    { id: "node.npmrc.arrange-registry", label: "Framework npm 仓库" },
+export const configRegistry = createConfigRegistry([packageJsonFile, npmrcFile], [
+    { id: "project.name", label: "项目名称（UI 包名）" },
+    { id: "framework.version", label: "Framework 版本（npm 依赖）" },
+    { id: "node.npmrc.canton-registry", label: "Framework npm 仓库" },
 ])

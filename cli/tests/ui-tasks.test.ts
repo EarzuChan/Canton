@@ -44,7 +44,7 @@ test("并行任务保留等待收尾和失败汇总语义，完整输出在关�
 })
 
 test("成功子进程保留 ANSI、回车和 stderr 输出，运行与完成后都不创建日志", async t => {
-    const root = await mkdtemp(join(tmpdir(), "arrange-task-log-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-task-log-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     const terminal = quietTerminal()
     const script = "process.stdout.write('building 10%\\r\\x1b[2Kbuilding 80%\\r\\n\\x1b[32mok\\x1b[0m\\r\\n');process.stderr.write('error line\\n')"
@@ -52,7 +52,7 @@ test("成功子进程保留 ANSI、回车和 stderr 输出，运行与完成后�
         const result = await new Executor().run(task.process({ command: process.execPath, args: ["-e", script] }))
         assert.equal(result.exitCode, 0)
         assert.equal(result.stdout, "")
-        await assert.rejects(readdir(join(root, '.arrange', 'logs')), { code: 'ENOENT' })
+        await assert.rejects(readdir(join(root, '.canton', 'logs')), { code: 'ENOENT' })
     })
     await terminal.close()
     const output = stripAnsi(terminal.output.text)
@@ -60,11 +60,11 @@ test("成功子进程保留 ANSI、回车和 stderr 输出，运行与完成后�
     assert.match(output, /ok/)
     assert.match(output, /error line/)
     assert.doesNotMatch(output, /完整日志|已记录到|正在记录/)
-    await assert.rejects(readdir(join(root, '.arrange', 'logs')), { code: 'ENOENT' })
+    await assert.rejects(readdir(join(root, '.canton', 'logs')), { code: 'ENOENT' })
 })
 
 test('非成功子控制台结束后才保存全部 stdout、stderr、尾行与失败原因并发布路径', async t => {
-    const root = await mkdtemp(join(tmpdir(), 'arrange-task-failed-'))
+    const root = await mkdtemp(join(tmpdir(), 'canton-task-failed-'))
     t.after(() => rm(root, { recursive: true, force: true }))
     const document = new SessionDocument()
     const tasks = new WorkPresenter(new TaskController(document, () => { }))
@@ -74,7 +74,7 @@ test('非成功子控制台结束后才保存全部 stdout、stderr、尾行与�
         assert.equal(result.exitCode, 7)
         assert.equal(document.entries[0]!.type, 'batch')
         if (document.entries[0]!.type === 'batch') assert.equal(document.entries[0]!.tasks[0]!.logPath, undefined)
-        await assert.rejects(readdir(join(root, '.arrange', 'logs')), { code: 'ENOENT' })
+        await assert.rejects(readdir(join(root, '.canton', 'logs')), { code: 'ENOENT' })
         throw new Error('工具退出码 7')
     }), /工具退出码 7/)
     const batch = document.entries[0]!
@@ -83,8 +83,8 @@ test('非成功子控制台结束后才保存全部 stdout、stderr、尾行与�
     assert.equal(batch.tasks[0]!.state, 'failed')
     assert.ok(batch.tasks[0]!.logPath)
     assert.match(new TranscriptRenderer().render(document), /已记录到 .*failed\.log/)
-    const dirs = await readdir(join(root, '.arrange', 'logs'))
-    const saved = await readFile(join(root, '.arrange', 'logs', dirs[0]!, 'failed.log'), 'utf8')
+    const dirs = await readdir(join(root, '.canton', 'logs'))
+    const saved = await readFile(join(root, '.canton', 'logs', dirs[0]!, 'failed.log'), 'utf8')
     assert.match(saved, /开始/)
     assert.match(saved, /彩色内容/)
     assert.match(saved, /错误尾行/)
@@ -93,7 +93,7 @@ test('非成功子控制台结束后才保存全部 stdout、stderr、尾行与�
 })
 
 test('开发进程仅实际失败保存日志，正常停止和取消不保存且收尾幂等', async t => {
-    const root = await mkdtemp(join(tmpdir(), 'arrange-process-logs-'))
+    const root = await mkdtemp(join(tmpdir(), 'canton-process-logs-'))
     t.after(() => rm(root, { recursive: true, force: true }))
     const abort = new AbortController()
     const document = new SessionDocument()
@@ -105,15 +105,15 @@ test('开发进程仅实际失败保存日志，正常停止和取消不保存�
     const cancelled = await processes.open({ id: 'cancelled', title: '取消', rootDir: root })
     for (const task of [success, failed, stopped, cancelled]) task.line(task.title + '输出')
     await success.finish({ kind: 'exited', message: '已退出' })
-    await assert.rejects(readdir(join(root, '.arrange', 'logs')), { code: 'ENOENT' })
+    await assert.rejects(readdir(join(root, '.canton', 'logs')), { code: 'ENOENT' })
     await failed.finish({ kind: 'failed', message: '退出码 3' })
     await stopped.finish({ kind: 'stopped', reason: 'companion' })
     abort.abort()
     await processes.close({ kind: 'cancelled' })
     await failed.finish({ kind: 'failed', message: '不得重复' })
-    const dirs = await readdir(join(root, '.arrange', 'logs'))
+    const dirs = await readdir(join(root, '.canton', 'logs'))
     assert.equal(dirs.length, 1)
-    const directory = join(root, '.arrange', 'logs', dirs[0]!)
+    const directory = join(root, '.canton', 'logs', dirs[0]!)
     assert.deepEqual((await readdir(directory)).sort(), ['failed.log'])
     const text = await readFile(join(directory, 'failed.log'), 'utf8')
     assert.equal(text.match(/失败输出/g)?.length, 1)
@@ -127,13 +127,13 @@ test('开发进程仅实际失败保存日志，正常停止和取消不保存�
 })
 
 test('普通任务没有子控制台时即使失败也不生成空日志，保存失败不谎报路径或覆盖原始错误', async t => {
-    const root = await mkdtemp(join(tmpdir(), 'arrange-log-write-failure-'))
+    const root = await mkdtemp(join(tmpdir(), 'canton-log-write-failure-'))
     t.after(() => rm(root, { recursive: true, force: true }))
     const document = new SessionDocument()
     const tasks = new WorkPresenter(new TaskController(document, () => { }))
     await assert.rejects(tasks.run({ id: 'plain', title: '普通任务', rootDir: root }, async () => { throw new Error('普通失败') }), /普通失败/)
-    await assert.rejects(readdir(join(root, '.arrange', 'logs')), { code: 'ENOENT' })
-    await writeFile(join(root, '.arrange'), '阻止创建目录')
+    await assert.rejects(readdir(join(root, '.canton', 'logs')), { code: 'ENOENT' })
+    await writeFile(join(root, '.canton'), '阻止创建目录')
     await assert.rejects(tasks.run({ id: 'failed', title: '控制台任务', rootDir: root }, async task => {
         task.line('保留在屏幕中的输出')
         throw new Error('原始业务失败')

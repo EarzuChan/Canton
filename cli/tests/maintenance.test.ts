@@ -9,7 +9,6 @@ import { canonicalResource } from "../src/feature/operation/Resource.ts"
 import { UserDirectories } from "../src/feature/user/UserDirectories.ts"
 import { ProjectStateStore } from "../src/feature/project/ProjectStateStore.ts"
 import { CmakeService } from "../src/feature/cmake/CmakeService.ts"
-import { IconAssetsService } from "../src/feature/asset/IconAssetsService.ts"
 import { createPlatformService } from "../src/feature/platform/CreatePlatformService.ts"
 import { ProjectRegistry } from "../src/feature/user/ProjectRegistry.ts"
 import { TransactionStore } from "../src/feature/transaction/TransactionStore.ts"
@@ -21,16 +20,12 @@ import { readSnapshot } from "../src/util/FileUtils.ts"
 import { NativeBuildTree } from "../src/feature/cmake/NativeBuildTree.ts"
 import { sourceReferencesFileName } from "../src/CliMetadata.ts"
 import { write } from "./fixture.ts"
-import { configureNative, cmakeRun, macOnly } from "./native-fixture.ts"
+import { configureNative, cmakeRun } from "./native-fixture.ts"
 import { BuildReferences } from "../src/feature/source/BuildReferences.ts"
 import { StorageInventory } from "../src/feature/storage/StorageInventory.ts"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
 import { setTimeout as delay } from "node:timers/promises"
-import { ProjectCleaner } from "../src/feature/storage/ProjectCleaner.ts"
-import { nativeProducts } from "./native-fixture.ts"
-import { Packer } from "../src/feature/packing/Packer.ts"
-import { ArtifactLocator } from "../src/feature/packing/ArtifactLocator.ts"
 import { Executor } from "../src/feature/platform/Executor.ts"
 import { StorageMaintenance } from "../src/feature/storage/StorageMaintenance.ts"
 import { SourceCache } from "../src/feature/source/SourceCache.ts"
@@ -40,7 +35,7 @@ import { stateFor } from "./fixture.ts"
 import { ProjectInitializer, type CopyPlan } from "../src/feature/project/ProjectInitializer.ts"
 
 async function harness(t: { after: (callback: () => Promise<void>) => void }) {
-    const root = await mkdtemp(join(tmpdir(), "arrange-maintenance-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-maintenance-"))
     const user = new UserDirectories(join(root, "user"))
     await user.ensure(user.root)
     const signal = new AbortController().signal
@@ -58,9 +53,9 @@ async function harness(t: { after: (callback: () => Promise<void>) => void }) {
 test("工程登记以真实路径去重，失败操作仍可追踪；失联与被替换分别识别", async t => {
     const input = await harness(t)
     const project = join(input.root, "project")
-    await write(join(project, "arrange.project.yaml"), "project: {}")
+    await write(join(project, "canton.project.yaml"), "project: {}")
     const alias = join(input.root, "alias")
-    await symlink(project, alias, process.platform === "win32" ? "junction" : "dir")
+    await symlink(project, alias, "junction")
     const registry = new ProjectRegistry(input.user, input.signal)
     await registry.register(project, join(input.root, "builds"))
     await registry.register(alias, join(input.root, "builds"))
@@ -101,75 +96,6 @@ test("真实 CMake 切换源码位置会重建嵌套缓存，相同身份保留�
     await assert.rejects(tree.prepare(source, unknown, [], true), /缺少归属记录/)
     assert.equal(await readFile(join(unknown, "user"), "utf8"), "保留")
     await assert.rejects(tree.prepare(source, source, [], true), /覆盖源码根/)
-})
-
-test("macOS 验收树允许外部父目录别名，物理路径共享增量、引用与删除恢复", macOnly, async t => {
-    const input = await harness(t)
-    const source = join(input.root, "source")
-    const external = join(input.root, "external")
-    const alias = join(input.root, "alias")
-    await mkdir(source)
-    await mkdir(external)
-    await symlink(external, alias, "dir")
-    const build = join(alias, "nested", "build")
-    const physical = join(await realpath(external), "nested", "build")
-    const tree = new NativeBuildTree(input.signal, input.user)
-    await (await tree.prepare(source, build, ["first"]))()
-    assert.equal((await canonicalResource({ kind: "directory", path: build, mode: "write" })).path, physical)
-    await write(join(physical, "tools", "sentinel"), "保留")
-    await (await tree.prepare(source, physical, ["first"]))()
-    assert.equal(await readFile(join(build, "tools", "sentinel"), "utf8"), "保留")
-    const references = await new BuildReferences(build).begin({ JUCE_DIR: source }, source)
-    await references()
-    assert.deepEqual(JSON.parse(await readFile(join(physical, sourceReferencesFileName), "utf8")).directories, [source])
-
-    const deletion = new DeleteTransaction(new TransactionStore(input.user.root, input.user.transactions), input.signal)
-    const record = await deletion.prepare([{ root: dirname(physical), path: physical }])
-    const quarantine = deletion.paths(record).find(entry => entry.path !== physical)!.path
-    await rename(physical, quarantine)
-    await (await tree.prepare(source, build, ["first"]))()
-    await assert.rejects(readFile(join(quarantine, "tools", "sentinel")), { code: "ENOENT" })
-    await assert.rejects(readFile(join(build, "tools", "sentinel")), { code: "ENOENT" })
-    await write(join(build, "tools", "sentinel"), "重建")
-    await (await tree.prepare(source, physical, ["second"]))()
-    await assert.rejects(readFile(join(build, "tools", "sentinel")), { code: "ENOENT" })
-    await write(join(build, "tools", "sentinel"), "清理")
-    await (await tree.prepare(source, build, ["second"], true))()
-    await assert.rejects(readFile(join(physical, "tools", "sentinel")), { code: "ENOENT" })
-})
-
-test("macOS 父目录别名不授权链接目标、未知树或其它源码的验收树清理", macOnly, async t => {
-    const input = await harness(t)
-    const source = join(input.root, "source")
-    const other = join(input.root, "other")
-    await mkdir(source)
-    await mkdir(other)
-    const tree = new NativeBuildTree(input.signal, input.user)
-    const owned = join(input.root, "owned")
-    await (await tree.prepare(source, owned, []))()
-    await write(join(owned, "keep"), "用户内容")
-    const redirect = join(input.root, "redirect")
-    await symlink(owned, redirect, "dir")
-    await assert.rejects(tree.prepare(source, redirect, [], true), /不能包含链接或文件/)
-    await assert.rejects(tree.prepare(other, owned, [], true), /属于其它源码/)
-    assert.equal(await readFile(join(owned, "keep"), "utf8"), "用户内容")
-
-    const alias = join(input.root, "alias")
-    await symlink(await realpath(input.root), alias, "dir")
-    await write(join(input.root, "unknown", "keep"), "未知内容")
-    await assert.rejects(tree.prepare(source, join(alias, "unknown"), [], true), /缺少归属记录/)
-    assert.equal(await readFile(join(input.root, "unknown", "keep"), "utf8"), "未知内容")
-    await assert.rejects(tree.prepare(source, alias, [], true), /覆盖源码根/)
-    await assert.rejects(tree.prepare(source, "/", [], true), /覆盖源码根/)
-    const file = join(input.root, "file")
-    await write(file, "文件内容")
-    await assert.rejects(tree.prepare(source, file, [], true), /不能包含链接或文件/)
-    await assert.rejects(tree.prepare(source, join(file, "build"), [], true))
-    assert.equal(await readFile(file, "utf8"), "文件内容")
-    await symlink(file, join(owned, "external-file"), "file")
-    await (await tree.prepare(source, join(alias, "owned"), [], true))()
-    assert.equal(await readFile(file, "utf8"), "文件内容")
-    await assert.rejects(readFile(join(owned, "external-file")), { code: "ENOENT" })
 })
 
 test("替换事务在移动后异常退出的事实可继续或回退，用户修改导致冲突", async t => {
@@ -239,8 +165,8 @@ test("构建引用先取并集，配置失败不漏旧引用；缺少引用阻�
     const build = join(input.root, "build")
     await mkdir(build)
     const references = new BuildReferences(build)
-    await (await references.begin({ FETCHCONTENT_SOURCE_DIR_JUCE: "first" }, input.root))()
-    const complete = await references.begin({ FETCHCONTENT_SOURCE_DIR_JUCE: "second" }, input.root)
+    await (await references.begin({ FETCHCONTENT_SOURCE_DIR_QUICKJS_NG: "first" }, input.root))()
+    const complete = await references.begin({ FETCHCONTENT_SOURCE_DIR_QUICKJS_NG: "second" }, input.root)
     let record = JSON.parse(await readFile(join(build, "source-references.json"), "utf8"))
     assert.equal(record.directories.length, 2)
     await complete()
@@ -273,27 +199,6 @@ test("实际强杀事务持有者后，重新取得资源并恢复移动边界",
     })
 })
 
-test("当前工程清理保留依赖与用户交付内容，真实构建树及凭据按范围移除", async t => {
-    const { state, cmake } = await nativeProducts(t)
-    state.project.ui.scriptFormat = "js"
-    await write(join(state.rootDir, "ui/dist/app.js"), "UI")
-    const { writeUiManifest } = await import('./ui-package-fixture.ts')
-    await writeUiManifest(join(state.rootDir, 'ui/dist'), state.project.framework.version)
-    await write(join(state.rootDir, "ui/node_modules/keep"), "依赖")
-    const packed = await new Packer(new ArtifactLocator(cmake), new Executor()).pack(state, { flavor: "release", products: ["standalone", "vst3"] })
-    await write(join(dirname(packed.products[0].path), "user.txt"), "用户文件")
-    const cleaner = new ProjectCleaner(cmake, new AbortController().signal)
-    const artifacts = await cleaner.plan(state, { ui: false, native: false, artifacts: true })
-    await cleaner.execute(state, artifacts)
-    assert.equal(await readFile(join(dirname(packed.products[0].path), "user.txt"), "utf8"), "用户文件")
-    await assert.rejects(readFile(packed.products[0].binaryPath), { code: "ENOENT" })
-    assert.equal(await readFile(join(state.rootDir, "ui/dist/app.js"), "utf8"), "UI")
-    const generated = await cleaner.plan(state, { ui: true, native: true, artifacts: false })
-    await cleaner.execute(state, generated)
-    await assert.rejects(readFile(join(cmake.buildDirectory(state, "release"), "CMakeCache.txt")), { code: "ENOENT" })
-    assert.equal(await readFile(join(state.rootDir, "ui/node_modules/keep"), "utf8"), "依赖")
-})
-
 test("真实 Git 缓存损坏后按确切 commit 修复，无引用条目清理并移除索引", async t => {
     const input = await harness(t)
     const repository = join(input.root, "repository")
@@ -313,7 +218,7 @@ test("真实 Git 缓存损坏后按确切 commit 修复，无引用条目清理�
     const source = await cache.ensure({ repository, ref: commit, commit }, "测试依赖", testTask())
     await write(join(source.directory, "CMakeLists.txt"), "用户改坏了缓存")
     const registry = new ProjectRegistry(input.user, input.signal)
-    const inventory = new StorageInventory(input.user, registry, git, input.signal, new ProjectStateStore(new FileTransaction(input.signal)), new CmakeService(executor, createPlatformService(executor), new IconAssetsService(input.signal), input.user))
+    const inventory = new StorageInventory(input.user, registry, git, input.signal, new ProjectStateStore(new FileTransaction(input.signal)), new CmakeService(executor, createPlatformService(executor), input.user))
     const maintenance = new StorageMaintenance(input.user, inventory, git, input.signal, registry)
     await input.operations.run([input.lifetime], "修复测试", () => maintenance.repair(source.key, testTask()))
     assert.equal(await readFile(join(source.directory, "CMakeLists.txt"), "utf8"), "project(Fixture NONE)\n")
@@ -344,7 +249,7 @@ test("事务根的真实路径、别名与 Windows 短路径身份一致，恢�
     const record = await input.transactions.create("write", { files: [{ path, original: null, expected: "恢复内容", written: false }] })
     const physicalRoot = await realpath(input.root)
     const alias = join(input.root, "alias")
-    await symlink(physicalRoot, alias, process.platform === "win32" ? "junction" : "dir")
+    await symlink(physicalRoot, alias, "junction")
     const aliasedStore = new TransactionStore(alias)
     assert.equal((await aliasedStore.read(record.id)).id, record.id)
     const recovery = new RecoveryService(aliasedStore, input.operations, input.signal, input.lifetime)
@@ -366,7 +271,7 @@ test("初始化中断可继续或回退，用户后来添加的内容保留，�
                 controller.abort()
             }
         }
-        await assert.rejects(new InterruptedInitializer(new FileTransaction(controller.signal), controller.signal).adopt({ state, ui: { kind: "copy", sourceDir: source }, native: { kind: "new" } }), { name: "AbortError" })
+        await assert.rejects(new InterruptedInitializer(new FileTransaction(controller.signal), controller.signal).apply(await new ProjectInitializer(new FileTransaction()).planInitialization({ state, ui: { kind: "copy", sourceDir: source }, native: { kind: "new" } })), { name: "AbortError" })
         const store = new TransactionStore(projectRoot)
         const records = await store.list()
         assert.equal(records.length, 1)
@@ -381,7 +286,7 @@ test("初始化中断可继续或回退，用户后来添加的内容保留，�
             assert.equal(await readFile(join(projectRoot, "ui/package.json"), "utf8"), "用户修改")
         } else {
             await recovery.apply(records[0].id, mode === "rollback")
-            if (mode === "continue") assert.ok(await readFile(join(projectRoot, "arrange.project.yaml"), "utf8"))
+            if (mode === "continue") assert.ok(await readFile(join(projectRoot, "canton.project.yaml"), "utf8"))
             else await assert.rejects(readFile(join(projectRoot, "ui/package.json")), { code: "ENOENT" })
             assert.deepEqual(await store.list(), [])
         }

@@ -1,4 +1,4 @@
-import { windowsOnly, nativeTools, hostArchitecture } from "./native-fixture.ts"
+import { nativeTools, hostArchitecture } from "./native-fixture.ts"
 import { createPlatformService } from "../src/feature/platform/CreatePlatformService.ts"
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
@@ -37,22 +37,21 @@ test("进程执行保留退出码、信号、超时与取消结果", async () =>
     assert.equal(failed.stderr, "err")
     const signalled = await executor.run({ command: process.execPath, args: ["-e", "process.kill(process.pid,'SIGTERM')"] })
     assert.notEqual(signalled.exitCode, 0)
-    if (process.platform !== "win32") assert.equal(signalled.signal, "SIGTERM")
     const timed = await executor.run({ command: process.execPath, args: ["-e", "setInterval(()=>{},100)"], timeoutMs: 100 })
     assert.equal(timed.exitCode, 124)
     assert.equal(timed.timedOut, true)
     const cancellation = new AbortController()
-    const pending = new Executor(process.platform, cancellation.signal).run({ command: process.execPath, args: ["-e", "setInterval(()=>{},100)"] })
+    const pending = new Executor(cancellation.signal).run({ command: process.execPath, args: ["-e", "setInterval(()=>{},100)"] })
     setTimeout(() => cancellation.abort(), 100)
     assert.equal((await pending).exitCode, 130)
 })
 
 test("父进程退出后仍停止其后代进程", async t => {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-process-tree-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-process-tree-"))
     t.after(() => rm(directory, { recursive: true, force: true }))
     const marker = join(directory, "orphan.txt")
     const descendant = `require('node:fs').writeFileSync(${JSON.stringify(marker)},'orphan')`
-    const delay = process.platform === "win32" ? 5000 : 700
+    const delay = 5000
     const source = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(`setTimeout(()=>{${descendant}},${delay})`)}],{stdio:'ignore'}).unref()`
     const child = new Executor().start({ command: process.execPath, args: ["-e", source] })
     await child.completion
@@ -71,7 +70,7 @@ test("没有后代的进程清理结论为 clean，重复清理结论不变", as
 test("脱离父进程的长驻后代由容器确认并结束，结论为 reaped", { timeout: 20000 }, async () => {
     const port = await freePort()
     const descendant = `require('node:http').createServer((q,s)=>s.end('alive')).listen(${port},'127.0.0.1',()=>process.send('ready'))`
-    // 后代断开 IPC 后与父进程互不相干，父进程先行退出，Windows 与 POSIX 都不会自动带走它
+    // 后代断开 IPC 后与父进程互不相干，父进程先行退出，Windows 不会自动带走它
     const source = `const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc']});child.on('message',()=>{child.disconnect();child.unref();process.exit(0)})`
     const child = new Executor().start({ command: process.execPath, args: ["-e", source] })
     const result = await child.completion
@@ -94,7 +93,7 @@ function scripted(container: ProcessContainer): ProcessContainment {
 
 test("清理结论为 unknown 时 stop 不抛错，可重试并在确认后固定结论", async () => {
     const container = new ScriptedContainer(["unknown", "unknown", "reaped"])
-    const child = new Executor(process.platform, undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "0"] })
+    const child = new Executor(undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "0"] })
     const result = await child.completion
     assert.equal(result.exitCode, 0)
     assert.equal(await child.stop(), "unknown")
@@ -107,7 +106,7 @@ test("清理结论为 unknown 时 stop 不抛错，可重试并在确认后固�
 test("容器清理动作出错时 stop 拒绝，之后仍可重试", async () => {
     let attempts = 0
     const container: ProcessContainer = { reap: async () => { if (attempts++ === 0) throw new Error("无法执行清理"); return "clean" }, releaseIfEmpty() { } }
-    const child = new Executor(process.platform, undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "0"] })
+    const child = new Executor(undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "0"] })
     await child.completion
     await assert.rejects(child.stop(), /无法执行清理/)
     assert.equal(await child.stop(), "clean")
@@ -115,16 +114,16 @@ test("容器清理动作出错时 stop 拒绝，之后仍可重试", async () =>
 
 test("主进程已关闭后内部触发的清理出错，不使完成结果失败", async () => {
     const container: ProcessContainer = { reap: async () => { throw new Error("无法执行清理") }, releaseIfEmpty() { } }
-    const child = new Executor(process.platform, undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "setTimeout(()=>{},300)"], timeoutMs: 100 })
+    const child = new Executor(undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "setTimeout(()=>{},300)"], timeoutMs: 100 })
     const result = await child.completion.catch(error => error)
     assert.ok(result instanceof Error, "主进程仍在运行时清理出错应让执行失败")
-    const done = new Executor(process.platform, undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "process.stdout.write('x')"] })
+    const done = new Executor(undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "process.stdout.write('x')"] })
     assert.equal((await done.completion).exitCode, 0)
     await assert.rejects(done.stop(), /无法执行清理/)
 })
 
 test("后代清理未确认不改变已成功的任务结果", async () => {
-    const result = await new Executor(process.platform, undefined, undefined, scripted(new ScriptedContainer(["unknown"]))).run({ command: process.execPath, args: ["-e", "process.stdout.write('done')"] })
+    const result = await new Executor(undefined, undefined, scripted(new ScriptedContainer(["unknown"]))).run({ command: process.execPath, args: ["-e", "process.stdout.write('done')"] })
     assert.equal(result.exitCode, 0)
     assert.equal(result.stdout, "done")
 })
@@ -175,11 +174,11 @@ test("清理账本可撤销从未启动成功的登记", async () => {
     assert.equal(processes.pending, false)
 })
 
-test("Windows 兜底扫描容器仍能结束已退出父进程留下的后代", { ...windowsOnly, timeout: 60000 }, async () => {
+test("Windows 兜底扫描容器仍能结束已退出父进程留下的后代", { timeout: 60000 }, async () => {
     const port = await freePort()
     const descendant = `require('node:http').createServer((q,s)=>s.end('alive')).listen(${port},'127.0.0.1',()=>process.send('ready'))`
     const source = `const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendant)}],{stdio:['ignore','ignore','ignore','ipc']});child.on('message',()=>{child.disconnect();process.exit(0)})`
-    const child = new Executor("win32", undefined, undefined, new WindowsTreeScanContainment()).start({ command: process.execPath, args: ["-e", source] })
+    const child = new Executor(undefined, undefined, new WindowsTreeScanContainment()).start({ command: process.execPath, args: ["-e", source] })
     await child.completion
     assert.ok(["clean", "reaped"].includes(await child.stop()))
     await assert.rejects(fetch(`http://127.0.0.1:${port}`))
@@ -197,16 +196,16 @@ test("父进程退出后清理仍持有捕获管道的后代进程", { timeout: 
 })
 
 test("开发监管等待 UI 就绪后启动原生进程，并在退出时清理", async t => {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-dev-readiness-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-dev-readiness-"))
     t.after(() => rm(directory, { recursive: true, force: true }))
     const port = await freePort()
     const ready = join(directory, "ready")
     const native = join(directory, "native")
-    const ui = `setTimeout(()=>{require('node:fs').writeFileSync(${JSON.stringify(ready)},'yes');require('node:http').createServer((q,s)=>{s.setHeader('x-arrange-dev','owned');s.end('ok')}).listen(${port},'127.0.0.1')},250)`
+    const ui = `setTimeout(()=>{require('node:fs').writeFileSync(${JSON.stringify(ready)},'yes');require('node:http').createServer((q,s)=>{s.setHeader('x-canton-dev','owned');s.end('ok')}).listen(${port},'127.0.0.1')},250)`
     const source = `if(!require('node:fs').existsSync(${JSON.stringify(ready)}))process.exit(9);require('node:fs').writeFileSync(${JSON.stringify(native)},'yes');setTimeout(()=>process.exit(6),100)`
     const code = await new DevSupervisor(new Executor()).run([
         { name: "native", command: process.execPath, args: ["-e", source], dependsOn: ["ui"] },
-        { name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}`, readyHeader: { name: "x-arrange-dev", value: "owned" } },
+        { name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}`, readyHeader: { name: "x-canton-dev", value: "owned" } },
     ])
     assert.deepEqual(code, { kind: 'failed', exitCode: 6, message: 'native 意外退出（退出码 6）' })
     assert.equal(await readFile(native, "utf8"), "yes")
@@ -243,7 +242,7 @@ test('用户在全部服务就绪后请求结束是正常结束，UI 和 Native 
         private readonly thisOwner = this
     }
     const port = await freePort()
-    const source = `require('node:http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end('{"entry":"/src/App.sfa","modules":[{"url":"/src/App.sfa","source":"export default {}"}]}')}).listen(${port},'127.0.0.1');setInterval(()=>{},100)`
+    const source = `require('node:http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end('{"entry":"/src/App.cta","modules":[{"url":"/src/App.cta","source":"export default {}"}]}')}).listen(${port},'127.0.0.1');setInterval(()=>{},100)`
     const stop = new AbortController()
     const progress = new Progress()
     const running = new DevSupervisor(new Executor()).run([
@@ -255,7 +254,7 @@ test('用户在全部服务就绪后请求结束是正常结束，UI 和 Native 
     assert.deepEqual([...progress.outcomes.values()].map(outcome => outcome.kind === 'stopped' ? outcome.reason : '').sort(), ['user', 'user'])
 })
 
-test('Standalone 正常关闭自然结束开发会话，UI 作为关联进程停止', { timeout: 10000 }, async () => {
+test('应用正常关闭自然结束开发会话，UI 作为关联进程停止', { timeout: 10000 }, async () => {
     const port = await freePort()
     const ui = `require('node:http').createServer((q,s)=>s.end('ok')).listen(${port},'127.0.0.1');setInterval(()=>{},100)`
     const native = 'setTimeout(()=>process.exit(0),150)'
@@ -275,7 +274,7 @@ test('Standalone 正常关闭自然结束开发会话，UI 作为关联进程停
 
 test('全部就绪后 UI 服务即使以零退出码结束仍属于意外故障', { timeout: 10000 }, async () => {
     const port = await freePort()
-    const ui = `require('node:http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end('{"entry":"/src/App.sfa","modules":[{"url":"/src/App.sfa","source":"export default {}"}]}')}).listen(${port},'127.0.0.1');setTimeout(()=>process.exit(0),300)`
+    const ui = `require('node:http').createServer((q,s)=>{s.setHeader('content-type','application/json');s.end('{"entry":"/src/App.cta","modules":[{"url":"/src/App.cta","source":"export default {}"}]}')}).listen(${port},'127.0.0.1');setTimeout(()=>process.exit(0),300)`
     const outcome = await new DevSupervisor(new Executor()).run([
         { name: 'ui', exitPolicy: 'service', command: process.execPath, args: ['-e', ui], readyUrl: `http://127.0.0.1:${port}`, readyCheck: async response => (await response.json() as { modules?: unknown[] }).modules?.length === 1 },
         { name: 'native', command: process.execPath, args: ['-e', 'setInterval(()=>{},100)'], dependsOn: ['ui'] }
@@ -284,7 +283,7 @@ test('全部就绪后 UI 服务即使以零退出码结束仍属于意外故障'
 })
 
 test("等待后续进程就绪时，已就绪进程退出会停止全部进程", { timeout: 10000 }, async t => {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-dev-startup-failure-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-dev-startup-failure-"))
     t.after(() => rm(directory, { recursive: true, force: true }))
     const uiPort = await freePort()
     const nativePort = await freePort()
@@ -359,7 +358,7 @@ test('开发就绪失败后清理再失败时同时保留两种原因，进程�
 })
 
 test("开发监管在启动原生进程前拒绝 HTTP 200 的 HTML 回退页", async t => {
-    const directory = await mkdtemp(join(tmpdir(), "arrange-dev-fallback-"))
+    const directory = await mkdtemp(join(tmpdir(), "canton-dev-fallback-"))
     t.after(() => rm(directory, { recursive: true, force: true }))
     const port = await freePort()
     const marker = join(directory, "native-started")
@@ -367,7 +366,7 @@ test("开发监管在启动原生进程前拒绝 HTTP 200 的 HTML 回退页", a
     const supervisor = new DevSupervisor(new Executor())
     await assert.rejects(supervisor.run([
         {
-            name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}/@arrange/modules`, readyCheck: async response => {
+            name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}/@canton/modules`, readyCheck: async response => {
                 if (!response.headers.get("content-type")?.includes("application/json")) return false
                 const body = await response.json() as { entry?: unknown, modules?: unknown[] }
                 return typeof body.entry === "string" && Array.isArray(body.modules) && body.modules.length > 0
@@ -383,7 +382,7 @@ test("开发服务就绪超时报告 HTTP 错误，正文首行长度受限", as
     const port = await freePort()
     const ui = `require('node:http').createServer((q,s)=>{s.statusCode=500;s.end('Failed to load module: '+ 'x'.repeat(10000)+'\\nignored second line')}).listen(${port},'127.0.0.1')`
     await assert.rejects(new DevSupervisor(new Executor()).run([
-        { name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}/@arrange/modules` },
+        { name: "ui", command: process.execPath, args: ["-e", ui], readyUrl: `http://127.0.0.1:${port}/@canton/modules` },
     ], { readinessTimeoutMs: 400 }), (error: Error) => {
         assert.match(error.message, /HTTP 500：Failed to load module:/)
         assert.equal(error.message.includes("ignored second line"), false)
@@ -393,7 +392,7 @@ test("开发服务就绪超时报告 HTTP 错误，正文首行长度受限", as
     await assert.rejects(fetch(`http://127.0.0.1:${port}`))
 })
 
-test("Windows 命令与环境保留路径，并拒绝命令扩展字符", windowsOnly, () => {
+test("Windows 命令与环境保留路径，并拒绝命令扩展字符", () => {
     assert.equal(quoteWindowsArgument("C:\\Program Files\\pnpm.cmd"), '"C:\\Program Files\\pnpm.cmd"')
     assert.throws(() => quoteWindowsArgument("%PATH%"))
     assert.throws(() => quoteWindowsArgument('x" & exit'))
@@ -420,7 +419,7 @@ test("本机真实工具发现：Node 与包管理器路径、版本及 Node 环
     assert.ok(inspection.local.packageManager!.version)
 })
 
-test("Windows 真实 Developer Prompt 环境与 cl 架构一致", windowsOnly, async () => {
+test("Windows 真实 Developer Prompt 环境与 cl 架构一致", async () => {
     const { local } = await nativeTools()
     const executor = new Executor()
     const platform = new WindowsPlatformService(executor)

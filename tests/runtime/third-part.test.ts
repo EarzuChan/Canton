@@ -3,16 +3,16 @@ import assert from 'node:assert/strict'
 import ts from 'typescript'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { resolve, join } from 'node:path'
-import { checkSfaProject } from '../../packages/vite-plugin/src/typecheck.ts'
-import { createApp, ref, provide, nextTick, onMounted, onScopeDispose, watch, watchPostEffect } from '@arrange/framework'
-import { Layout, Text, Input, DynamicArrangable, KeepAlive } from '@arrange/framework/foundation'
-import { M, createDensity, DensityKey, MinSizeMeasurePolicy, rounded } from '@arrange/framework/ui'
-import { defineArrangable } from '@arrange/framework/internal'
-import { animatedNumberAsRef, linearEasing, tween } from '@arrange/framework/animation'
-import { compileArrangeSfa } from '../../packages/vite-plugin/src/sfa.ts'
+import { checkCtaProject } from '../../packages/compiler/src/typecheck.ts'
+import { createApp, ref, provide, nextTick, onMounted, onScopeDispose, watch, watchPostEffect } from '@canton/framework'
+import { Layout, Text, Input, DynamicArrangable, KeepAlive } from '@canton/framework/foundation'
+import { M, createDensity, DensityKey, MinSizeMeasurePolicy, rounded } from '@canton/framework/ui'
+import { defineArrangable } from '@canton/framework/internal'
+import { animatedNumberAsRef, linearEasing, tween } from '@canton/framework/animation'
+import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { recordingNative } from './recordingNative.ts'
 import { frameScope } from './frameScope.ts'
-import { evaluateSfa, requireSfaModule } from './sfaModules.ts'
+import { evaluateCta, requireCtaModule } from './ctaModules.ts'
 
 test('首次挂载与后续视觉失效都只由宿主帧授权，挂载通知写状态进入下一帧', async () => {
     const count = ref(0)
@@ -73,60 +73,60 @@ test('共享声明按各 Layout 的 Density 转换，DP、SP 独立且 PX 不订
     app.unmount()
 })
 
-test('SFA 混合长度合并为双通道，保留表达式和局部遮蔽', () => {
+test('CTA 混合长度合并为双通道，保留表达式和局部遮蔽', () => {
     const source = `<template><Text :modifier="M.width(read().dp * 2 + 4.dp + 5.px)" /></template><script>
-import { M } from '@arrange/framework/ui'
+import { M } from '@canton/framework/ui'
 import { read } from './state'
 function local(unit: (value: number) => number) { return unit(9) }
 </script>`
-    const result = compileArrangeSfa(source, '单位表达式.sfa')
+    const result = compileCantonCta(source, '单位表达式.cta')
     assert.match(result.code, /read.*2.*4.*5/s)
     assert.match(result.code, /return unit\(9\)/)
 
-    const exact = (expression: string) => compileArrangeSfa(`<template><Text :modifier="M.width(${expression})" /></template><script>import { M } from '@arrange/framework/ui'</script>`, '单位双通道.sfa').code
+    const exact = (expression: string) => compileCantonCta(`<template><Text :modifier="M.width(${expression})" /></template><script>import { M } from '@canton/framework/ui'</script>`, '单位双通道.cta').code
     assert.match(exact('114.dp + 514.px'), /\[114, 514\]/)
     assert.match(exact('1919.px + 114.dp * 2 + 810.px'), /\[228, 2729\]/)
-    const once = compileArrangeSfa(`<template><Text :modifier="M.width(flag() ? 1.dp : 2.px)" /></template><script>import { M } from '@arrange/framework/ui'
-import { flag } from './state'</script>`, '单位单次求值.sfa').code
+    const once = compileCantonCta(`<template><Text :modifier="M.width(flag() ? 1.dp : 2.px)" /></template><script>import { M } from '@canton/framework/ui'
+import { flag } from './state'</script>`, '单位单次求值.cta').code
     assert.equal((once.match(/_unref\(flag\)/g) ?? []).length, 1)
-    const scaled = compileArrangeSfa(`<template><Text :modifier="M.width((1.dp + 2.px) * factor())" /></template><script>import { M } from '@arrange/framework/ui'
-function factor() { return 2 }</script>`, '单位系数单次求值.sfa').code
-    assert.equal((scaled.match(/const __arrangeUnitValue = \(factor\(\)\)/g) ?? []).length, 1)
-    const multipleCaptures = compileArrangeSfa(`<template><Text :modifier="M.width((flag() ? 1.dp : 2.px) * factor())" /></template><script>import { M } from '@arrange/framework/ui'
+    const scaled = compileCantonCta(`<template><Text :modifier="M.width((1.dp + 2.px) * factor())" /></template><script>import { M } from '@canton/framework/ui'
+function factor() { return 2 }</script>`, '单位系数单次求值.cta').code
+    assert.equal((scaled.match(/const __cantonUnitValue = \(factor\(\)\)/g) ?? []).length, 1)
+    const multipleCaptures = compileCantonCta(`<template><Text :modifier="M.width((flag() ? 1.dp : 2.px) * factor())" /></template><script>import { M } from '@canton/framework/ui'
 function flag() { return true }
-function factor() { return 2 }</script>`, '单位多个临时值.sfa').code
-    assert.equal((multipleCaptures.match(/const __arrangeUnitValue(?:_*) =/g) ?? []).length, 2)
-    const objectCondition = compileArrangeSfa(`<template><Text :modifier="M.offset({ x: flag() ? 1.dp : 2.px, y: 3.dp })" /></template><script>import { M } from '@arrange/framework/ui'
-function flag() { return true }</script>`, '单位对象单次求值.sfa').code
-    assert.equal((objectCondition.match(/const __arrangeUnitValue = \(flag\(\)\)/g) ?? []).length, 1)
-    const repeated = compileArrangeSfa(`<template><Text :modifier="M.width(gap + gap)" /></template><script>import { M } from '@arrange/framework/ui'\nconst gap = 8.dp</script>`, '重复单位变量.sfa').code
+function factor() { return 2 }</script>`, '单位多个临时值.cta').code
+    assert.equal((multipleCaptures.match(/const __cantonUnitValue(?:_*) =/g) ?? []).length, 2)
+    const objectCondition = compileCantonCta(`<template><Text :modifier="M.offset({ x: flag() ? 1.dp : 2.px, y: 3.dp })" /></template><script>import { M } from '@canton/framework/ui'
+function flag() { return true }</script>`, '单位对象单次求值.cta').code
+    assert.equal((objectCondition.match(/const __cantonUnitValue = \(flag\(\)\)/g) ?? []).length, 1)
+    const repeated = compileCantonCta(`<template><Text :modifier="M.width(gap + gap)" /></template><script>import { M } from '@canton/framework/ui'\nconst gap = 8.dp</script>`, '重复单位变量.cta').code
     assert.match(repeated, /_unref\(gap\).*_unref\(gap\).*?, 0/)
-    const reactiveLength = compileArrangeSfa(`<template><Text :modifier="M.width(width)" /></template><script>import { M } from '@arrange/framework/ui'\nimport { ref } from '@arrange/framework'\nconst width = ref(8.dp)</script>`, '响应式单位变量.sfa').code
+    const reactiveLength = compileCantonCta(`<template><Text :modifier="M.width(width)" /></template><script>import { M } from '@canton/framework/ui'\nimport { ref } from '@canton/framework'\nconst width = ref(8.dp)</script>`, '响应式单位变量.cta').code
     assert.match(reactiveLength, /width\.value, 0/)
-    const property = compileArrangeSfa(`<script>const value = { dp: 8 }\nconst width = value.dp</script>`, '普通dp字段.sfa').code
+    const property = compileCantonCta(`<script>const value = { dp: 8 }\nconst width = value.dp</script>`, '普通dp字段.cta').code
     assert.match(property, /value\.dp/)
-    const customMethod = compileArrangeSfa(`<script>const custom = { width(value: number) { return value } }\nconst result = custom.width(8.dp)</script>`, '自定义width方法.sfa').code
+    const customMethod = compileCantonCta(`<script>const custom = { width(value: number) { return value } }\nconst result = custom.width(8.dp)</script>`, '自定义width方法.cta').code
     assert.match(customMethod, /custom\.width\(8\)/)
-    const template = compileArrangeSfa('<script>const label = `尺寸 ${8.dp}`\nconst nested = `${{ value: 2.dp }.value}`</script>', '单位插值.sfa')
+    const template = compileCantonCta('<script>const label = `尺寸 ${8.dp}`\nconst nested = `${{ value: 2.dp }.value}`</script>', '单位插值.cta')
     assert.match(template.code, /尺寸 \$\{8\}/)
     assert.match(template.code, /\$\{\{ value: 2 \}\.value\}/)
-    const objects = compileArrangeSfa(`<template><Text :modifier="M.offset(offset).padding(padding)" /></template><script>import { M } from '@arrange/framework/ui'
+    const objects = compileCantonCta(`<template><Text :modifier="M.offset(offset).padding(padding)" /></template><script>import { M } from '@canton/framework/ui'
 const offset = { x: 114.dp, y: 514.px }
 const padding = { horizontal: 8.dp, vertical: 2.px }
-</script>`, '单位对象.sfa')
+</script>`, '单位对象.cta')
     assert.match(objects.code, /xDp: 114, xPx: 0, yDp: 0, yPx: 514/)
     assert.match(objects.code, /horizontalDp: 8, horizontalPx: 0, verticalDp: 0, verticalPx: 2/)
-    const reactiveObjects = compileArrangeSfa(`<template><Text :modifier="M.offset(offset.value).padding(unref(padding))" /></template><script>import { M } from '@arrange/framework/ui'
-import { ref, unref } from '@arrange/framework'
+    const reactiveObjects = compileCantonCta(`<template><Text :modifier="M.offset(offset.value).padding(unref(padding))" /></template><script>import { M } from '@canton/framework/ui'
+import { ref, unref } from '@canton/framework'
 const offset = ref({ x: 8.dp, y: 2.px })
 const padding = ref({ horizontal: 4.dp, vertical: 3.px })
-</script>`, '单位响应式对象.sfa')
+</script>`, '单位响应式对象.cta')
     assert.match(reactiveObjects.code, /xDp: 8, xPx: 0, yDp: 0, yPx: 2/)
     assert.match(reactiveObjects.code, /horizontalDp: 4, horizontalPx: 0, verticalDp: 0, verticalPx: 3/)
-    const scalarRef = compileArrangeSfa(`<template><Text :modifier="M.width(width)" /></template><script>import { M } from '@arrange/framework/ui'
-import { ref } from '@arrange/framework'
+    const scalarRef = compileCantonCta(`<template><Text :modifier="M.width(width)" /></template><script>import { M } from '@canton/framework/ui'
+import { ref } from '@canton/framework'
 const width = ref(8.dp)
-</script>`, '单位响应式长度.sfa')
+</script>`, '单位响应式长度.cta')
     assert.match(scalarRef.code, /width\.value, 0/)
 
     let reads = 0
@@ -137,7 +137,7 @@ const width = ref(8.dp)
             reads++
             return 8
         }
-    } : requireSfaModule(name), exports)
+    } : requireCtaModule(name), exports)
     assert.equal(reads, 0)
     const native = recordingNative()
     const app = createApp(exports.default!).provide(DensityKey, createDensity(2))
@@ -149,42 +149,42 @@ const width = ref(8.dp)
     app.unmount()
 })
 
-test('SFA 已知裸数和错单位在编译入口拒绝，普通 TS 参数仍直接用数字', () => {
-    const source = (value: string) => `<template><Text :modifier="M.width(${value})" /></template><script>import { M } from '@arrange/framework/ui'</script>`
-    assert.throws(() => compileArrangeSfa(source('8'), '单位错误.sfa'), /要求 LENGTH/)
-    assert.throws(() => compileArrangeSfa(source('8.sp'), '单位错误.sfa'), /实际为 SP/)
+test('CTA 已知裸数和错单位在编译入口拒绝，普通 TS 参数仍直接用数字', () => {
+    const source = (value: string) => `<template><Text :modifier="M.width(${value})" /></template><script>import { M } from '@canton/framework/ui'</script>`
+    assert.throws(() => compileCantonCta(source('8'), '单位错误.cta'), /要求 LENGTH/)
+    assert.throws(() => compileCantonCta(source('8.sp'), '单位错误.cta'), /实际为 SP/)
     assert.equal(M.width(8, 0).elements[0].value.valueDp, 8)
-    const script = (body: string) => `<script>import { createScrollState, ref } from '@arrange/framework'\nimport { M, Color, solidColor, createDensity, type Dp } from '@arrange/framework/ui'\n${body}</script>`
-    assert.doesNotThrow(() => compileArrangeSfa(script('const scroll = createScrollState({ initialPx: 4.px }); scroll.scrollTo(scroll.valuePx); const density = createDensity(); M.width(density.pxToDp(scroll.valuePx).dp, 0).background(solidColor(Color(0xff123456)))'), '单位边界.sfa'))
-    assert.doesNotThrow(() => compileArrangeSfa(script('const scroll = createScrollState(); M.width(scroll.valuePx)'), '单位边界.sfa'))
-    assert.throws(() => compileArrangeSfa(script('createScrollState({ initialPx: 4 })'), '单位边界.sfa'), /要求 PX/)
-    assert.throws(() => compileArrangeSfa(script('function wrong(): Dp { return 4.sp }'), '单位边界.sfa'), /实际为 SP/)
-    assert.throws(() => compileArrangeSfa(script('const value = ref(1.dp); value.value = 4.sp'), '单位边界.sfa'), /实际为 SP/)
-    const visual = (body: string) => `<script>import { M, Color, verticalGradient, sweepGradient, roundedCorners } from '@arrange/framework/ui'\n${body}</script>`
-    const lowered = compileArrangeSfa(visual('M.background(verticalGradient([Color(0xff000000), Color(0xffffffff)]), roundedCorners({ topStart: 4.dp, bottomEnd: 2.px })).border(1.dp, sweepGradient([Color(0xff000000), Color(0xffffffff)]))'), '视觉单位.sfa')
+    const script = (body: string) => `<script>import { createScrollState, ref } from '@canton/framework'\nimport { M, Color, solidColor, createDensity, type Dp } from '@canton/framework/ui'\n${body}</script>`
+    assert.doesNotThrow(() => compileCantonCta(script('const scroll = createScrollState({ initialPx: 4.px }); scroll.scrollTo(scroll.valuePx); const density = createDensity(); M.width(density.pxToDp(scroll.valuePx).dp, 0).background(solidColor(Color(0xff123456)))'), '单位边界.cta'))
+    assert.doesNotThrow(() => compileCantonCta(script('const scroll = createScrollState(); M.width(scroll.valuePx)'), '单位边界.cta'))
+    assert.throws(() => compileCantonCta(script('createScrollState({ initialPx: 4 })'), '单位边界.cta'), /要求 PX/)
+    assert.throws(() => compileCantonCta(script('function wrong(): Dp { return 4.sp }'), '单位边界.cta'), /实际为 SP/)
+    assert.throws(() => compileCantonCta(script('const value = ref(1.dp); value.value = 4.sp'), '单位边界.cta'), /实际为 SP/)
+    const visual = (body: string) => `<script>import { M, Color, verticalGradient, sweepGradient, roundedCorners } from '@canton/framework/ui'\n${body}</script>`
+    const lowered = compileCantonCta(visual('M.background(verticalGradient([Color(0xff000000), Color(0xffffffff)]), roundedCorners({ topStart: 4.dp, bottomEnd: 2.px })).border(1.dp, sweepGradient([Color(0xff000000), Color(0xffffffff)]))'), '视觉单位.cta')
     assert.match(lowered.code, /topStartDp: 4, topStartPx: 0/)
     assert.match(lowered.code, /bottomEndDp: 0, bottomEndPx: 2/)
-    assert.throws(() => compileArrangeSfa(visual('roundedCorners({ topStart: 4 })'), '视觉单位.sfa'), /要求 LENGTH/)
+    assert.throws(() => compileCantonCta(visual('roundedCorners({ topStart: 4 })'), '视觉单位.cta'), /要求 LENGTH/)
 })
 
-test('跨 SFA、TS 转导出及脚本表达式保留正式单位契约', () => {
-    const directory = mkdtempSync(resolve('tmp-refs/sfa-units-'))
+test('跨 CTA、TS 转导出及脚本表达式保留正式单位契约', () => {
+    const directory = mkdtempSync(resolve('tmp-refs/cta-units-'))
     try {
-        writeFileSync(join(directory, 'Child.sfa'), '<template><Text :modifier="M.width(width)" /></template><script>import { M, type Dp } from "@arrange/framework/ui"\ndefineProps<{ width: Dp }>()</script>')
-        const constructorProps = compileArrangeSfa('<script>import { Dp } from "@arrange/framework/ui"\nconst value = 4.dp\ndefineProps({ width: { type: Dp, required: true } })</script>', join(directory, 'Constructor.sfa'))
+        writeFileSync(join(directory, 'Child.cta'), '<template><Text :modifier="M.width(width)" /></template><script>import { M, type Dp } from "@canton/framework/ui"\ndefineProps<{ width: Dp }>()</script>')
+        const constructorProps = compileCantonCta('<script>import { Dp } from "@canton/framework/ui"\nconst value = 4.dp\ndefineProps({ width: { type: Dp, required: true } })</script>', join(directory, 'Constructor.cta'))
         assert.match(constructorProps.code, /type: Number/)
         assert.doesNotMatch(constructorProps.code, /4\.dp/)
-        const source = (value: string) => `<template><Child :width="${value}" /></template><script>import Child from './Child.sfa'\nconst width = 8.dp * 2 + 1.dp\n</script>`
-        const file = join(directory, 'Parent.sfa')
+        const source = (value: string) => `<template><Child :width="${value}" /></template><script>import Child from './Child.cta'\nconst width = 8.dp * 2 + 1.dp\n</script>`
+        const file = join(directory, 'Parent.cta')
         writeFileSync(file, source('width'))
-        assert.doesNotThrow(() => compileArrangeSfa(source('width'), file))
-        assert.deepEqual(checkSfaProject(resolve('tsconfig.json'), [file]), [])
-        assert.throws(() => compileArrangeSfa(source('8.sp'), file), /实际为 SP/)
-        assert.throws(() => compileArrangeSfa(source('8'), file), /要求 DP/)
-        assert.throws(() => compileArrangeSfa(source('8.sp').replace('<Child :width="8.sp" />', '<DynamicArrangable :is="Child" :props="{ width: 8.sp }" />'), file), /实际为 SP/)
-        assert.throws(() => compileArrangeSfa('<template><Text :style="{fontSize: 12}" /></template><script></script>', file), /要求 SP/)
+        assert.doesNotThrow(() => compileCantonCta(source('width'), file))
+        assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [file]), [])
+        assert.throws(() => compileCantonCta(source('8.sp'), file), /实际为 SP/)
+        assert.throws(() => compileCantonCta(source('8'), file), /要求 DP/)
+        assert.throws(() => compileCantonCta(source('8.sp').replace('<Child :width="8.sp" />', '<DynamicArrangable :is="Child" :props="{ width: 8.sp }" />'), file), /实际为 SP/)
+        assert.throws(() => compileCantonCta('<template><Text :style="{fontSize: 12}" /></template><script></script>', file), /要求 SP/)
         writeFileSync(file, '<template><Text :style="{fontSize: 12}" /></template><script></script>')
-        assert.ok(checkSfaProject(resolve('tsconfig.json'), [file]).some(item => /要求 SP/.test(item.message)))
+        assert.ok(checkCtaProject(resolve('tsconfig.json'), [file]).some(item => /要求 SP/.test(item.message)))
     } finally {
         rmSync(directory, { recursive: true })
     }
@@ -341,16 +341,16 @@ test('UI post 观察首跑等待成功提交，已排队观察在作用域暂停
     owner.stop()
 })
 
-test('动态定义的 props 与具名内容在真实 SFA 类型检查中按所选目标诊断', () => {
-    const directory = mkdtempSync(resolve('tmp-refs/sfa-dynamic-'))
+test('动态定义的 props 与具名内容在真实 CTA 类型检查中按所选目标诊断', () => {
+    const directory = mkdtempSync(resolve('tmp-refs/cta-dynamic-'))
     try {
-        writeFileSync(join(directory, 'Page.sfa'), '<template><Text :text="title" /><Slot name="header" /></template><script>defineProps<{ title: string }>()</script>')
-        const file = join(directory, 'App.sfa')
-        const source = (props: string, name: string) => `<template><DynamicArrangable :is="Page" :props="${props}"><Template #${name}><Text text="标题" /></Template></DynamicArrangable></template><script>import Page from './Page.sfa'</script>`
+        writeFileSync(join(directory, 'Page.cta'), '<template><Text :text="title" /><Slot name="header" /></template><script>defineProps<{ title: string }>()</script>')
+        const file = join(directory, 'App.cta')
+        const source = (props: string, name: string) => `<template><DynamicArrangable :is="Page" :props="${props}"><Template #${name}><Text text="标题" /></Template></DynamicArrangable></template><script>import Page from './Page.cta'</script>`
         writeFileSync(file, source("{ title: '正文' }", 'header'))
-        assert.deepEqual(checkSfaProject(resolve('tsconfig.json'), [file]), [])
+        assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [file]), [])
         writeFileSync(file, source('{ title: 123 }', 'footer'))
-        const diagnostics = checkSfaProject(resolve('tsconfig.json'), [file])
+        const diagnostics = checkCtaProject(resolve('tsconfig.json'), [file])
         assert.ok(diagnostics.some(item => /string/.test(item.message)), JSON.stringify(diagnostics))
         assert.ok(diagnostics.some(item => /never/.test(item.message)), JSON.stringify(diagnostics))
     } finally {
@@ -360,12 +360,12 @@ test('动态定义的 props 与具名内容在真实 SFA 类型检查中按所�
 
 
 test('正式函数重导出与局部别名、readonly映射和联合字段契约保留运行语义', () => {
-    const directory = mkdtempSync(resolve('tmp-refs/sfa-contract-fields-'))
+    const directory = mkdtempSync(resolve('tmp-refs/cta-contract-fields-'))
     try {
-        writeFileSync(join(directory, 'contracts.ts'), "export { rounded as curve } from '@arrange/framework/ui'")
+        writeFileSync(join(directory, 'contracts.ts'), "export { rounded as curve } from '@canton/framework/ui'")
         const source = `<template><Text :modifier="chain" /></template><script>
 import { curve as corner } from './contracts'
-import { M, Color, Arrangement, type TextStyleProp, type GraphicsLayerOptions, type ArrangementProp } from '@arrange/framework/ui'
+import { M, Color, Arrangement, type TextStyleProp, type GraphicsLayerOptions, type ArrangementProp } from '@canton/framework/ui'
 import { observe } from './observe'
 type StyleCopy = { readonly [K in keyof TextStyleProp]: TextStyleProp[K] }
 const style: Readonly<StyleCopy> | undefined = { fontSize: 12.sp, lineHeight: 16.sp, color: Color(0xff123456) }
@@ -378,7 +378,7 @@ const chain = M.graphicsLayer(graphics).text('正式契约', { style }).clip(sha
 observe({ shape, spacing, style, graphics, shadow: shadow(value => value + 1) })
 </script>`
         let observed: { shape: unknown; spacing: unknown; style: unknown; graphics: unknown; shadow: number } | undefined
-        const app = createApp(evaluateSfa(source, { './contracts': { curve: rounded }, './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }, join(directory, 'App.sfa')))
+        const app = createApp(evaluateCta(source, { './contracts': { curve: rounded }, './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }, join(directory, 'App.cta')))
         const native = recordingNative()
         app.mount(native.target)
         native.frame()
@@ -391,11 +391,11 @@ observe({ shape, spacing, style, graphics, shadow: shadow(value => value + 1) })
     }
 })
 
-test('真实SFA有限和无限过渡的别名方法按值与对象回调契约运行', () => {
+test('真实CTA有限和无限过渡的别名方法按值与对象回调契约运行', () => {
     const source = `<template><Text :text="String(width)" :modifier="M.width(distance)" /></template><script>
-import { createTransition, createInfiniteTransition, animatedNumberAsRef, animatedDpAsRef, tween, linearEasing } from '@arrange/framework/animation'
-import { M, Color } from '@arrange/framework/ui'
-import { ref } from '@arrange/framework'
+import { createTransition, createInfiniteTransition, animatedNumberAsRef, animatedDpAsRef, tween, linearEasing } from '@canton/framework/animation'
+import { M, Color } from '@canton/framework/ui'
+import { ref } from '@canton/framework'
 import { observe } from './observe'
 const state = ref(false)
 const options = { animationSpec: tween({ durationMillis: 32, easing: linearEasing }) }
@@ -418,7 +418,7 @@ observe({ state, finite, infinite, width, color, offset, size, rect, repeat, rep
     type Scalar = { readonly value: number }
     type Dimensions = { readonly value: Readonly<Record<string, number>> }
     let observed: { state: { value: boolean }; finite: { isRunning: { readonly value: boolean } }; infinite: { stop(): void }; width: Scalar; color: Scalar; offset: Dimensions; size: Dimensions; rect: Dimensions; repeat: Scalar; repeatColor: Scalar; raw: Scalar; distance: Scalar } | undefined
-    const app = createApp(evaluateSfa(source, { './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }))
+    const app = createApp(evaluateCta(source, { './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }))
     const native = recordingNative()
     app.mount(native.target)
     native.frame(16)
@@ -447,16 +447,16 @@ observe({ state, finite, infinite, width, color, offset, size, rect, repeat, rep
 
 test('单位后缀归一化后的源码映射与诊断保留原始列', async () => {
     const { SourceMapConsumer } = await import('source-map-js')
-    const filename = '单位源码映射.sfa'
+    const filename = '单位源码映射.cta'
     const source = '<script>\nconst width = 8.dp; const mappingMarker = width + 2.px\n</script>'
-    const result = compileArrangeSfa(source, filename)
+    const result = compileCantonCta(source, filename)
     const lines = result.code.slice(0, result.code.indexOf('mappingMarker')).split('\n')
     const position = new SourceMapConsumer(result.map!).originalPositionFor({ line: lines.length, column: lines.at(-1)!.length })
     assert.equal(position.source, filename)
     assert.equal(position.line, 2)
     assert.equal(position.column, source.split('\n')[1].indexOf('mappingMarker'))
-    const invalid = '<script>\nimport { M } from "@arrange/framework/ui"\nconst width = 8.dp; const invalidWidth = M.width(3.sp)\n</script>'
-    assert.throws(() => compileArrangeSfa(invalid, filename), error => {
+    const invalid = '<script>\nimport { M } from "@canton/framework/ui"\nconst width = 8.dp; const invalidWidth = M.width(3.sp)\n</script>'
+    assert.throws(() => compileCantonCta(invalid, filename), error => {
         assert.match(String(error), /实际为 SP/)
         assert.deepEqual((error as Error & { loc: { start: { line: number; column: number } } }).loc.start, { line: 3, column: invalid.split('\n')[2].indexOf('3.sp') + 1 })
         return true

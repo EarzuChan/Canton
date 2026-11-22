@@ -13,10 +13,10 @@ export enum TriggerOpTypes {
 }
 
 export enum ReactiveFlags {
-    SKIP = '__arrange_skip',
-    IS_REACTIVE = '__arrange_isReactive',
-    IS_READONLY = '__arrange_isReadonly',
-    IS_SHALLOW = '__arrange_isShallow',
-    RAW = '__arrange_raw',
-    IS_REF = '__arrange_isRef',
+    SKIP = '__canton_skip',
+    IS_REACTIVE = '__canton_isReactive',
+    IS_READONLY = '__canton_isReadonly',
+    IS_SHALLOW = '__canton_isShallow',
+    RAW = '__canton_raw',
+    IS_REF = '__canton_isRef',
 }

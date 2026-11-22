@@ -5,7 +5,7 @@ import { sourceReferencesFileName, sourceReferencesSchema } from "../../CliMetad
 import { writeAtomicText } from "../../util/AtomicFile.ts"
 
 export const buildReferencesSchema = z.object({ schema: z.literal(sourceReferencesSchema), directories: z.array(z.string()) })
-const sourceKey = (key: string): boolean => key.startsWith("FETCHCONTENT_SOURCE_DIR_") || key === "JUCE_DIR" || key === "ARRANGE_QUICKJS_NG_SOURCE_DIR"
+const sourceKey = (key: string): boolean => key.startsWith("FETCHCONTENT_SOURCE_DIR_") || key === "CANTON_QUICKJS_NG_SOURCE_DIR"
 
 export class BuildReferences {
     private readonly path: string

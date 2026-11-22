@@ -2,7 +2,6 @@ import koffi from "koffi"
 
 // 工作进程先加入 Job，再允许启动工具；所有工具与后代自动继承，句柄异常关闭时全部结束
 export function ownWindowsJob(): { release(): void } | undefined {
-    if (process.platform !== "win32") return undefined
     const library = koffi.load("kernel32.dll")
     const create = library.func("void * __stdcall CreateJobObjectW(void *, str16)")
     const set = library.func("bool __stdcall SetInformationJobObject(void *, int, void *, uint32)")

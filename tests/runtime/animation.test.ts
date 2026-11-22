@@ -1,7 +1,7 @@
-import { effectScope, watch } from '@arrange/framework'
+import { effectScope, watch } from '@canton/framework'
 import test from "node:test"
 import assert from "node:assert/strict"
-import { tween, linearEasing, animatedColorAsRef, animatedDpAsRef, animatedNumberAsRef, createTransition } from '../../packages/framework/src/animation/index.ts'
+import { tween, linearEasing, animatedColorAsRef, animatedDpAsRef, animatedNumberAsRef, createTransition } from '../../packages/framework/src/animation.ts'
 import { frameScope } from './frameScope.ts'
 import { ref } from '../../packages/framework/src/index.ts'
 
@@ -63,7 +63,7 @@ test("createTransition derives animated values from a reactive target state", ()
 })
 
 test("infinite transition repeats values on the owner frame clock and stop releases the frame", async () => {
-    const { createInfiniteTransition, animationStats } = await import('../../packages/framework/src/animation/index.ts')
+    const { createInfiniteTransition, animationStats } = await import('../../packages/framework/src/animation.ts')
     const baseline = animationStats.activeAnimations
     const clock = frameScope()
     const transition = clock.run(() => createInfiniteTransition({ label: 'HueTransition' }))
@@ -83,7 +83,7 @@ test("infinite transition repeats values on the owner frame clock and stop relea
 })
 
 test("infinite transition supports reverse repeat mode and rejects zero duration", async () => {
-    const { createInfiniteTransition } = await import('../../packages/framework/src/animation/index.ts')
+    const { createInfiniteTransition } = await import('../../packages/framework/src/animation.ts')
     const clock = frameScope()
     const transition = clock.run(() => createInfiniteTransition())
     const value = clock.run(() => transition.animatedNumber('reverse', 0, 10, {
@@ -99,7 +99,7 @@ test("infinite transition supports reverse repeat mode and rejects zero duration
 })
 
 test("all value groups animate on one clock and reject changing vector dimensions", async () => {
-    const { animatedNumberArrayAsRef, animatedOffsetAsRef, animatedSizeAsRef, animatedRectAsRef } = await import('../../packages/framework/src/animation/index.ts')
+    const { animatedNumberArrayAsRef, animatedOffsetAsRef, animatedSizeAsRef, animatedRectAsRef } = await import('../../packages/framework/src/animation.ts')
     const clock = frameScope()
     const args = { animationSpec: tween({ durationMillis: 100, easing: linearEasing }) }
     const vector = ref<readonly number[]>([0, 10])
@@ -118,7 +118,7 @@ test("all value groups animate on one clock and reject changing vector dimension
 })
 
 test("spring retarget preserves velocity and is independent of frame subdivision", async () => {
-    const { spring } = await import('../../packages/framework/src/animation/index.ts')
+    const { spring } = await import('../../packages/framework/src/animation.ts')
     const aClock = frameScope(), bClock = frameScope()
     const aTarget = ref(0), bTarget = ref(0)
     const spec = spring({ stiffness: 100, dampingRatio: 0.6 })
@@ -141,7 +141,7 @@ test("spring retarget preserves velocity and is independent of frame subdivision
 })
 
 test("Transition publishes coherent channels even to synchronous watchers and retires children", async () => {
-    const { animationStats } = await import('../../packages/framework/src/animation/index.ts')
+    const { animationStats } = await import('../../packages/framework/src/animation.ts')
     const baseline = animationStats.activeAnimations
     const clock = frameScope(), target = ref(false)
     const transition = clock.run(() => createTransition(target, { animationSpec: tween({ durationMillis: 100, easing: linearEasing }) }))
@@ -165,7 +165,7 @@ test("Transition publishes coherent channels even to synchronous watchers and re
 })
 
 test("scope disposal cancels queued frames and target subscriptions; snap and delayed tween settle", async () => {
-    const { snap, animationStats } = await import('../../packages/framework/src/animation/index.ts')
+    const { snap, animationStats } = await import('../../packages/framework/src/animation.ts')
     const baseline = animationStats.activeAnimations
     const clock = frameScope(), target = ref(0)
     const scope = clock.run(() => effectScope())
@@ -207,7 +207,7 @@ test("completion callbacks observe the complete frame and stopping a sibling sup
 })
 
 test("group animation tracks reactive fields and bounds size overshoot", async () => {
-    const { animatedOffsetAsRef, animatedSizeAsRef, spring } = await import('../../packages/framework/src/animation/index.ts')
+    const { animatedOffsetAsRef, animatedSizeAsRef, spring } = await import('../../packages/framework/src/animation.ts')
     const clock = frameScope(), point = ref({ x: 0, y: 0 }), size = ref({ width: 50, height: 50 })
     const offset = clock.run(() => animatedOffsetAsRef(point, { animationSpec: tween({ durationMillis: 100, easing: linearEasing }) }))
     const dimensions = clock.run(() => animatedSizeAsRef(size, { animationSpec: spring({ stiffness: 100, dampingRatio: 0.1 }) }))
@@ -240,7 +240,7 @@ test("Transition child mappings follow their actual reactive reads and stop unsu
 })
 
 test('不规则帧与跳帧按实际时间采样 tween 及三种阻尼弹簧', async () => {
-    const { spring } = await import('../../packages/framework/src/animation/index.ts')
+    const { spring } = await import('../../packages/framework/src/animation.ts')
     const specs = [tween({ durationMillis: 500, delayMillis: 30, easing: linearEasing }), ...[0.4, 1, 2].map(dampingRatio => spring({ stiffness: 90, dampingRatio }))]
     for (const animationSpec of specs) {
         const skipped = frameScope(), dense = frameScope()
@@ -262,7 +262,7 @@ test('不规则帧与跳帧按实际时间采样 tween 及三种阻尼弹簧', a
 })
 
 test('无限动画跨周期跳帧时 delay 保持当前周期端点且不依赖旧采样', async () => {
-    const { createInfiniteTransition } = await import('../../packages/framework/src/animation/index.ts')
+    const { createInfiniteTransition } = await import('../../packages/framework/src/animation.ts')
     for (const repeatMode of ['restart', 'reverse'] as const) {
         const skipped = frameScope(), dense = frameScope()
         const create = () => createInfiniteTransition().animatedNumber('延迟周期', 0, 10, { animationSpec: tween({ durationMillis: 100, delayMillis: 20, easing: linearEasing }), repeatMode })
@@ -305,7 +305,7 @@ test('颜色入口拒绝非 uint32 值，非法目标不破坏之后的有效动
 })
 
 test('数值组输出仍是独立冻结快照，颜色弹簧把过冲夹到字节范围', async () => {
-    const { animatedRectAsRef, spring } = await import('../../packages/framework/src/animation/index.ts')
+    const { animatedRectAsRef, spring } = await import('../../packages/framework/src/animation.ts')
     const clock = frameScope(), rectTarget = ref({ x: 0, y: 0, width: 10, height: 20 }), colorTarget = ref(0xff000000)
     const rect = clock.run(() => animatedRectAsRef(rectTarget, { animationSpec: tween({ durationMillis: 100, easing: linearEasing }) }))
     const color = clock.run(() => animatedColorAsRef(colorTarget, { animationSpec: spring({ stiffness: 100, dampingRatio: 0.1 }) }))

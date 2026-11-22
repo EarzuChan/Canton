@@ -67,12 +67,12 @@ async function verify(root: string, framework: string, input?: 'js' | 'esm', sig
     if (manifest.framework !== framework) throw new Error(`UI dist 的 Framework ${manifest.framework} 不匹配工程 ${framework}；请重新构建 UI`)
     if (input ? manifest.scriptFormat !== input : manifest.scriptFormat === 'esm') throw new Error(`UI 清单的脚本表示无效：${manifest.scriptFormat}`)
     if ((manifest.scriptFormat === 'bytecode') !== (manifest.engine !== undefined)) throw new Error('UI 包字节码引擎声明无效')
-    const aex = manifest.scriptFormat !== 'js'
-    if (aex && manifest.entry !== 'app.aex') throw new Error(`字节码包入口必须为 app.aex：${manifest.entry}`)
+    const bytecode = manifest.scriptFormat !== 'js'
+    if (bytecode && manifest.entry !== 'app.cbc') throw new Error(`字节码包入口必须为 app.cbc：${manifest.entry}`)
     const paths = new PackagePaths()
     for (const entry of manifest.entries) {
         signal?.throwIfAborted()
-        if (entry.kind === 'module' && (aex ? !entry.path.endsWith('.aex') : entry.path.toLowerCase().endsWith('.aex'))) throw new Error(`UI 包模块名不符合脚本表示：${entry.path}`)
+        if (entry.kind === 'module' && (bytecode ? !entry.path.endsWith('.cbc') : entry.path.toLowerCase().endsWith('.cbc'))) throw new Error(`UI 包模块名不符合脚本表示：${entry.path}`)
         const parts = paths.add(entry.path)
         let path = root
         for (const part of parts.slice(0, -1)) {
@@ -100,7 +100,7 @@ export async function stageUiPackage(source: string, staged: string, framework: 
     // 两种载体都从同一个已核验的暂存快照生成，避免源输出变动产生混合包。
     const input = await verifyUiPackage(source, framework, signal)
     if (input.digest !== expected) throw new Error('打包期间 UI 清单发生变化')
-    const directory = format === 'directory' ? staged : await mkdtemp(join(dirname(staged), '.arrange-ui-'))
+    const directory = format === 'directory' ? staged : await mkdtemp(join(dirname(staged), '.canton-ui-'))
     try {
         if (format === 'directory') await mkdir(directory)
         await writeFile(join(directory, uiManifestName), input.contents, { flag: 'wx' })

@@ -1,12 +1,12 @@
 {
-  "name": "@arrange/cli",
-  "description": "Arrange 官方工程管理 CLI",
-  "version": "1.4.5",
-  "compatibility": 4,
+  "name": "@canton/cli",
+  "description": "Canton 官方工程管理 CLI",
+  "version": "0.1.0",
+  "compatibility": 1,
   "private": false,
   "type": "module",
   "bin": {
-    "arrange": "./dist/Entry.js"
+    "canton": "./dist/Entry.js"
   },
   "scripts": {
     "build": "node scripts/build.ts",

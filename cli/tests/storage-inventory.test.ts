@@ -9,7 +9,6 @@ import { ProjectStateStore } from "../src/feature/project/ProjectStateStore.ts"
 import { FileTransaction } from "../src/feature/transaction/FileTransaction.ts"
 import { CmakeService } from "../src/feature/cmake/CmakeService.ts"
 import { createPlatformService } from "../src/feature/platform/CreatePlatformService.ts"
-import { IconAssetsService } from "../src/feature/asset/IconAssetsService.ts"
 import { Executor } from "../src/feature/platform/Executor.ts"
 import { GitSource } from "../src/feature/source/GitSource.ts"
 import { SourceCache } from "../src/feature/source/SourceCache.ts"
@@ -26,14 +25,14 @@ import { createCliApplication } from "../src/CliApplication.ts"
 import { TransactionStore } from "../src/feature/transaction/TransactionStore.ts"
 
 async function harness(t: TestContext) {
-    const root = await mkdtemp(join(tmpdir(), "arrange-storage-facts-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-storage-facts-"))
     const user = new UserDirectories(join(root, "user"))
     const signal = new AbortController().signal
     const executor = new Executor()
     const git = new GitSource(executor)
     const store = new ProjectStateStore(new FileTransaction(signal))
     const registry = new ProjectRegistry(user, signal)
-    const cmake = new CmakeService(executor, createPlatformService(executor), new IconAssetsService(signal), user)
+    const cmake = new CmakeService(executor, createPlatformService(executor), user)
     const host = new OperationHost(user)
     const operations = new Operations(host, signal, () => { })
     const cache = new SourceCache(user, git, signal, operations)
@@ -88,7 +87,7 @@ test("工程登记区分格式不兼容、字段损坏、配置损坏、工程�
     await writeFile(registration.path, "{无法解析")
     assert.equal((await input.inventory.inspect())[0].facts[0].check.state, "damaged")
     await writeFile(registration.path, bytes)
-    await write(join(project, "arrange.project.yaml"), "project: [")
+    await write(join(project, "canton.project.yaml"), "project: [")
     assert.equal((await input.inventory.inspect())[0].facts[1].check.state, "damaged")
     await input.store.save(stateFor(project))
     await rename(project, join(input.root, "moved"))
@@ -209,7 +208,7 @@ test("目录链接与错误 owner 不被授权清理，扫描不跟随用户目�
     await write(join(outside, "用户文件"), "保留")
     await mkdir(input.user.builds, { recursive: true })
     const alias = join(input.user.builds, "12345678")
-    await symlink(outside, alias, process.platform === "win32" ? "junction" : "dir")
+    await symlink(outside, alias, "junction")
     const first = (await input.inventory.inspect()).find(item => item.path === alias)!
     assert.equal(first.cleanup.allowed, false)
     await rm(alias)
@@ -229,7 +228,7 @@ test("真实工作进程占用使清理预览明确排除候选，释放后重�
     const run = async () => {
         const terminal = quietTerminal()
         try {
-            await createCliApplication({ signal: input.signal, interactions: "terminal", terminal, userDirectories: input.user }).exitOverride().parseAsync(["node", "arrange", "storage", "clean", "--scan"])
+            await createCliApplication({ signal: input.signal, interactions: "terminal", terminal, userDirectories: input.user }).exitOverride().parseAsync(["node", "canton", "storage", "clean", "--scan"])
             await terminal.close()
             return terminal.output.text
         } finally { await terminal.close() }
@@ -253,5 +252,5 @@ test("未完成用户事务阻止所有清理和修复，检查展示实际恢�
     assert.equal(item.cleanup.allowed, false)
     assert.equal(item.repairable, false)
     assert.ok(item.facts.some(fact => fact.label === "transaction"))
-    assert.match(describeStorageItem(item), /arrange storage recover/)
+    assert.match(describeStorageItem(item), /canton storage recover/)
 })

@@ -1,5 +1,5 @@
 import type { ArrangableDefinition, SetupContext, StructureProgram } from './arrangable.ts'
-import type { ArrangableObjectPropsOptions, ExtractPropTypes } from './arrangableProps.ts'
+import type { ArrangableObjectPropsOptions, ExtractPropTypes } from './propTypes.ts'
 import { normalizeDeclaredProps } from './propDeclarations.ts'
 
 export type DefineArrangable<P extends Record<string, unknown> = any> = ArrangableDefinition<P>

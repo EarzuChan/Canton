@@ -18,7 +18,7 @@ export class ConfigScanner {
 
     async scan(state: ProjectState, scope: ConfigScope): Promise<ConfigScanReport> {
         const report: ConfigScanReport = { scope, fatal: [], resolvable: [], idle: [], applicable: [] }
-        for (const id of state.project["managed-items"]) if (!this.items.some(item => item.id === id)) report.fatal.push({ path: "arrange.project.yaml", cause: "config-invalid", message: `未知 ManagedItem：${id}` })
+        for (const id of state.project["managed-items"]) if (!this.items.some(item => item.id === id)) report.fatal.push({ path: "canton.project.yaml", cause: "config-invalid", message: `未知 ManagedItem：${id}` })
 
         const paths = new Set<string>()
         for (const file of this.files) {

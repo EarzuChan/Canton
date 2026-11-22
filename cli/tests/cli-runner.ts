@@ -16,7 +16,7 @@ const ask = async (): Promise<never> => { throw new Error("需要交互：程序
 const message = (value: string): void => reporter.step(value)
 const failure = (value: string): void => reporter.error(value)
 const interactions: CliInteractions = {
-    project: { create: ask, adopt: ask, confirmInitialization: ask, confirm: ask, message, failure },
+    project: { create: ask, confirmInitialization: ask, confirm: ask, message, failure },
     config: { report: (report, options) => config.report(report, options), choose: ask, edit: ask, message, failure },
     setup: { report: (report, options) => setup.report(report, options), acceptTools: ask, editTools: ask, message, failure }
 }

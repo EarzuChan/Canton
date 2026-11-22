@@ -1,7 +1,7 @@
 import { afterEach } from 'node:test'
-import type { ArrangeApp } from '../../packages/framework/src/app.ts'
-import type { NativeTransactionTarget, NativeModifierHandle } from '../../packages/framework/src/native.ts'
-import { Modifier, type ModifierElement } from '../../packages/framework/src/modifier.ts'
+import type { CantonApp } from '../../packages/framework/src/app/app.ts'
+import type { NativeTransactionTarget, NativeModifierHandle } from '../../packages/framework/src/native/protocol.ts'
+import { Modifier, type ModifierElement } from '../../packages/framework/src/modifier/modifier.ts'
 import { createFakeNative } from '../helpers/fakeNative.ts'
 
 const frameSources = new Set<(time?: number) => void>()
@@ -13,7 +13,7 @@ export function advanceFrames(): void {
     for (const frame of [...frameSources]) frame()
 }
 
-export function mountFrame(app: ArrangeApp, target: NativeTransactionTarget): void {
+export function mountFrame(app: CantonApp, target: NativeTransactionTarget): void {
     app.mount(target)
     drivers.get(target)?.()
 }

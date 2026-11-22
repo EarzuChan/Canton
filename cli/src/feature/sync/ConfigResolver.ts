@@ -89,7 +89,7 @@ export class ConfigResolver {
     private markerIsAtDirectParent(parent: string, markerStart: number): boolean {
         const stack: string[] = []
 
-        for (const match of parent.slice(0, markerStart).matchAll(/^[\t ]*# arrange:(begin|end) ([\w:.-]+)[\t ]*\r?$/gm)) {
+        for (const match of parent.slice(0, markerStart).matchAll(/^[\t ]*# canton:(begin|end) ([\w:.-]+)[\t ]*\r?$/gm)) {
             if (match[1] === "begin") stack.push(match[2])
             else if (stack.pop() !== match[2]) {
                 this.syncWizard.message("Marker 前的 Wrapper 边界损坏，请先修复。")

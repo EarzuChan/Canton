@@ -1,7 +1,7 @@
 import * as internal from '../../packages/framework/src/internal.ts'
 import * as foundation from '../../packages/framework/src/foundation.ts'
 import * as ui from '../../packages/framework/src/ui.ts'
-import * as animation from '../../packages/framework/src/animation/index.ts'
+import * as animation from '../../packages/framework/src/animation.ts'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as runtime from '../../packages/framework/src/index.ts'
@@ -13,7 +13,7 @@ test('App 结构执行中自行卸载后读取 Ref 不重新注册退休订阅',
     const value = runtime.ref(0)
     const native = recordingNative()
     let triggers = 0
-    let app: runtime.ArrangeApp
+    let app: runtime.CantonApp
     const Root = internal.defineArrangable({
         setup: () => {
             runtime.onRenderTriggered(() => { triggers++ })
@@ -106,11 +106,11 @@ test('style 和 class 只是用户显式声明的普通参数，跨层 computed 
     const native = recordingNative()
     const app = runtime.createApp(App)
     mountFrame(app, native.target)
-    const runs = internal.getArrangeExecutionStats().structureRuns
+    const runs = internal.getCantonExecutionStats().structureRuns
     style.value = '更新'
     await flush()
     assert.equal(native.textNodes()[0].text, '更新/自定义分类')
-    assert.equal(internal.getArrangeExecutionStats().structureRuns, runs)
+    assert.equal(internal.getCantonExecutionStats().structureRuns, runs)
     app.unmount()
 })
 
@@ -150,7 +150,7 @@ test('分支退出取消其待处理值任务，反复建立和退休不累积�
             })
         }
     })
-    const before = internal.getArrangeExecutionStats().activeValueBindings
+    const before = internal.getCantonExecutionStats().activeValueBindings
     const native = recordingNative()
     const app = runtime.createApp(App)
     mountFrame(app, native.target)
@@ -159,7 +159,7 @@ test('分支退出取消其待处理值任务，反复建立和退休不累积�
         visible.value = false
         await flush()
         assert.equal(native.textNodes().length, 0)
-        assert.equal(internal.getArrangeExecutionStats().activeValueBindings, before)
+        assert.equal(internal.getCantonExecutionStats().activeValueBindings, before)
         const previous = reads
         value.value++
         await flush()
@@ -168,7 +168,7 @@ test('分支退出取消其待处理值任务，反复建立和退休不累积�
         await flush()
     }
     app.unmount()
-    assert.equal(internal.getArrangeExecutionStats().activeValueBindings, before)
+    assert.equal(internal.getCantonExecutionStats().activeValueBindings, before)
 })
 
 test('同一 Ref 同时驱动结构和值时保留 keyed 实例并交付最终值', async () => {
@@ -212,13 +212,13 @@ test('显式函数参数作为值更新，调用次数完全由接收方决定',
     const App = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Receiver, { onConfirm: () => callback.value }) })
     const app = runtime.createApp(App)
     mountFrame(app, recordingNative().target)
-    const runs = internal.getArrangeExecutionStats().structureRuns
+    const runs = internal.getCantonExecutionStats().structureRuns
     invoke!()
     callback.value = () => events.push('新回调')
     await flush()
     invoke!()
     assert.deepEqual(events, ['原回调', '原回调', '新回调', '新回调'])
-    assert.equal(internal.getArrangeExecutionStats().structureRuns, runs)
+    assert.equal(internal.getCantonExecutionStats().structureRuns, runs)
     app.unmount()
 })
 
@@ -269,11 +269,11 @@ test('相等结果抑制原生写入且不重排', async () => {
     const app = runtime.createApp(App)
     mountFrame(app, native.target)
     const writes = native.writes
-    const runs = internal.getArrangeExecutionStats().structureRuns
+    const runs = internal.getCantonExecutionStats().structureRuns
     value.value = 2
     await flush()
     assert.equal(native.writes, writes)
-    assert.equal(internal.getArrangeExecutionStats().structureRuns, runs)
+    assert.equal(internal.getCantonExecutionStats().structureRuns, runs)
     app.unmount()
 })
 

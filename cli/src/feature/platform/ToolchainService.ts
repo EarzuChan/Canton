@@ -36,7 +36,7 @@ export class ToolchainService {
             else {
                 candidate.packageManager ??= { path: packageManager }
                 const identity = basename(packageManager).toLowerCase().replace(/\.(?:cmd|bat|exe|mjs|cjs|js)$/, "").replace(/-cli$/, "")
-                if ((identity === "npm" || identity === "pnpm") && identity !== state.project.ui.packageManager) issues.push({ key: "packageManager", label: state.project.ui.packageManager, message: `本机包管理器路径指向 ${identity}，工程选择的是 ${state.project.ui.packageManager}，请更新 arrange.local.yaml` })
+                if ((identity === "npm" || identity === "pnpm") && identity !== state.project.ui.packageManager) issues.push({ key: "packageManager", label: state.project.ui.packageManager, message: `本机包管理器路径指向 ${identity}，工程选择的是 ${state.project.ui.packageManager}，请更新 canton.local.yaml` })
                 const nodeEnv = { PATH: `${dirname(candidate.node.path)}${delimiter}${environmentValue(process.env, "PATH") ?? ""}` }
                 await this.probe(candidate, "packageManager", [], issues, state.project.ui.packageManager, undefined, nodeEnv)
             }

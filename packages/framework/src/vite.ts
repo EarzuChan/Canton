@@ -1,5 +1,5 @@
-export { arrange, default } from "@arrange/vite-plugin"
+export { canton, default } from "@canton/vite-plugin"
 
-export type { ArrangeVitePlugin, ArrangeVitePluginOptions } from "@arrange/vite-plugin"
+export type { CantonVitePlugin, CantonVitePluginOptions } from "@canton/vite-plugin"
 
-export { checkSfaProject, type SfaDiagnostic } from '@arrange/vite-plugin'
+export { checkCtaProject, type CtaDiagnostic } from '@canton/compiler'

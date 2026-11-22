@@ -34,7 +34,6 @@ let codePageRead = false
 function consoleCodePage(): number | undefined {
     if (codePageRead) return cachedCodePage
     codePageRead = true
-    if (process.platform !== "win32") return cachedCodePage = undefined
     try {
         const command = process.env.SystemRoot ? `${process.env.SystemRoot}\\System32\\chcp.com` : "chcp.com"
         cachedCodePage = parseCodePage(execFileSync(command, [], { encoding: "latin1", windowsHide: true, timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }))

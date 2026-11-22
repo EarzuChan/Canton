@@ -1,4 +1,4 @@
-import { DrawClipShape, DrawOpcode, PathVerb, type PreparedDraw } from '../../packages/framework/src/draw.ts'
+import { DrawClipShape, DrawOpcode, PathVerb, type PreparedDraw } from '../../packages/framework/src/draw/draw.ts'
 
 export type DecodedDrawCommand = Readonly<Record<string, unknown>>
 

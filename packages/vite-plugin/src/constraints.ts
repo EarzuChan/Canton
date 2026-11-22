@@ -1,11 +1,11 @@
-import { ARRANGE_PACKAGE_VERSION } from '@arrange/framework/internal'
+import { CANTON_PACKAGE_VERSION } from '@canton/shared'
 
-export const ARRANGE_VERSION = ARRANGE_PACKAGE_VERSION
+export const CANTON_VERSION = CANTON_PACKAGE_VERSION
 
-export const PUBLIC_PLUGIN_NAME = "arrange-framework"
+export const PUBLIC_PLUGIN_NAME = "canton-framework"
 
-export const ARRANGE_DEFINE_KEYS = ["__DEV__", "__TEST__"] as const
+export const CANTON_DEFINE_KEYS = ["__DEV__", "__TEST__"] as const
 
-export const ARRANGE_DEFINES = { __DEV__: "false", __TEST__: "false" } as const satisfies Record<(typeof ARRANGE_DEFINE_KEYS)[number], string>
+export const CANTON_DEFINES = { __DEV__: "false", __TEST__: "false" } as const satisfies Record<(typeof CANTON_DEFINE_KEYS)[number], string>
 
-export const ARRANGE_MACRO_PATTERN = new RegExp(`\\b__(?:${ARRANGE_DEFINE_KEYS.map((key) => key.slice(2, -2)).join("|")})__\\b`)
+export const CANTON_MACRO_PATTERN = new RegExp(`\\b__(?:${CANTON_DEFINE_KEYS.map((key) => key.slice(2, -2)).join("|")})__\\b`)

@@ -1,12 +1,12 @@
-import { computed, effectScope, pauseTracking, ReactiveEffect, resetTracking, shallowRef, type EffectScope } from '@arrange/reactivity'
-import { arrangeParameterName } from '@arrange/shared'
-import { ArrangableInstance, setCurrentInstance, type AppContext, type ArrangableDefinition, type ArrangableProps, type CallMetadata, type CallPosition, type RearrangeKey, type Content, type Contents, type Data, type StructureProgram } from './arrangable.ts'
+import { computed, effectScope, pauseTracking, ReactiveEffect, resetTracking, shallowRef, type EffectScope } from '@canton/reactivity'
+import { cantonParameterName } from '@canton/shared'
+import { ArrangableInstance, setCurrentInstance, type AppContext, type InstanceSession, type RearrangeNode, type StructureScope, type ValueTask, type ArrangableDefinition, type ArrangableProps, type CallMetadata, type CallPosition, type RearrangeKey, type Content, type Contents, type Data, type StructureProgram } from './arrangable.ts'
 import { isArrangableDefinition } from './apiDefineArrangable.ts'
-import { PropStore, type PropInputs } from './arrangableProps.ts'
-import type { RearrangeNode } from './rearrangeNode.ts'
+import { PropStore } from './arrangableProps.ts'
+import type { PropInputs } from './propTypes.ts'
 import { LifecycleHooks } from './enums.ts'
 import { FrameScheduler, queueJob, queueRearrangeJob, SchedulerJobFlags, type SchedulerJob } from './scheduler.ts'
-import { arrangeExecutionStats } from './executionStats.ts'
+import { cantonExecutionStats } from './executionStats.ts'
 import { callWithErrorHandling, ErrorCodes } from './errorHandling.ts'
 import { ValueBinding } from './valueBinding.ts'
 import { bindFrameScheduler } from './animationOwner.ts'
@@ -17,6 +17,8 @@ interface CallEntry {
     readonly position: CallPosition
     readonly key: RearrangeKey
     readonly instance: ArrangableInstance
+    readonly scope: RearrangeScope
+    readonly props: PropStore
 }
 
 interface ScopeEntry {
@@ -28,17 +30,18 @@ interface ScopeEntry {
 }
 
 type Entry = CallEntry | ScopeEntry
-export interface ValueTask {
-    scope(): RearrangeScope
-    dirty(): boolean
-    run(): void
-}
 let activeScope: RearrangeScope | null = null
 let nextScopeId = 1
 class RearrangeCancelled extends Error { }
 
 // 账本只保存已建立调用和范围，不创建等待 patch 的描述树
-export class RearrangeScope {
+// 实例与值任务只以 StructureScope 端口持有结构账本，引擎仅在这两个入口收窄回真实类型
+function asRearrangeScope(scope: StructureScope): RearrangeScope {
+    if (!(scope instanceof RearrangeScope)) throw new Error('Arrangable 结构账本不属于当前重组引擎')
+    return scope
+}
+
+export class RearrangeScope implements StructureScope {
     readonly identity = nextScopeId++
     readonly lifetime: EffectScope = effectScope(true)
     effect: ReactiveEffect
@@ -108,6 +111,18 @@ export class RearrangeScope {
         this.rearrangeSession.enqueue(this, program !== previous)
     }
 
+    schedule(force = false): void {
+        this.rearrangeSession.schedule(this, force)
+    }
+
+    enqueue(force = false): void {
+        this.rearrangeSession.enqueue(this, force)
+    }
+
+    isActive(): boolean {
+        return this.rearrangeSession.isActive(this)
+    }
+
     publish(entries: Entry[]): void {
         this.entries = entries
         this.index.clear()
@@ -145,7 +160,7 @@ export class RearrangeScope {
         this.used.clear()
         this.usedParameterObjects.clear()
         this.next = []
-        arrangeExecutionStats.structureRuns++
+        cantonExecutionStats.structureRuns++
         try {
             const result = this.program()
             if (this.retired || this.rearrangeSession.isDisposed) return
@@ -212,9 +227,26 @@ export class RearrangeScope {
         return entries
     }
 
+    invalidateConstants(): void {
+        const scopes: RearrangeScope[] = [this]
+        const visited = new Set<ArrangableInstance>()
+        while (scopes.length) {
+            const scope = scopes.pop()!
+            for (const entry of scope.entries) {
+                if (entry.kind === 'call') {
+                    if (visited.has(entry.instance)) continue
+                    visited.add(entry.instance)
+                    entry.props.invalidateConstants()
+                }
+                scopes.push(entry.scope)
+            }
+            for (const retained of scope.retainedContents.values()) for (const entry of retained.entries.values()) scopes.push(entry.scope)
+        }
+    }
+
 }
 
-export class RearrangeSession {
+export class RearrangeSession implements InstanceSession {
     readonly scheduler: FrameScheduler
     readonly root: RearrangeScope
     private readonly work = new Map<RearrangeScope, boolean>()
@@ -278,9 +310,7 @@ export class RearrangeSession {
         this.activeScopes.clear()
     }
 
-    isScopeActive(scope: RearrangeScope): boolean { return this.isActive(scope) }
-
-    private isActive(scope: RearrangeScope): boolean {
+    isActive(scope: RearrangeScope): boolean {
         const pending: RearrangeScope[] = []
         let current: RearrangeScope | null = scope
         let active = true
@@ -295,7 +325,7 @@ export class RearrangeSession {
                 break
             }
             const parent: RearrangeScope | null = current.parent
-            if (parent && !this.entries(parent).some(entry => (entry.kind === 'call' ? entry.instance.structure : entry.scope) === current)) {
+            if (parent && !this.entries(parent).some(entry => entry.scope === current)) {
                 active = false
                 break
             }
@@ -308,8 +338,7 @@ export class RearrangeSession {
     private discardUnusedCandidates(): void {
         const abandoned: Entry[] = []
         for (const entry of this.created) {
-            const scope = entry.kind === 'call' ? entry.instance.structure : entry.scope
-            if (!this.isActive(scope)) {
+            if (!this.isActive(entry.scope)) {
                 abandoned.push(entry)
                 this.created.delete(entry)
             }
@@ -357,7 +386,9 @@ export class RearrangeSession {
         }
         this.values.add(update)
         // 失败后父范围仍可能失效，先重读最新调用形状再消费回滚后的旧值绑定
-        for (let scope: RearrangeScope | null = update.scope(); scope; scope = scope.parent) if (!scope.retired && !scope.paused && !this.hasCandidate(scope) && scope.effect.dirty) this.enqueue(scope)
+        // setup 期间实例尚无结构账本，值任务只登记不回溯
+        const start = update.scope()
+        for (let scope: RearrangeScope | null = start ? asRearrangeScope(start) : null; scope; scope = scope.parent) if (!scope.retired && !scope.paused && !this.hasCandidate(scope) && scope.effect.dirty) this.enqueue(scope)
         if (!this.running) queueRearrangeJob(this.job)
     }
 
@@ -446,10 +477,17 @@ export class RearrangeSession {
             let scope: RearrangeScope | undefined
             for (const candidate of this.work.keys()) if (!scope || candidate.identity < scope.identity) scope = candidate
             let update: ValueTask | undefined
-            for (const candidate of this.values) if (!update || candidate.scope().identity < update.scope().identity) update = candidate
-            if (update && (!scope || update.scope().identity <= scope.identity)) {
+            let updateScope: RearrangeScope | undefined
+            for (const candidate of this.values) {
+                const candidateScope = asRearrangeScope(candidate.scope())
+                if (!updateScope || candidateScope.identity < updateScope.identity) {
+                    update = candidate
+                    updateScope = candidateScope
+                }
+            }
+            if (update && updateScope && (!scope || updateScope.identity <= scope.identity)) {
                 this.values.delete(update)
-                if (this.isActive(update.scope()) && update.dirty()) {
+                if (this.isActive(updateScope) && update.dirty()) {
                     visit(update)
                     update.run()
                 }
@@ -466,9 +504,12 @@ export class RearrangeSession {
         if (this.failed) throw this.failed.error
         this.discardUnusedCandidates()
         for (const owner of this.dirtyParents) {
-            if (owner && !this.isActive(owner.structure)) continue
-            if (owner) owner.node!.reconcileChildren(collectNodes(owner.structure))
-            else this.context.host.reconcileRoots(collectNodes(this.root))
+            if (!owner) {
+                this.context.host.reconcileRoots(collectNodes(this.root))
+                continue
+            }
+            const scope = asRearrangeScope(owner.structure)
+            if (this.isActive(scope)) owner.node!.reconcileChildren(collectNodes(scope))
         }
         this.dirtyParents.clear()
         for (const check of this.prepareChecks) check()
@@ -517,7 +558,7 @@ export class RearrangeSession {
                     if (next.owner?.structure === next) pending.push(next.owner)
                     for (let index = next.entries.length - 1; index >= 0; index--) {
                         const entry = next.entries[index]
-                        pending.push(entry.kind === 'call' ? entry.instance.structure : entry.scope)
+                        pending.push(entry.scope)
                     }
                 }
             }
@@ -607,16 +648,15 @@ export function callArrangable<D extends ArrangableDefinition>(position: CallPos
         const previous = scope.claim(position, metadata.key)
         let entry: CallEntry
         if (previous?.kind === 'call' && previous.instance.type === definition) {
-            arrangeExecutionStats.instancesReused++
+            cantonExecutionStats.instancesReused++
             entry = previous
-            entry.instance.propStore.update(normalized, metadata)
-            if (updateContents(entry.instance, contents)) scope.rearrangeSession.enqueue(entry.instance.structure, true)
+            entry.props.update(normalized, metadata)
+            if (updateContents(entry.instance, contents)) scope.rearrangeSession.enqueue(entry.scope, true)
         } else {
             const instance = new ArrangableInstance(definition, scope.owner, scope.rearrangeSession.context, metadata.source)
             inheritHotState(instance, previous?.kind === 'call' ? previous.instance : undefined)
-            arrangeExecutionStats.instancesCreated++
-            entry = { kind: 'call', position, key: metadata.key, instance }
-            initializeInstance(instance, scope, normalized, contents, metadata)
+            cantonExecutionStats.instancesCreated++
+            entry = { kind: 'call', position, key: metadata.key, instance, ...initializeInstance(instance, scope, normalized, contents, metadata) }
             scope.rearrangeSession.createdEntry(entry)
         }
         scope.record(entry)
@@ -629,14 +669,14 @@ export function callArrangable<D extends ArrangableDefinition>(position: CallPos
     }
 }
 
-function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope, inputs: PropInputs<Data>, contents: Contents, metadata: CallMetadata): void {
+function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope, inputs: PropInputs<Data>, contents: Contents, metadata: CallMetadata): { readonly scope: RearrangeScope; readonly props: PropStore } {
     instance.rearrangeSession = parent.rearrangeSession
     bindFrameScheduler(instance.scope, parent.rearrangeSession.scheduler)
     const restore = setCurrentInstance(instance)
     try {
-        instance.propStore = new PropStore(instance)
-        instance.props = instance.propStore.values
-        instance.propStore.update(inputs, metadata)
+        const props = new PropStore(instance)
+        instance.props = props.values
+        props.update(inputs, metadata)
         instance.contents = contents
         const contentVersion = shallowRef(0)
         const invoke = (name: string) => {
@@ -664,22 +704,24 @@ function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope
                 if (!instance.type.contentTarget && !instance.type.slotNames.includes(name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
                 return instance.setupContext.slots[name]!
             },
-            source: name => instance.propStore.source(name),
+            source: name => props.source(name),
         }
         const program = setupHotArrangable(instance, () => instance.type.setup(instance.props, instance.setupContext))
         if (instance.rearrangeSession.isDisposed) throw new RearrangeCancelled('重排所有者已销毁')
         if (typeof program !== 'function') throw new TypeError('Arrangable setup 必须返回结构执行函数，不支持异步 setup')
-        instance.structure = new RearrangeScope(parent.rearrangeSession, instance, parent, () => {
+        const structure = new RearrangeScope(parent.rearrangeSession, instance, parent, () => {
             runHooks(instance, instance.isMounted ? LifecycleHooks.BEFORE_UPDATE : LifecycleHooks.BEFORE_MOUNT)
             if (instance.isUnmounted) return
             if (program() !== undefined) throw new TypeError('结构程序只执行调用，不能返回节点描述、数组或文本')
             if (instance.isUnmounted) return
             parent.rearrangeSession.notify(instance, instance.isMounted ? LifecycleHooks.UPDATED : LifecycleHooks.MOUNTED)
         }, metadata.source)
-        parent.rearrangeSession.enqueue(instance.structure, true)
+        instance.structure = structure
+        parent.rearrangeSession.enqueue(structure, true)
+        return { scope: structure, props }
     } catch (error) {
         instance.isUnmounted = true
-        arrangeExecutionStats.instancesRetired++
+        cantonExecutionStats.instancesRetired++
         const cleanupErrors: unknown[] = []
         try { instance.node?.retire() } catch (cleanup) { cleanupErrors.push(cleanup) }
         try { instance.scope.stop() } catch (cleanup) { cleanupErrors.push(cleanup) }
@@ -706,7 +748,7 @@ function updateContents(instance: ArrangableInstance, contents: Contents): boole
     return true
 }
 
-export function arrangeScope(position: CallPosition, program: StructureProgram, key?: RearrangeKey, source?: string): void {
+export function cantonScope(position: CallPosition, program: StructureProgram, key?: RearrangeKey, source?: string): void {
     const parent = requireScope()
     const previous = parent.claim(position, key)
     let entry: ScopeEntry
@@ -797,7 +839,7 @@ export function retainContent(position: CallPosition, key: RearrangeKey, content
 }
 
 export function invokeContent(position: CallPosition, content: Content): void {
-    arrangeScope(position, content)
+    cantonScope(position, content)
 }
 
 function requireScope(): RearrangeScope {
@@ -813,8 +855,7 @@ function collectNodes(scope: RearrangeScope): RearrangeNode[] {
         const entry = pending.pop()!
         if (entry.kind === 'call' && entry.instance.node) nodes.push(entry.instance.node)
         else {
-            const nested = entry.kind === 'scope' ? entry.scope : entry.instance.structure
-            const entries = scope.rearrangeSession.entries(nested)
+            const entries = scope.rearrangeSession.entries(entry.scope)
             for (let index = entries.length - 1; index >= 0; index--) pending.push(entries[index])
         }
     }
@@ -829,7 +870,7 @@ function visitScopes(root: RearrangeScope, visit: (scope: RearrangeScope) => voi
         visit(scope)
         for (let index = scope.entries.length - 1; index >= 0; index--) {
             const entry = scope.entries[index]
-            pending.push(entry.kind === 'scope' ? entry.scope : entry.instance.structure)
+            pending.push(entry.scope)
         }
     }
 }
@@ -846,15 +887,17 @@ function retireEntries(entries: readonly Entry[], notify = true): void {
             safely(next)
             continue
         }
-        const instance = next.kind === 'call' ? next.instance : null
-        const scope = next.kind === 'scope' ? next.scope : next.instance.structure
-        if (scope.retired || instance?.isUnmounted) continue
-        if (instance) {
+        const call = next.kind === 'call' ? next : null
+        if (call?.instance.isUnmounted) continue
+        const scope = next.scope
+        if (scope.retired) continue
+        if (call) {
+            const { instance, props } = call
             if (notify) safely(() => runHooks(instance, LifecycleHooks.BEFORE_UNMOUNT))
             instance.isUnmounted = true
-            arrangeExecutionStats.instancesRetired++
+            cantonExecutionStats.instancesRetired++
             pending.push(() => {
-                safely(() => instance.propStore.stop())
+                safely(() => props.stop())
                 safely(() => instance.scope.stop())
                 safely(() => instance.node?.retire())
                 if (notify) safely(() => runHooks(instance, LifecycleHooks.UNMOUNTED))
@@ -888,13 +931,13 @@ const normalizedInputs = new WeakMap<object, PropInputs<Data>>()
 function normalizeInputs(inputs: PropInputs<Data>): PropInputs<Data> {
     const cached = normalizedInputs.get(inputs)
     if (cached) {
-        arrangeExecutionStats.parameterCacheHits++
+        cantonExecutionStats.parameterCacheHits++
         return cached
     }
     const result: Record<string, () => unknown> = Object.create(null)
     for (const [original, getter] of Object.entries(inputs)) {
-        arrangeExecutionStats.parameterNameChecks++
-        const name = arrangeParameterName(original)
+        cantonExecutionStats.parameterNameChecks++
+        const name = cantonParameterName(original)
         if (Object.prototype.hasOwnProperty.call(result, name)) throw new TypeError(`重复参数：${name}`)
         result[name] = getter
     }
@@ -909,15 +952,15 @@ function validateContents(definition: ArrangableDefinition, contents: Contents):
     }
 }
 
-export function arrangeList<T>(position: CallPosition, collection: Iterable<T> | Record<string, T> | number, identity: (item: T, key: any, index: number) => RearrangeKey, program: (item: T, key: any, index: number) => void): void {
+export function cantonList<T>(position: CallPosition, collection: Iterable<T> | Record<string, T> | number, identity: (item: T, key: any, index: number) => RearrangeKey, program: (item: T, key: any, index: number) => void): void {
     const values: [T, string | number, number][] = typeof collection === 'number' ? Array.from({ length: collection }, (_, index) => [index + 1 as T, index, index]) : Symbol.iterator in collection ? [...collection as Iterable<T>].map((value, index) => [value, index, index]) : Object.entries(collection).map(([key, value], index) => [value, key, index])
-    for (const [value, key, index] of values) arrangeScope(position, () => program(value, key, index), identity(value, key, index) ?? index)
+    for (const [value, key, index] of values) cantonScope(position, () => program(value, key, index), identity(value, key, index) ?? index)
 }
 
 export function parameterInputs(entries: readonly (readonly [string, () => unknown])[], source?: string): PropInputs<Data> {
     const inputs: Record<string, () => unknown> = Object.create(null)
     for (const [original, getter] of entries) {
-        const name = arrangeParameterName(original)
+        const name = cantonParameterName(original)
         if (Object.prototype.hasOwnProperty.call(inputs, name)) throw new TypeError(`重复参数：${name}${source ? `\n来源：${source}` : ''}`)
         inputs[name] = getter
     }

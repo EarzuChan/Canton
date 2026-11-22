@@ -19,7 +19,7 @@ function pngBytes(size: number, pixel: (x: number, y: number) => readonly number
 }
 
 async function iconFixture(t: TestContext, size = 256, bytes = pngBytes(size)) {
-    const root = await mkdtemp(join(tmpdir(), "arrange-icon-test-"))
+    const root = await mkdtemp(join(tmpdir(), "canton-icon-test-"))
     t.after(() => rm(root, { recursive: true, force: true }))
     const state = stateFor(root)
     state.project.project.icon = "assets/source icon.png"
@@ -75,48 +75,6 @@ function readIco(bytes: Buffer): { size: number, pixels: Buffer, kind: "png" | "
         expectedOffset += length
     }
     assert.equal(expectedOffset, bytes.length)
-    return images
-}
-
-function readIcns(bytes: Buffer): { type: string, size: number, pixels: Buffer, png: Buffer }[] {
-    assert.equal(bytes.toString("ascii", 0, 4), "icns")
-    assert.equal(bytes.readUInt32BE(4), bytes.length)
-    const images = []
-    let offset = 8
-    while (offset < bytes.length) {
-        const length = bytes.readUInt32BE(offset + 4)
-        assert.ok(length > 8 && offset + length <= bytes.length)
-        const png = bytes.subarray(offset + 8, offset + length)
-        const type = bytes.toString("ascii", offset, offset + 4)
-        if (type === "ic04" || type === "ic05") {
-            assert.equal(png.toString("ascii", 0, 4), "ARGB")
-            const size = type === "ic04" ? 16 : 32
-            const pixels = Buffer.alloc(size * size * 4)
-            let cursor = 4
-            for (const channel of [3, 0, 1, 2]) {
-                let decoded = 0
-                while (decoded < size * size) {
-                    const control = png[cursor++]
-                    const count = control <= 127 ? control + 1 : control - 125
-                    assert.ok(decoded + count <= size * size)
-                    if (control <= 127) for (let index = 0; index < count; index++) pixels[(decoded++ * 4) + channel] = png[cursor++]
-                    else {
-                        const value = png[cursor++]
-                        for (let index = 0; index < count; index++) pixels[(decoded++ * 4) + channel] = value
-                    }
-                }
-            }
-            assert.equal(cursor, png.length)
-            images.push({ type, size, pixels, png })
-        } else {
-            const decoded = PNG.sync.read(png)
-            assert.equal(decoded.width, decoded.height)
-            images.push({ type, size: decoded.width, pixels: decoded.data, png })
-        }
-        offset += length
-    }
-    assert.equal(offset, bytes.length)
-    assert.equal(new Set(images.map(image => image.type)).size, images.length)
     return images
 }
 
@@ -181,42 +139,6 @@ test("ICO 真实目录/32位 DIB/256 PNG 均可解码，方向、透明 AND mask
     assert.equal(small.pixels[bottom + 3], 255)
 })
 
-test("1024 源图 ICNS 提供全部十个标准/Retina 槽位，同像素尺寸共用一致图像", async t => {
-    const input = await iconFixture(t, 1024)
-    const assets = (await input.service.prepare(input.state, input.output))!
-    const images = readIcns(await readFile(assets.icns))
-    assert.deepEqual(images.map(({ type, size }) => [type, size]), [["ic04", 16], ["ic11", 32], ["ic05", 32], ["ic12", 64], ["ic07", 128], ["ic13", 256], ["ic08", 256], ["ic14", 512], ["ic09", 512], ["ic10", 1024]])
-    assert.deepEqual(images.find(image => image.type === "ic11")!.pixels, images.find(image => image.type === "ic05")!.pixels)
-    assert.deepEqual(images.find(image => image.type === "ic13")!.png, images.find(image => image.type === "ic08")!.png)
-    assert.deepEqual(images.find(image => image.type === "ic14")!.png, images.find(image => image.type === "ic09")!.png)
-    for (const image of images) for (let index = 3; index < image.pixels.length; index += 4) assert.equal(image.pixels[index], 128)
-})
-
-test("非标准源尺寸不放大、不裁切，低分辨率 ICNS 不伪造高分辨率槽位", async t => {
-    const input = await iconFixture(t, 300)
-    const assets = (await input.service.prepare(input.state, input.output))!
-    const images = readIcns(await readFile(assets.icns))
-    assert.deepEqual(images.map(({ type, size }) => [type, size]), [["ic04", 16], ["ic11", 32], ["ic05", 32], ["ic12", 64], ["ic07", 128], ["ic13", 256], ["ic08", 256]])
-    assert.equal(assets.size, 300)
-    assert.ok(images.every(image => image.size <= 300))
-})
-
-test("macOS 系统解码 ICNS 后小尺寸标准/Retina 图像均保留透明与半透明边缘", { skip: process.platform !== "darwin" ? "不适用：仅 macOS 实机" : false }, async t => {
-    const input = await iconFixture(t, 256, pngBytes(256, (x, y) => (x - 128) ** 2 + (y - 128) ** 2 < 80 ** 2 ? [255, 255, 255, 255] : [0, 0, 0, 0]))
-    const assets = (await input.service.prepare(input.state, input.output))!
-    const iconset = join(input.root, "decoded.iconset")
-    const result = await new Executor().run({ command: "/usr/bin/iconutil", args: ["-c", "iconset", "-o", iconset, assets.icns], timeoutMs: toolProbeTimeoutMs })
-    assert.equal(result.exitCode, 0, result.stderr)
-    const files = await readdir(iconset)
-    assert.deepEqual(files.sort(), ["icon_128x128.png", "icon_128x128@2x.png", "icon_16x16.png", "icon_16x16@2x.png", "icon_256x256.png", "icon_32x32.png", "icon_32x32@2x.png"].sort())
-    for (const file of files) {
-        const image = PNG.sync.read(await readFile(join(iconset, file)))
-        assert.ok(image.data.some((value, index) => index % 4 === 3 && value === 0), `${file} 透明像素`)
-        if (image.width < 256) assert.ok(image.data.some((value, index) => index % 4 === 3 && value > 0 && value < 255), `${file} 半透明像素`)
-        for (let index = 0; index < image.data.length; index += 4) if (image.data[index + 3] > 0) assert.ok(image.data[index] >= 254 && image.data[index + 1] >= 254 && image.data[index + 2] >= 254, `${file} 透明边缘不黑化`)
-    }
-})
-
 test("预乘 alpha 缩放不会混入透明区域隐藏黑色；高频颜色缩小保持线性光平均", async t => {
     const input = await iconFixture(t, 256, pngBytes(256, (x, y) => (x - 128) ** 2 + (y - 128) ** 2 < 80 ** 2 ? [255, 255, 255, 255] : [0, 0, 0, 0]))
     const assets = (await input.service.prepare(input.state, input.output))!
@@ -249,7 +171,7 @@ test("同路径内容变化与派生资源篡改可检查为过期，prepare重�
     assert.equal((await input.service.inspect(input.state, input.output)).ready, true)
     assert.deepEqual(await input.service.prepare(input.state, input.output), first)
     assert.equal((await stat(first.ico, { bigint: true })).mtimeNs, originalStat.mtimeNs)
-    await writeFile(first.icns, "已损坏")
+    await writeFile(first.ico, "已损坏")
     assert.match((await input.service.inspect(input.state, input.output)).reason!, /派生资源已变化/)
     await input.service.prepare(input.state, input.output)
     assert.deepEqual(await readFile(first.ico), originalIco)
@@ -263,7 +185,7 @@ test("同路径内容变化与派生资源篡改可检查为过期，prepare重�
     assert.match((await input.service.inspect(input.state, input.output)).reason!, /记录损坏/)
 })
 
-test("移除 icon 清理三个旧派生文件，保留源图和未知额外文件；纯inspect无副作用", async t => {
+test("移除 icon 清理旧派生文件，保留源图和未知额外文件；纯inspect无副作用", async t => {
     const input = await iconFixture(t)
     const assets = (await input.service.prepare(input.state, input.output))!
     const unknown = join(input.output, "user-extra.txt")
@@ -272,7 +194,7 @@ test("移除 icon 清理三个旧派生文件，保留源图和未知额外文�
     assert.equal((await input.service.inspect(input.state, input.output)).ready, false)
     assert.ok(await readFile(assets.ico))
     assert.equal(await input.service.prepare(input.state, input.output), null)
-    for (const name of ["icon.ico", "icon.icns", "icon.json"]) await assert.rejects(readFile(join(input.output, name)), { code: "ENOENT" })
+    for (const name of ["icon.ico", "icon.json"]) await assert.rejects(readFile(join(input.output, name)), { code: "ENOENT" })
     assert.equal(await readFile(unknown, "utf8"), "用户文件")
     assert.ok(await readFile(input.source))
     assert.deepEqual(await input.service.inspect(input.state, input.output), { source: null, assets: null, ready: true })
@@ -294,7 +216,7 @@ test("工程根相对源路径不能越界或经过文件及父目录的符号�
 
 test("派生输出拒绝root/外部/链接目录与已知文件别名；失败不改外部文件", async t => {
     const input = await iconFixture(t)
-    const outside = await mkdtemp(join(tmpdir(), "arrange-icon-outside-"))
+    const outside = await mkdtemp(join(tmpdir(), "canton-icon-outside-"))
     t.after(() => rm(outside, { recursive: true, force: true }))
     const sentinel = join(outside, "sentinel")
     await writeFile(sentinel, "不可更改")

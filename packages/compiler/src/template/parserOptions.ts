@@ -1,4 +1,5 @@
-import { Namespaces, type ParserOptions } from '../core/index.ts'
+import { Namespaces } from './ast.ts'
+import type { ParserOptions } from './options.ts'
 
 export const parserOptions: ParserOptions = {
     parseMode: 'base',

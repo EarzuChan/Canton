@@ -32,7 +32,7 @@ async function setup(t: TestContext) {
     executor.handler = async spec => {
         if (spec.args[0] === "install") {
             const manifest = JSON.parse(await readFile(resolve(uiRoot, "package.json"), "utf8"))
-            for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) await write(resolve(uiRoot, "node_modules", name, "package.json"), JSON.stringify({ name, version: name === frameworkPackageName ? state.project.framework.version : "1.0.0", arrange: name === frameworkPackageName ? { cliCompatibility } : undefined }))
+            for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) await write(resolve(uiRoot, "node_modules", name, "package.json"), JSON.stringify({ name, version: name === frameworkPackageName ? state.project.framework.version : "1.0.0", canton: name === frameworkPackageName ? { cliCompatibility } : undefined }))
         } else if (spec.args.join(" ") === "run build") {
             const output = spec.env![uiBuildStageEnvironment]
             await write(resolve(output, 'app.js'), 'export default {}\n')
@@ -54,7 +54,7 @@ test("UI 从未安装与缺失准备记录可重新 SETUP，成功安装后才 r
     assert.deepEqual(await input.node.inspect(input.state), { ready: true })
     assert.equal(input.executor.calls[0].cwd, input.uiRoot)
     assert.deepEqual(input.executor.calls[0].args, ["install"])
-    await rm(resolve(input.state.rootDir, ".arrange", uiPreparationFileName))
+    await rm(resolve(input.state.rootDir, ".canton", uiPreparationFileName))
     const missing = await input.node.inspect(input.state)
     assert.equal(missing.ready, false)
     assert.notEqual(missing.fatal, true)
@@ -131,7 +131,7 @@ test("包清单或 lock 改动使安装输入失效，失败重装不保留旧 r
     assert.equal((await input.node.inspect(input.state)).ready, false)
     input.executor.exitCode = 1
     await assert.rejects(input.node.install(input.state, testTask()), /安装失败/)
-    await assert.rejects(readFile(resolve(input.state.rootDir, ".arrange", uiPreparationFileName)), { code: "ENOENT" })
+    await assert.rejects(readFile(resolve(input.state.rootDir, ".canton", uiPreparationFileName)), { code: "ENOENT" })
     assert.equal((await input.node.inspect(input.state)).ready, false)
 })
 
@@ -172,7 +172,7 @@ test("无 dev/build 的 UI manifest 为 Fatal；命令成功但缺发布清单�
     await write(resolve(input.uiRoot, "package.json"), packageJsonFile.make(input.state))
     await input.node.install(input.state, testTask())
     input.executor.handler = async () => { }
-    await assert.rejects(input.ui.build(input.state, testTask(), "release"), /arrange-ui\.json/)
+    await assert.rejects(input.ui.build(input.state, testTask(), "release"), /canton-ui\.json/)
 })
 
 test("安装取消即使退出码为零也抛 AbortError，旧准备记录不能继续使用", async t => {
@@ -186,7 +186,7 @@ test("安装取消即使退出码为零也抛 AbortError，旧准备记录不能
         assert.match(error.message, /已取消/)
         return true
     })
-    await assert.rejects(readFile(resolve(input.state.rootDir, ".arrange", uiPreparationFileName)), { code: "ENOENT" })
+    await assert.rejects(readFile(resolve(input.state.rootDir, ".canton", uiPreparationFileName)), { code: "ENOENT" })
     assert.equal((await input.node.inspect(input.state)).ready, false)
     input.executor.cancelled = false
     await input.node.install(input.state, testTask())
@@ -197,7 +197,7 @@ test("构建取消保留 AbortError 并使旧 completed 记录失效；普通退
     const input = await setup(t)
     await input.node.install(input.state, testTask())
     const ui = input.ui
-    const receiptPath = resolve(input.state.rootDir, ".arrange/built-ui.json")
+    const receiptPath = resolve(input.state.rootDir, ".canton/built-ui.json")
     await ui.build(input.state, testTask(), "release")
     assert.equal(JSON.parse(await readFile(receiptPath, "utf8")).status, "completed")
     input.executor.cancelled = true

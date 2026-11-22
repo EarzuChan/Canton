@@ -1,0 +1,14 @@
+<template>
+    <Column :modifier="M.fillMaxSize().background(Color(0xfff2f2f7)).verticalScroll(scroll)">
+        <Text :text="`Canton ${count}`" :modifier="M.size(160.dp, 36.dp).background(Color(0xffffffff)).clickable(increment)" />
+    </Column>
+</template>
+
+<script>
+import { createScrollState, ref } from '@canton/framework'
+import { Color, M } from '@canton/framework/ui'
+
+const scroll = createScrollState()
+const count = ref(0)
+function increment() { count.value++ }
+</script>
