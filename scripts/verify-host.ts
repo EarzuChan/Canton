@@ -10,10 +10,22 @@ import { buildFixtureDist } from './fixture-dist.ts'
 // 1. Dist 宿主的剥离——产物里查不到开发期开关和 Live 客户端的字样（Dev 宿主里必须查得到，检查才不是空转）；
 // 2. Dist 宿主对目录包、ZIP 包、字节码包各冒烟一次，以日志里的“首帧已呈现”为准；
 // 3. 随包位置同时有目录包和 ZIP 包时报错。
-const devOnlyMarkers = ['CANTON_DEV_', '/@canton/modules', 'vite-hmr', 'LiveModuleClient']
+const devOnlyMarkers = [
+    'CANTON_DEV_',
+    '/@canton/modules',
+    'vite-hmr',
+    'LiveModuleClient',
+    '__CANTON_HOT_TRANSPORT__',
+    '__CANTON_HOT_RECEIVE__',
+    'Live 热更新失败',
+    '热更新已恢复',
+    'DIST FALLBACK',
+    '气泡之《',
+    'UI idle',
+]
 
 function contains(binary: Buffer, text: string): boolean {
-    return binary.includes(Buffer.from(text, 'latin1')) || binary.includes(Buffer.from(text, 'utf16le'))
+    return binary.includes(Buffer.from(text, 'utf8')) || binary.includes(Buffer.from(text, 'utf16le'))
 }
 
 async function launch(directory: string, expected: string): Promise<void> {

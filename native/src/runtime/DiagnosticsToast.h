@@ -10,35 +10,35 @@
 
 namespace canton::runtime {
 
-    class DiagnosticsState;
+    class DiagnosticsModel;
 
     class DiagnosticsToast final {
        public:
-        static bool show(DiagnosticsState& state, core::LogLevel level, std::string_view tag, std::string title, std::string content, bool coalesce = true);
+        static bool show(DiagnosticsModel& model, core::LogLevel level, std::string_view tag, std::string title, std::string content, bool coalesce = true);
 
         template <typename... Args>
-        static bool v(DiagnosticsState& state, std::string_view tag, std::string title, Args&&... args) {
-            return show(state, core::LogLevel::Verbose, tag, std::move(title), join(std::forward<Args>(args)...));
+        static bool v(DiagnosticsModel& model, std::string_view tag, std::string title, Args&&... args) {
+            return show(model, core::LogLevel::Verbose, tag, std::move(title), join(std::forward<Args>(args)...));
         }
 
         template <typename... Args>
-        static bool d(DiagnosticsState& state, std::string_view tag, std::string title, Args&&... args) {
-            return show(state, core::LogLevel::Debug, tag, std::move(title), join(std::forward<Args>(args)...));
+        static bool d(DiagnosticsModel& model, std::string_view tag, std::string title, Args&&... args) {
+            return show(model, core::LogLevel::Debug, tag, std::move(title), join(std::forward<Args>(args)...));
         }
 
         template <typename... Args>
-        static bool i(DiagnosticsState& state, std::string_view tag, std::string title, Args&&... args) {
-            return show(state, core::LogLevel::Info, tag, std::move(title), join(std::forward<Args>(args)...));
+        static bool i(DiagnosticsModel& model, std::string_view tag, std::string title, Args&&... args) {
+            return show(model, core::LogLevel::Info, tag, std::move(title), join(std::forward<Args>(args)...));
         }
 
         template <typename... Args>
-        static bool w(DiagnosticsState& state, std::string_view tag, std::string title, Args&&... args) {
-            return show(state, core::LogLevel::Warn, tag, std::move(title), join(std::forward<Args>(args)...));
+        static bool w(DiagnosticsModel& model, std::string_view tag, std::string title, Args&&... args) {
+            return show(model, core::LogLevel::Warn, tag, std::move(title), join(std::forward<Args>(args)...));
         }
 
         template <typename... Args>
-        static bool e(DiagnosticsState& state, std::string_view tag, std::string title, Args&&... args) {
-            return show(state, core::LogLevel::Error, tag, std::move(title), join(std::forward<Args>(args)...));
+        static bool e(DiagnosticsModel& model, std::string_view tag, std::string title, Args&&... args) {
+            return show(model, core::LogLevel::Error, tag, std::move(title), join(std::forward<Args>(args)...));
         }
 
        private:

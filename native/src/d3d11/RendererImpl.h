@@ -190,6 +190,9 @@ namespace canton::d3d11 {
         int maskWidth = 0, maskHeight = 0;
         // 设备每重建一次加一，呈现目标据此重建自己的缓冲
         std::uint64_t deviceGeneration = 0;
+        HRESULT injectedLossCode = S_OK;
+        int injectedLossRemaining = 0;
+        bool injectedLossOnPresent = false;
 
         void createDevice();
         void createDeviceResources();

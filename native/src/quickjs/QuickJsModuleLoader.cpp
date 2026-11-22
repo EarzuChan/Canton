@@ -11,31 +11,10 @@
 namespace canton::quickjs {
     std::string_view buildIdentity() noexcept { return CANTON_QUICKJS_BUILD_IDENTITY; }
 
-    void QuickJsModuleLoader::install(const LiveModuleSnapshot& snapshot) {
-        live_ = true;
-        for (const auto& module : snapshot.modules) sources_.insert_or_assign(module.url, module);
-    }
-
-    bool QuickJsModuleLoader::startsWithDotSpecifier(std::string_view specifier) {
-        return specifier == "." || specifier == ".." || specifier.starts_with("./") || specifier.starts_with("../");
-    }
-
     char* QuickJsModuleLoader::normalize(JSContext* context, const char* moduleBaseName, const char* moduleName, void* opaque) {
         auto* loader = static_cast<QuickJsModuleLoader*>(opaque);
         if (loader == nullptr || moduleName == nullptr) return nullptr;
         const std::string_view specifier(moduleName);
-        if (loader->live_) {
-            std::string name(moduleName);
-            if (startsWithDotSpecifier(name)) {
-                const std::string base(moduleBaseName ? moduleBaseName : "/");
-                name = (std::filesystem::path(base.substr(0, base.find('?'))).parent_path() / name).lexically_normal().generic_string();
-            }
-            if (!name.starts_with('/')) {
-                JS_ThrowReferenceError(context, "unresolved live ESM specifier '%s'", moduleName);
-                return nullptr;
-            }
-            return js_strdup(context, name.c_str());
-        }
         if (loader->package_) {
             const auto name = resolvePackageModule(moduleBaseName ? moduleBaseName : "", specifier);
             if (!name.empty()) return js_strdup(context, name.c_str());
@@ -49,21 +28,11 @@ namespace canton::quickjs {
     JSModuleDef* QuickJsModuleLoader::load(JSContext* context, const char* moduleName, void* opaque) {
         const auto& loader = *static_cast<QuickJsModuleLoader*>(opaque);
         try {
-            JSValue value;
-            if (loader.live_) {
-                const auto source = loader.sources_.find(moduleName);
-                if (source == loader.sources_.end()) throw std::runtime_error("live ESM snapshot has no module");
-                const auto& text = source->second.source;
-                value = JS_Eval(context, text.data(), text.size(), moduleName, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-            } else if (loader.package_) {
-                const auto bytes = loader.package_->read(moduleName, core::UiEntryKind::Module, core::UiEntryLimit);
-                if (loader.package_->scriptFormat() == core::UiScriptFormat::Bytecode)
-                    value = JS_ReadObject(context, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), JS_READ_OBJ_BYTECODE);
-                else
-                    value = JS_Eval(context, bytes.data(), bytes.size(), moduleName, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
-            } else {
-                throw std::runtime_error("no module source installed");
-            }
+            if (!loader.package_) throw std::runtime_error("no module source installed");
+            const auto bytes = loader.package_->read(moduleName, core::UiEntryKind::Module, core::UiEntryLimit);
+            const JSValue value = loader.package_->scriptFormat() == core::UiScriptFormat::Bytecode
+                ? JS_ReadObject(context, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), JS_READ_OBJ_BYTECODE)
+                : JS_Eval(context, bytes.data(), bytes.size(), moduleName, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
             ScopedValue compiled(context, value);
             if (JS_IsException(value)) {
                 if (loader.package_ && loader.package_->scriptFormat() == core::UiScriptFormat::Bytecode) {

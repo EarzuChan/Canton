@@ -4,6 +4,7 @@
 #error DevAssembly.cpp 只编进 Dev 宿主
 #endif
 
+#include <runtime/DiagnosticsScene.h>
 #include <runtime/LiveClient.h>
 #include <runtime/LiveResources.h>
 
@@ -50,17 +51,16 @@ namespace canton::host {
             assembly.readyFile = *file;
             assembly.readyToken = narrow(environment(L"CANTON_DEV_READY_TOKEN").value_or(L""));
         }
-        assembly.diagnostics.badge = runtime::DiagnosticVisibility::Always;
-        assembly.diagnostics.toasts = runtime::DiagnosticVisibility::Always;
-        assembly.diagnostics.overlay = runtime::DiagnosticVisibility::Always;
+        runtime::DiagnosticsConfig diagnostics;
+        diagnostics.badge = runtime::DiagnosticVisibility::Always;
+        diagnostics.toasts = runtime::DiagnosticVisibility::Always;
+        diagnostics.overlay = runtime::DiagnosticVisibility::Always;
+        assembly.hud = runtime::createDiagnosticsHud(diagnostics);
         assembly.detailedErrorScreen = true;
-        assembly.liveClient = [](std::function<void()> wake) -> runtime::PackageRuntimeSource::LiveClientFactory {
-            return [wake = std::move(wake)] {
-                return runtime::createLiveModuleClient(wake);
-            };
-        };
-        assembly.liveResources = [workers = runtime::createResourceWorkers()](std::string_view devServerUrl) {
-            return runtime::RuntimeLoadResources{runtime::livePainterLoader(std::string(devServerUrl), {}, workers), runtime::liveAssetLoader(std::string(devServerUrl), workers)};
+        assembly.live = [workers = runtime::createResourceWorkers()](std::function<void()> wake) {
+            return runtime::makeLiveSessionFactory(std::move(wake), [workers](std::string_view devServerUrl) {
+                return runtime::RuntimeLoadResources{runtime::livePainterLoader(std::string(devServerUrl), {}, workers), runtime::liveAssetLoader(std::string(devServerUrl), workers)};
+            });
         };
         return assembly;
     }

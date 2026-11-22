@@ -15,14 +15,6 @@ namespace canton::runtime {
         scriptHost_ = std::move(host);
     }
 
-    quickjs::CallbackInvokeResult RearrangeHost::applyHotUpdate(const quickjs::LiveModuleSnapshot& snapshot, const quickjs::HotMessage& message) {
-        return scriptHost_ ? scriptHost_->applyHotUpdate(snapshot, message) : quickjs::CallbackInvokeResult{false, "没有 live script host"};
-    }
-
-    std::vector<quickjs::HotMessage> RearrangeHost::takeHotMessages() {
-        return scriptHost_ ? scriptHost_->takeHotMessages() : std::vector<quickjs::HotMessage>{};
-    }
-
     bool RearrangeHost::hasScriptHost() const noexcept {
         return static_cast<bool>(scriptHost_);
     }

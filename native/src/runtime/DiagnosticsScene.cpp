@@ -1,11 +1,22 @@
 #include <runtime/DiagnosticsScene.h>
 
+#include <core/InputIntent.h>
 #include <core/TextLayoutService.h>
+#include <runtime/CantonRuntime.h>
+#include <runtime/DiagnosticsModel.h>
+#include <runtime/DiagnosticsToast.h>
+#include <runtime/SceneHost.h>
+
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <sstream>
+#include <utility>
 
 namespace canton::runtime {
     namespace {
+        constexpr std::string_view HUD_TAG = "DiagnosticsHud";
+
         std::uint32_t accentColour(core::LogLevel level) noexcept {
             switch (level) {
                 case core::LogLevel::Verbose:
@@ -20,29 +31,31 @@ namespace canton::runtime {
             }
             return 0xff3b82f6u;
         }
+
+        DiagnosticsBadgeModel sourceBadgeModel(PackageSource source, bool liveUnavailable) {
+            switch (source) {
+                case PackageSource::Live:
+                    return {"LIVE", 0xff22c55eu};
+                case PackageSource::Dist:
+                    return liveUnavailable ? DiagnosticsBadgeModel{"DIST FALLBACK", 0xfff59e0bu} : DiagnosticsBadgeModel{"DIST", 0xff3b82f6u};
+                case PackageSource::None:
+                    break;
+            }
+            return {"NO APP", 0xffef4444u};
+        }
+
+        void replaceHudOps(std::vector<canton::core::DrawOp>& target, std::vector<canton::core::DrawOp> source) {
+            for (std::size_t index = 0; index < std::min(target.size(), source.size()); ++index) {
+                auto& next = source[index];
+                const auto& previous = target[index];
+                if (next.type == canton::core::DrawOpType::DrawText && previous.type == canton::core::DrawOpType::DrawText && !next.textLayout && next.text == previous.text && next.textStyle == previous.textStyle && next.rect.width == previous.rect.width && next.maxLines == previous.maxLines && next.overflow == previous.overflow) next.textLayout = previous.textLayout;
+            }
+            target = std::move(source);
+        }
     }
 
     std::vector<canton::core::DrawOp> DiagnosticsScene::buildErrorScreen(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed) const {
-        std::vector<canton::core::DrawOp> ops;
-        core::Rect area{editorBounds.x + 20, editorBounds.y + 20, std::max(0.0f, editorBounds.width - 40), std::max(0.0f, editorBounds.height - 40)};
-        ops.push_back(fill(area, detailed ? 0xff2a1014u : 0xff111827u, 10.0f));
-        if (detailed) {
-            const auto titleArea = canton::core::Rect{area.x, area.y, area.width, 34.0f};
-            ops.push_back(text(titleArea, error.title.empty() ? "Canton Error" : error.title, 0xffff6b6bu, 15.0f));
-            area.y += 34.0f;
-            area.height = std::max(0.0f, area.height - 34.0f);
-            auto body = error.diagnosticText();
-            if (error.retryAvailable) body += "\nClick anywhere to retry.";
-            ops.push_back(text(area, std::move(body), 0xe0ffffffu, 11.0f, 8));
-            return ops;
-        }
-
-        const auto titleArea = canton::core::Rect{area.x, area.y, area.width, 32.0f};
-        ops.push_back(text(titleArea, "Canton error screen hidden", 0xfff59e0bu, 14.5f));
-        area.y += 32.0f;
-        area.height = std::max(0.0f, area.height - 32.0f);
-        ops.push_back(text(area, error.summary + "\nError details are still available in logs and diagnostics.", 0xc7ffffffu, 11.0f, 4));
-        return ops;
+        return buildErrorScreenOps(editorBounds, error, detailed);
     }
 
     std::vector<canton::core::DrawOp> DiagnosticsScene::buildBadge(core::Rect editorBounds, const DiagnosticsBadgeModel& model, DiagnosticVisibility visibility, const canton::core::TextLayoutService& textLayout) const {
@@ -137,5 +150,136 @@ namespace canton::runtime {
         op.text = std::move(value);
         op.overflow = canton::core::TextOverflow::Clip;
         return op;
+    }
+
+    namespace {
+        class DiagnosticsHudImpl final : public DiagnosticsHud {
+           public:
+            explicit DiagnosticsHudImpl(DiagnosticsConfig config) {
+                model_.configure(std::move(config));
+            }
+
+            bool showToast(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce) override {
+                const auto visible = DiagnosticsToast::show(model_, level, tag, std::move(title), std::move(message), coalesce);
+                if (visible) invalidate();
+                return visible;
+            }
+
+            bool tick(CantonRuntime& runtime, double nowMillis) override {
+                auto changed = false;
+                for (auto toast : runtime.takeDiagnosticToasts()) {
+                    changed = showToast(toast.level, toast.tag, std::move(toast.title), std::move(toast.content), toast.coalesce) || changed;
+                }
+                for (const auto& action : runtime.takeDiagnosticActions()) {
+                    switch (action.kind) {
+                        case canton::quickjs::QuickJsDiagnosticActionKind::RequestReload:
+                            (void)showToast(core::LogLevel::Info, HUD_TAG, "脚本请求重新加载", action.path, true);
+                            runtime.requestReload();
+                            break;
+                        case canton::quickjs::QuickJsDiagnosticActionKind::TriggerFakeError:
+                            changed = showToast(core::LogLevel::Error, HUD_TAG, action.message.empty() ? std::string("脚本请求诊断错误") : action.message, "脚本诊断已触发错误屏路径", true) || changed;
+                            break;
+                        case canton::quickjs::QuickJsDiagnosticActionKind::SetToastsEnabled:
+                            model_.setToastsEnabled(action.enabled);
+                            invalidate();
+                            changed = true;
+                            core::Log::i(HUD_TAG, "诊断提示显示状态已更新", action.enabled ? "已启用" : "已关闭");
+                            break;
+                    }
+                }
+                if (model_.tick(nowMillis)) {
+                    invalidate();
+                    changed = true;
+                }
+                return changed;
+            }
+
+            bool hasActiveToasts() const noexcept override {
+                return model_.hasActiveToasts();
+            }
+
+            void setFpsEnabled(bool enabled, CantonRuntime& runtime) override {
+                if (fpsEnabled_ == enabled) return;
+                fpsEnabled_ = enabled;
+                fpsFrames_ = 0;
+                fpsWindowStart_ = 0;
+                fps_ = enabled ? std::optional<int>(0) : std::nullopt;
+                runtime.enqueueIntent(core::InputIntent::diagnostics());
+            }
+
+            bool fpsEnabled() const noexcept override {
+                return fpsEnabled_;
+            }
+
+            void recordFrame(bool changed, bool ready, double nowMillis, CantonRuntime& runtime) override {
+                if (!fpsEnabled_) return;
+                if (changed) ++fpsFrames_;
+                if (nowMillis - fpsWindowStart_ >= 500.0) {
+                    fps_ = ready ? static_cast<int>(fpsFrames_ * 1000.0 / (nowMillis - fpsWindowStart_) + 0.5) : 0;
+                    fpsWindowStart_ = nowMillis;
+                    fpsFrames_ = 0;
+                    runtime.enqueueIntent(core::InputIntent::diagnostics());
+                }
+            }
+
+            void prepare(core::Rect bounds, bool hasError, PackageSource activeSource, bool liveUnavailable, const core::TextLayoutService& textLayout, core::PublishedFrameContent& content) override {
+                const auto environment = textLayout.environment();
+                const auto fps = hasError ? std::nullopt : fps_;
+                if (preparedFps_ != fps || (fps && (preparedFpsBounds_ != bounds || preparedFpsOps_.back().textLayout->environment != environment))) {
+                    preparedFpsOps_ = fps ? scene_.buildFpsBadge(bounds, *fps, textLayout) : std::vector<canton::core::DrawOp>{};
+                    preparedFpsBounds_ = bounds;
+                    preparedFps_ = fps;
+                }
+                const auto badge = sourceBadgeModel(activeSource, liveUnavailable);
+                std::ostringstream sig;
+                sig << bounds.x << ',' << bounds.y << ',' << bounds.width << ',' << bounds.height << "|font=" << environment << "|badge=" << static_cast<int>(model_.badgeVisibility()) << ':' << badge.text << ':' << badge.dot << "|toastVis=" << static_cast<int>(model_.toastVisibility());
+                const auto toasts = model_.activeToastModels();
+                for (const auto& toast : toasts) sig << "|toast=" << static_cast<int>(toast.level) << ':' << toast.title << ':' << toast.message;
+                if (const auto signature = sig.str(); signature != preparedSignature_) {
+                    preparedBadgeOps_ = scene_.buildBadge(bounds, badge, model_.badgeVisibility(), textLayout);
+                    preparedToastOps_ = scene_.buildToasts(bounds, toasts, model_.toastVisibility());
+                    preparedSignature_ = signature;
+                }
+                replaceHudOps(content.diagnosticsBadgeDrawOps, preparedBadgeOps_);
+                content.diagnosticsFpsDrawOps = preparedFpsOps_;
+                replaceHudOps(content.diagnosticsToastDrawOps, preparedToastOps_);
+            }
+
+           private:
+            void invalidate() noexcept {
+                preparedSignature_.clear();
+                preparedBadgeOps_.clear();
+                preparedToastOps_.clear();
+            }
+
+            DiagnosticsModel model_;
+            DiagnosticsScene scene_;
+            bool fpsEnabled_ = false;
+            double fpsWindowStart_ = 0;
+            int fpsFrames_ = 0;
+            std::optional<int> fps_;
+            std::optional<int> preparedFps_;
+            core::Rect preparedFpsBounds_{};
+            std::vector<canton::core::DrawOp> preparedBadgeOps_;
+            std::vector<canton::core::DrawOp> preparedFpsOps_;
+            std::vector<canton::core::DrawOp> preparedToastOps_;
+            std::string preparedSignature_;
+        };
+    }
+
+    std::unique_ptr<DiagnosticsHud> createDiagnosticsHud(DiagnosticsConfig config) {
+        return std::make_unique<DiagnosticsHudImpl>(std::move(config));
+    }
+
+    void SceneHost::setFpsBadgeEnabled(bool enabled) {
+        if (!diagnostics_.hud()) {
+            if (!enabled) return;
+            DiagnosticsConfig config;
+            config.badge = DiagnosticVisibility::Hidden;
+            config.toasts = DiagnosticVisibility::Hidden;
+            config.overlay = DiagnosticVisibility::Hidden;
+            diagnostics_.setHud(createDiagnosticsHud(config));
+        }
+        diagnostics_.hud()->setFpsEnabled(enabled, runtime_);
     }
 }

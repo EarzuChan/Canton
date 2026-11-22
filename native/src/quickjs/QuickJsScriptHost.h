@@ -114,6 +114,9 @@ namespace canton::quickjs {
         CallbackInvokeResult completeRearrange(const std::shared_ptr<canton::core::RearrangeSubmission>& submission, const std::string& error = {});
 
        private:
+        ScriptExecutionResult runModuleTask(const char* name, bool resetFirst, const std::function<bool(struct QuickJsRuntimeContext&, std::string&)>& step);
+        struct QuickJsRuntimeContext* runtimeContext() noexcept;
+
         struct Impl;
         std::unique_ptr<Impl> impl_;
         canton::core::MutationTransactionQueue pendingTransactions_;

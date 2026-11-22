@@ -110,14 +110,8 @@ namespace canton::runtime {
         events_.clear();
     }
 
-    quickjs::CallbackInvokeResult CantonRuntime::applyHotUpdate(const quickjs::LiveModuleSnapshot& snapshot, const quickjs::HotMessage& message) {
-        const auto result = rearrangeHost_.applyHotUpdate(snapshot, message);
+    void CantonRuntime::notifyWorkAvailable() {
         wake_->request();
-        return result;
-    }
-
-    std::vector<quickjs::HotMessage> CantonRuntime::takeHotMessages() {
-        return rearrangeHost_.takeHotMessages();
     }
 
     void CantonRuntime::setScriptHost(std::unique_ptr<canton::quickjs::QuickJsScriptHost> host) noexcept {

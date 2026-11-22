@@ -81,11 +81,16 @@ namespace canton::quickjs {
         std::unordered_map<canton::core::NodeId, canton::core::BindingHandle> modifierBindings;
         std::unordered_map<canton::core::NodeId, std::vector<canton::core::NodeId>> childrenByNode;
         std::unordered_map<canton::core::NodeId, canton::core::NodeId> parentByNode;
+        struct QuickJsLiveState {
+            std::unordered_map<std::string, LiveModuleSource> sources;
+            std::vector<HotMessage> messages;
+            std::string session;
+        };
+
         std::vector<QuickJsToastRequest> diagnosticToasts;
         std::vector<QuickJsDiagnosticAction> diagnosticActions;
-        std::vector<HotMessage> hotMessages;
+        std::unique_ptr<QuickJsLiveState> live;
         std::vector<canton::core::FocusCommand> focusCommands;
-        std::string hotSession;
 
         struct RearrangeCheckpoint {
             canton::core::NodeId root;

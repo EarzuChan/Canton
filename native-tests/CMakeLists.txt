@@ -86,7 +86,7 @@ endif()
 # 无头回归：直接链接渲染库离屏渲染，与基线图比对。基线只由 --update 写入
 add_executable(canton_render_regression canton_render_regression.cpp RenderCasesDraw.cpp RenderCasesFixture.cpp)
 target_compile_definitions(canton_render_regression PRIVATE NOMINMAX "CANTON_SOURCE_DIR=\"${PROJECT_SOURCE_DIR}\"")
-target_link_libraries(canton_render_regression PRIVATE Canton::d3d11 Canton::runtime windowscodecs ole32)
+target_link_libraries(canton_render_regression PRIVATE Canton::d3d11 Canton::runtime windowscodecs ole32 user32)
 
 # Live 验证的原生对端，由 scripts/verify-live-hmr.ts 拉起
 add_executable(canton_live_server canton_live_server.cpp)

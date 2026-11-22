@@ -3,6 +3,13 @@
 #include <core/Modifier.h>
 #include <runtime/PainterResources.h>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <winerror.h>
+#undef DrawText
+
 #include <cmath>
 
 // 直接喂绘制指令的用例：只验渲染器，不经脚本和布局
@@ -571,7 +578,7 @@ namespace render_regression {
             return image;
         }
 
-        // 设备重建：画一帧，丢掉设备与全部显存资源，再画同一帧，两次必须逐像素相同
+        // 设备丢失自动恢复：绘制中途 DEVICE_REMOVED、窗口呈现 DEVICE_RESET（含交换链重建）、连续故障上限与恢复后逐像素一致
         Image deviceRebuild(CaseContext& context) {
             std::vector<DrawOp> ops;
             ops.push_back(withGradient(fill({20, 20, 200, 100}, 0, DrawShapeType::Rounded, CornerRadii::uniform(18)), linear({0, 0}, {1, 1}, sunset)));
@@ -586,12 +593,49 @@ namespace render_regression {
             for (auto& op : ops) DrawOpsBuilder::prepareText(op, context.text);
             PublishedFrameContent content;
             content.scenePaint = test_support::fragmentOf(std::move(ops));
-            const auto before = context.render(content);
-            const auto rebuilds = context.renderer.counters().deviceRebuilds;
-            context.renderer.recreateDevice();
-            if (context.renderer.counters().deviceRebuilds != rebuilds + 1) throw std::runtime_error("设备没有重建");
-            const auto after = context.render(content);
-            if (test_support::compareImages(before, after, 0).exceeding != 0) throw std::runtime_error("设备重建后的画面与重建前不一致");
+            content.viewport = {static_cast<float>(context.width), static_cast<float>(context.height)};
+
+            auto offscreen = context.renderer.createOffscreenTarget(context.width, context.height);
+            context.renderer.render(*offscreen, {&content});
+            const Image before{context.width, context.height, context.renderer.readPixels(*offscreen)};
+
+            // 1. 同一离屏目标在绘制中途遭遇 DEVICE_REMOVED：单次 render 内自动清理半帧状态、重建设备与图集并重画
+            auto rebuilds = context.renderer.counters().deviceRebuilds;
+            context.renderer.simulateDeviceLoss(DXGI_ERROR_DEVICE_REMOVED);
+            context.renderer.render(*offscreen, {&content});
+            if (context.renderer.counters().deviceRebuilds != rebuilds + 1) throw std::runtime_error("DEVICE_REMOVED 没有触发自动重建");
+            if (test_support::compareImages(before, {context.width, context.height, context.renderer.readPixels(*offscreen)}, 0).exceeding != 0) throw std::runtime_error("DEVICE_REMOVED 自动恢复后的画面不一致");
+
+            // 2. 窗口目标在 Present 阶段遭遇 DEVICE_RESET：自动重建设备、DXGI 交换链与 DirectComposition 并再次呈现
+            struct HiddenWindow {
+                HWND handle = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 128, 96, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+                ~HiddenWindow() {
+                    if (handle) DestroyWindow(handle);
+                }
+            } window;
+            if (!window.handle) throw std::runtime_error("无法创建测试窗口");
+            auto windowTarget = context.renderer.createWindowTarget(window.handle);
+            context.renderer.resize(*windowTarget, 128, 96);
+            context.renderer.render(*windowTarget, {&content});
+            rebuilds = context.renderer.counters().deviceRebuilds;
+            context.renderer.simulateDeviceLoss(DXGI_ERROR_DEVICE_RESET, 1, true);
+            context.renderer.render(*windowTarget, {&content});
+            if (context.renderer.counters().deviceRebuilds != rebuilds + 1) throw std::runtime_error("窗口交换链没有随 DEVICE_RESET 重建并呈现");
+
+            // 3. 连续丢失超过重试上限必须上报异常，不死循环；故障解除后同一目标继续恢复一致画面
+            rebuilds = context.renderer.counters().deviceRebuilds;
+            context.renderer.simulateDeviceLoss(DXGI_ERROR_DEVICE_REMOVED, 3);
+            bool propagated = false;
+            try {
+                context.renderer.render(*offscreen, {&content});
+            } catch (const std::runtime_error&) {
+                propagated = true;
+            }
+            if (!propagated || context.renderer.counters().deviceRebuilds != rebuilds + 2) throw std::runtime_error("连续设备丢失的重试上限行为不符");
+
+            context.renderer.render(*offscreen, {&content});
+            const Image after{context.width, context.height, context.renderer.readPixels(*offscreen)};
+            if (test_support::compareImages(before, after, 0).exceeding != 0) throw std::runtime_error("故障解除后恢复的画面与重建前不一致");
             return after;
         }
     }

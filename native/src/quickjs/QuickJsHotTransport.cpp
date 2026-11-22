@@ -1,9 +1,58 @@
 #include "QuickJsHotTransport.h"
 #include "QuickJsValueReader.h"
+
 #include <atomic>
+#include <filesystem>
+#include <stdexcept>
+#include <string_view>
 
 namespace canton::quickjs {
     namespace {
+        bool startsWithDotSpecifier(std::string_view specifier) {
+            return specifier == "." || specifier == ".." || specifier.starts_with("./") || specifier.starts_with("../");
+        }
+
+        char* normalizeLive(JSContext* context, const char* moduleBaseName, const char* moduleName, void* opaque) {
+            if (opaque == nullptr || moduleName == nullptr) return nullptr;
+            std::string name(moduleName);
+            if (startsWithDotSpecifier(name)) {
+                const std::string base(moduleBaseName ? moduleBaseName : "/");
+                name = (std::filesystem::path(base.substr(0, base.find('?'))).parent_path() / name).lexically_normal().generic_string();
+            }
+            if (!name.starts_with('/')) {
+                JS_ThrowReferenceError(context, "unresolved live ESM specifier '%s'", moduleName);
+                return nullptr;
+            }
+            return js_strdup(context, name.c_str());
+        }
+
+        JSModuleDef* loadLive(JSContext* context, const char* moduleName, void* opaque) {
+            const auto* live = static_cast<const QuickJsRuntimeContext::QuickJsLiveState*>(opaque);
+            try {
+                if (!live) throw std::runtime_error("no module source installed");
+                const auto source = live->sources.find(moduleName);
+                if (source == live->sources.end()) throw std::runtime_error("live ESM snapshot has no module");
+                const auto& text = source->second.source;
+                const JSValue value = JS_Eval(context, text.data(), text.size(), moduleName, JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY);
+                ScopedValue compiled(context, value);
+                if (JS_IsException(value)) return nullptr;
+                if (JS_VALUE_GET_TAG(value) != JS_TAG_MODULE) throw std::runtime_error("payload is not an ESM module");
+                auto* module = static_cast<JSModuleDef*>(JS_VALUE_GET_PTR(value));
+                ScopedValue meta(context, JS_GetImportMeta(context, module));
+                if (JS_IsException(meta.get()) || JS_SetPropertyStr(context, meta.get(), "url", JS_NewString(context, moduleName)) < 0) return nullptr;
+                return module;
+            } catch (const std::exception& error) {
+                JS_ThrowReferenceError(context, "UI module '%s': %s", moduleName, error.what());
+                return nullptr;
+            }
+        }
+
+        void installLiveSnapshot(QuickJsRuntimeContext& state, const LiveModuleSnapshot& snapshot) {
+            if (!state.live) state.live = std::make_unique<QuickJsRuntimeContext::QuickJsLiveState>();
+            for (const auto& module : snapshot.modules) state.live->sources.insert_or_assign(module.url, module);
+            JS_SetModuleLoaderFunc(state.runtime, &normalizeLive, &loadLive, state.live.get());
+        }
+
         JSValue toJs(JSContext* context, const HotValue& input) {
             return std::visit(
                 [&](const auto& value) -> JSValue {
@@ -79,10 +128,11 @@ namespace canton::quickjs {
     void installHotTransport(JSContext* context) {
         static std::atomic<std::uint64_t> nextSession{1};
         auto& state = *static_cast<QuickJsRuntimeContext*>(JS_GetContextOpaque(context));
-        state.hotSession = std::to_string(nextSession.fetch_add(1));
+        if (!state.live) state.live = std::make_unique<QuickJsRuntimeContext::QuickJsLiveState>();
+        state.live->session = std::to_string(nextSession.fetch_add(1));
         ScopedValue global(context, JS_GetGlobalObject(context));
         ScopedValue transport(context, JS_NewObject(context));
-        JS_SetPropertyStr(context, transport.get(), "session", JS_NewString(context, state.hotSession.c_str()));
+        JS_SetPropertyStr(context, transport.get(), "session", JS_NewString(context, state.live->session.c_str()));
         JS_SetPropertyStr(context, transport.get(), "send",
                           JS_NewCFunction(
                               context,
@@ -95,7 +145,8 @@ namespace canton::quickjs {
                                   message.event = event;
                                   JS_FreeCString(ctx, event);
                                   if (argc > 1 && !fromJs(ctx, argv[1], message.data)) return JS_ThrowTypeError(ctx, "HMR custom data must be an acyclic value tree");
-                                  static_cast<QuickJsRuntimeContext*>(JS_GetContextOpaque(ctx))->hotMessages.push_back(std::move(message));
+                                  auto& runtime = *static_cast<QuickJsRuntimeContext*>(JS_GetContextOpaque(ctx));
+                                  if (runtime.live) runtime.live->messages.push_back(std::move(message));
                                   return JS_UNDEFINED;
                               },
                               "send", 2));
@@ -133,5 +184,44 @@ namespace canton::quickjs {
         HotValue::Array paths;
         for (const auto& path : message.paths) paths.push_back({path});
         return toJs(context, {HotValue::Object{{"type", {message.type}}, {"updates", {std::move(updates)}}, {"paths", {std::move(paths)}}, {"event", {message.event}}, {"data", message.data}}});
+    }
+
+    ScriptExecutionResult QuickJsScriptHost::executeLiveModules(const LiveModuleSnapshot& snapshot) {
+        return runModuleTask(__func__, true, [&](QuickJsRuntimeContext& state, std::string&) {
+            installLiveSnapshot(state, snapshot);
+            installHotTransport(state.context);
+            auto* module = loadLive(state.context, snapshot.entry.c_str(), state.live.get());
+            if (!module) return false;
+            ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, JS_MKPTR(JS_TAG_MODULE, module))));
+            return !JS_IsException(result.get());
+        });
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::applyHotUpdate(const LiveModuleSnapshot& snapshot, const HotMessage& message) {
+        auto* current = runtimeContext();
+        if (!current || !current->context) return {false, "HMR runtime 尚未初始化"};
+        const auto executed = runModuleTask(__func__, false, [&](QuickJsRuntimeContext& state, std::string& customError) {
+            if (message.event == "canton:import-ready") {
+                const auto* data = std::get_if<HotValue::Object>(&message.data.value);
+                if (!data || !data->contains("session") || !std::holds_alternative<std::string>(data->at("session").value) || !state.live || std::get<std::string>(data->at("session").value) != state.live->session) return true;
+            }
+            installLiveSnapshot(state, snapshot);
+            ScopedValue global(state.context, JS_GetGlobalObject(state.context));
+            ScopedValue receive(state.context, JS_GetPropertyStr(state.context, global.get(), "__CANTON_HOT_RECEIVE__"));
+            if (!JS_IsFunction(state.context, receive.get())) {
+                customError = "HMR runtime 未安装";
+                return false;
+            }
+            ScopedValue argument(state.context, hotMessageValue(state.context, message));
+            JSValueConst argv[] = {argument.get()};
+            ScopedValue result(state.context, JS_Call(state.context, receive.get(), JS_UNDEFINED, 1, argv));
+            return !JS_IsException(result.get());
+        });
+        return {executed.ok, executed.error};
+    }
+
+    std::vector<HotMessage> QuickJsScriptHost::takeHotMessages() {
+        auto* state = runtimeContext();
+        return state && state->live ? std::exchange(state->live->messages, {}) : std::vector<HotMessage>{};
     }
 }

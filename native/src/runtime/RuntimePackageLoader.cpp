@@ -19,47 +19,13 @@ namespace canton::runtime {
         }
     }
 
-    void RuntimePackageLoader::configureHost(quickjs::QuickJsScriptHost& host, RuntimeLoadResources resources) const {
-        if (fonts_) host.setFontRegistry(fonts_);
-        host.setNativePainterRegistry(painters_);
-        host.setPainterLoader(std::move(resources.painter));
-        host.setAssetLoader(std::move(resources.asset));
-    }
-
-    RuntimePackageLoadResult RuntimePackageLoader::loadLiveSnapshot(const std::string& devServerUrl, const quickjs::LiveModuleSnapshot& snapshot, const std::string& error) const {
-        RuntimePackageLoadResult result;
-        if (devServerUrl.empty()) {
-            result.error = makeErrorScreenModel(ErrorSource::AppPackage, "Canton 开发服务器地址无效");
-            setToast(result, core::LogLevel::Error, "Live 源无效", result.error->summary);
-            return result;
-        }
-
-        if (!error.empty()) {
-            result.error = makeErrorScreenModel(ErrorSource::ScriptLoad, error, {}, devServerUrl);
-            setToast(result, core::LogLevel::Error, "Live 模块加载失败", error);
-            return result;
-        }
-
-        auto scriptHost = std::make_unique<canton::quickjs::QuickJsScriptHost>();
-        try {
-            configureHost(*scriptHost, liveResources_ ? liveResources_(devServerUrl) : RuntimeLoadResources{});
-        } catch (const std::exception& failure) {
-            result.error = makeErrorScreenModel(ErrorSource::AppPackage, failure.what(), {}, devServerUrl);
-            setToast(result, core::LogLevel::Error, "Live 资源来源无效", failure.what());
-            return result;
-        }
-        const auto executed = scriptHost->executeLiveModules(snapshot);
-        if (!executed.ok) {
-            result.error = makeErrorScreenModel(ErrorSource::ScriptRuntime, executed.error, {}, devServerUrl);
-            setToast(result, core::LogLevel::Error, "Live 运行时异常", executed.error);
-            return result;
-        }
-        auto initialTransaction = scriptHost->takePendingTransaction();
-        result.initialTransaction = std::move(initialTransaction);
-        result.scriptHost = std::move(scriptHost);
-        result.ok = true;
-        setToast(result, core::LogLevel::Info, "Live App 已启动", devServerUrl);
-        return result;
+    std::unique_ptr<quickjs::QuickJsScriptHost> RuntimePackageLoader::createHost(RuntimeLoadResources resources) const {
+        auto host = std::make_unique<canton::quickjs::QuickJsScriptHost>();
+        if (fonts_) host->setFontRegistry(fonts_);
+        host->setNativePainterRegistry(painters_);
+        host->setPainterLoader(std::move(resources.painter));
+        host->setAssetLoader(std::move(resources.asset));
+        return host;
     }
 
     RuntimePackageLoadResult RuntimePackageLoader::loadDist(const ResolvedDist& dist) const {
@@ -71,9 +37,9 @@ namespace canton::runtime {
             return result;
         }
 
-        auto scriptHost = std::make_unique<canton::quickjs::QuickJsScriptHost>();
+        std::unique_ptr<canton::quickjs::QuickJsScriptHost> scriptHost;
         try {
-            configureHost(*scriptHost, distResources_ ? distResources_(dist.package) : RuntimeLoadResources{});
+            scriptHost = createHost(distResources_ ? distResources_(dist.package) : RuntimeLoadResources{});
         } catch (const std::exception& failure) {
             result.error = makeErrorScreenModel(ErrorSource::AppPackage, failure.what(), {}, dist.location);
             setToast(result, core::LogLevel::Error, "Dist 资源来源无效", failure.what());

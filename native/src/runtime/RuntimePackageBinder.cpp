@@ -58,7 +58,7 @@ namespace canton::runtime {
     }
 
     void RuntimePackageBinder::deliverToast(DiagnosticsState& diagnostics, CantonRuntime& runtime, RuntimeLoadToast toast) {
-        if (DiagnosticsToast::show(diagnostics, toast.level, TAG, std::move(toast.title), std::move(toast.message), toast.coalesce)) runtime.enqueueIntent(canton::core::InputIntent::diagnostics());
+        if (diagnostics.notify(toast.level, TAG, std::move(toast.title), std::move(toast.message), toast.coalesce)) runtime.enqueueIntent(canton::core::InputIntent::diagnostics());
     }
 }
 

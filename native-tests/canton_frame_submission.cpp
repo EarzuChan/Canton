@@ -192,7 +192,7 @@ namespace {
         runtime.enqueue(std::move(initial));
         bool failResources = false;
         const auto pump = [&](double now) {
-            return driver.pumpFrame(runtime, session, diagnostics, 1, {}, {0, 0, 400, 300}, true, {}, text, now, [&](const auto&, auto&) {
+            return driver.pumpFrame(runtime, session, diagnostics, 1, {}, {0, 0, 400, 300}, true, canton::runtime::PackageSource::None, false, text, now, [&](const auto&, auto&) {
                 if (failResources) throw std::runtime_error("resource preparation failed");
             });
         };
@@ -243,10 +243,7 @@ namespace {
             std::ofstream(directory / std::string(canton::runtime::uiManifestName), std::ios::binary) << "{\"format\":3,\"framework\":\"" << canton::core::PackageVersion << "\",\"protocol\":" << canton::core::RuntimeVersion << ",\"scriptFormat\":\"js\",\"entry\":\"app.js\",\"entries\":[{\"path\":\"app.js\",\"kind\":\"module\",\"size\":" << source.size() << ",\"sha256\":\"" << digest << "\"}]}";
         };
         canton::core::ApproximateTextMeasurer measurer;
-        canton::runtime::SceneHostOptions options;
-        options.diagnostics.badge = canton::runtime::DiagnosticVisibility::Hidden;
-        options.diagnostics.toasts = canton::runtime::DiagnosticVisibility::Hidden;
-        canton::runtime::SceneHost host(measurer, std::make_shared<FontRegistry>(), options);
+        canton::runtime::SceneHost host(measurer, std::make_shared<FontRegistry>(), {});
         host.resize(100, 100);
         const auto pixel = [&] {
             auto target = renderer.createOffscreenTarget(100, 100);

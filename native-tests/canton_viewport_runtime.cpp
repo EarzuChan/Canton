@@ -80,10 +80,7 @@ namespace {
         const test_support::ComApartment apartment;
         canton::d3d11::Renderer renderer({canton::d3d11::AdapterPreference::Warp});
         canton::d3d11::DWriteTextMeasurer measurer;
-        canton::runtime::SceneHostOptions options;
-        options.diagnostics.toasts = canton::runtime::DiagnosticVisibility::Hidden;
-        options.diagnostics.badge = canton::runtime::DiagnosticVisibility::Hidden;
-        canton::runtime::SceneHost host(measurer, std::make_shared<FontRegistry>(), options);
+        canton::runtime::SceneHost host(measurer, std::make_shared<FontRegistry>(), {});
         host.resize(200, 100);
         canton::runtime::AppSourceConfig source;
         source.policy = canton::runtime::LoadPolicy::OnlyDist;

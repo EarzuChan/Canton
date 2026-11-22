@@ -1,7 +1,10 @@
 ﻿#pragma once
 
+#include <core/Paint.h>
+
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace canton::runtime {
     enum class ErrorSource {
@@ -27,4 +30,5 @@ namespace canton::runtime {
 
     const char* toString(ErrorSource source) noexcept;
     ErrorScreenModel makeErrorScreenModel(ErrorSource source, std::string summary, std::string detail = {}, std::filesystem::path relatedPath = {}, bool retryAvailable = true);
+    [[nodiscard]] std::vector<core::DrawOp> buildErrorScreenOps(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed);
 }

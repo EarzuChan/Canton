@@ -19,6 +19,14 @@ namespace canton::runtime {
     [[nodiscard]] const char* loadPolicyLabel(LoadPolicy policy) noexcept;
     [[nodiscard]] std::optional<LoadPolicy> parseLoadPolicy(std::string_view label) noexcept;
 
+    enum class PackageSource {
+        None,
+        Live,
+        Dist,
+    };
+
+    const char* packageSourceLabel(PackageSource source) noexcept;
+
     // 应用源配置，由宿主装配时给定
     struct AppSourceConfig {
         LoadPolicy policy = LoadPolicy::OnlyDist;

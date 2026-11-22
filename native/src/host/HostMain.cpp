@@ -67,7 +67,7 @@ namespace canton::host {
         }
     }
 
-    int runHost(const HostAssembly& assembly, const std::string& startupError) {
+    int runHost(HostAssembly assembly, const std::string& startupError) {
         const auto fonts = std::make_shared<core::FontRegistry>();
         const d3d11::DWriteTextMeasurer measurer(fonts.get());
         d3d11::Renderer renderer;
@@ -93,10 +93,9 @@ namespace canton::host {
         };
 
         runtime::SceneHostOptions options;
-        options.diagnostics = assembly.diagnostics;
+        options.hud = std::move(assembly.hud);
         options.detailedErrorScreen = assembly.detailedErrorScreen;
-        if (assembly.liveClient) options.liveClient = assembly.liveClient(wake);
-        options.liveResources = assembly.liveResources;
+        if (assembly.live) options.live = assembly.live(wake);
         options.painters = std::make_shared<core::NativePainterRegistry>();
         runtime::SceneHost scene(measurer, fonts, std::move(options));
         const auto target = renderer.createWindowTarget(window.handle());
@@ -194,7 +193,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             assembly.source.bundleRoot = bundleRoot;
             core::Log::e("Host", "宿主装配失败", startupError);
         }
-        code = host::runHost(assembly, startupError);
+        code = host::runHost(std::move(assembly), startupError);
     } catch (const std::exception& error) {
         core::Log::e("Host", "宿主异常退出", error.what());
     }

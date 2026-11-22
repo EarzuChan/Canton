@@ -34,7 +34,7 @@ namespace canton::runtime {
         }
 
         void emitToast(DiagnosticsState& diagnostics, CantonRuntime& runtime, std::string_view tag, core::LogLevel level, std::string title, std::string message = {}, bool coalesce = true) {
-            if (DiagnosticsToast::show(diagnostics, level, tag, std::move(title), std::move(message), coalesce)) runtime.enqueueIntent(canton::core::InputIntent::diagnostics());
+            if (diagnostics.notify(level, tag, std::move(title), std::move(message), coalesce)) runtime.enqueueIntent(canton::core::InputIntent::diagnostics());
         }
     }
 

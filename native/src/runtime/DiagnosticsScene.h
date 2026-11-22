@@ -1,9 +1,11 @@
 #pragma once
 
 #include <core/Paint.h>
+#include <runtime/DiagnosticsState.h>
 #include <runtime/DiagnosticsTypes.h>
 #include <runtime/ErrorScreenModel.h>
 
+#include <memory>
 #include <vector>
 
 namespace canton::runtime {
@@ -21,5 +23,7 @@ namespace canton::runtime {
         static canton::core::DrawOp badgeText(canton::core::Rect area, std::string value, const canton::core::TextLayoutService& textLayout);
         static canton::core::DrawOp text(canton::core::Rect rect, std::string value, std::uint32_t color, float fontSize, int maxLines = 1);
     };
+
+    [[nodiscard]] std::unique_ptr<DiagnosticsHud> createDiagnosticsHud(DiagnosticsConfig config = {});
 
 }

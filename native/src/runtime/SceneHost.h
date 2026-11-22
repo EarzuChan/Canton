@@ -15,14 +15,13 @@
 
 namespace canton::runtime {
     struct SceneHostOptions {
-        DiagnosticsConfig diagnostics;
+        std::unique_ptr<DiagnosticsHud> hud;
         // 错误屏是否带详细信息
         bool detailedErrorScreen = true;
         // 诊断层文字用的字体族；空表示平台默认字体
         std::vector<std::string> diagnosticsFontFamily;
-        // 不给 Live 客户端就只有 dist 一种策略可用
-        PackageRuntimeSource::LiveClientFactory liveClient;
-        RuntimePackageLoader::LiveResources liveResources;
+        // 不给 Live 会话就只有 dist 一种策略可用
+        PackageRuntimeSource::LiveSessionFactory live;
         RuntimePackageLoader::DistResources distResources;
         AppResolver::MountPackage mountPackage;
         std::shared_ptr<const core::NativePainterRegistry> painters;
@@ -80,14 +79,10 @@ namespace canton::runtime {
         }
 
        private:
-        static constexpr std::string_view TAG = "SceneHost";
-
         void apply(PackageLoadOutcome outcome);
-        void drainLivePackets();
-        void failHotUpdate(const std::string& reason);
-        [[nodiscard]] DiagnosticsBadgeModel badgeModel() const;
 
-        SceneHostOptions options_;
+        std::vector<std::string> diagnosticsFontFamily_;
+        bool detailedErrorScreen_ = true;
         core::TextLayoutService textLayout_;
         CantonRuntime runtime_;
         RuntimeSessionState session_;
@@ -97,10 +92,5 @@ namespace canton::runtime {
         FramePumpDriver framePump_;
         core::Rect bounds_{};
         bool reloadRequested_ = false;
-        // 错误屏来自热更新失败，脚本上下文本身还好着：下一次热更新成功就地恢复，不必整体重载
-        bool hotUpdateFailed_ = false;
-        bool fpsEnabled_ = false;
-        double fpsWindowStart_ = 0;
-        int fpsFrames_ = 0;
     };
 }

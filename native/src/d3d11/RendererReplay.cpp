@@ -153,6 +153,10 @@ namespace canton::d3d11 {
             constants.clipFlags[0] = static_cast<float>(current.clip.kind);
             constants.clipFlags[1] = current.mask >= 0 ? 1.0f : 0.0f;
             D3D11_MAPPED_SUBRESOURCE mapped{};
+            if (injectedLossRemaining > 0 && !injectedLossOnPresent) {
+                --injectedLossRemaining;
+                throw PlatformError("无法写入常量缓冲", injectedLossCode);
+            }
             check(context->Map(constantBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped), "无法写入常量缓冲");
             std::memcpy(mapped.pData, &constants, sizeof(constants));
             context->Unmap(constantBuffer.Get(), 0);

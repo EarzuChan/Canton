@@ -28,8 +28,9 @@ namespace canton::runtime {
         void reset() noexcept;
 
         void setScriptHost(std::unique_ptr<canton::quickjs::QuickJsScriptHost> host) noexcept;
-        quickjs::CallbackInvokeResult applyHotUpdate(const quickjs::LiveModuleSnapshot& snapshot, const quickjs::HotMessage& message);
-        std::vector<quickjs::HotMessage> takeHotMessages();
+        [[nodiscard]] canton::quickjs::QuickJsScriptHost* scriptHost() noexcept {
+            return scriptHost_.get();
+        }
 
         [[nodiscard]] bool hasScriptHost() const noexcept;
         [[nodiscard]] bool hasPendingVisualWork() const noexcept;

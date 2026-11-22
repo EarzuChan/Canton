@@ -79,8 +79,9 @@ namespace canton::d3d11 {
         // 离屏目标的像素，预乘 0xAARRGGBB，行优先
         [[nodiscard]] std::vector<std::uint32_t> readPixels(RenderTarget& target);
 
-        // 丢弃设备与全部显存资源并重建，与设备丢失后的恢复是同一条路径
+        // 丢弃设备与全部显存资源并重建；simulateDeviceLoss 供测试在绘制或呈现阶段注入设备丢失码（HRESULT）
         void recreateDevice();
+        void simulateDeviceLoss(long code, int count = 1, bool onPresent = false) noexcept;
 
         [[nodiscard]] const RenderCounters& counters() const noexcept;
 

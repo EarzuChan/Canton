@@ -1,7 +1,10 @@
 #include <runtime/LiveClient.h>
 
+#include <core/InputIntent.h>
 #include <core/Log.h>
+#include <runtime/CantonRuntime.h>
 #include <runtime/DevServerClient.h>
+#include <runtime/DiagnosticsState.h>
 #include <runtime/HttpClient.h>
 #include <runtime/Json.h>
 
@@ -369,5 +372,135 @@ namespace canton::runtime {
 
     std::unique_ptr<LiveModuleClient> createLiveModuleClient(std::function<void()> wake) {
         return std::make_unique<LiveClient>(std::move(wake));
+    }
+
+    namespace {
+        constexpr std::string_view SESSION_TAG = "SceneHost";
+
+        RuntimePackageLoadResult loadLiveSnapshot(const RuntimePackageLoader& loader, const RuntimePackageLoader::LiveResources& liveResources, const std::string& devServerUrl, const quickjs::LiveModuleSnapshot& snapshot, const std::string& error) {
+            RuntimePackageLoadResult result;
+            if (devServerUrl.empty()) {
+                result.error = makeErrorScreenModel(ErrorSource::AppPackage, "Canton 开发服务器地址无效");
+                result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 源无效", result.error->summary, true};
+                return result;
+            }
+            if (!error.empty()) {
+                result.error = makeErrorScreenModel(ErrorSource::ScriptLoad, error, {}, devServerUrl);
+                result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 模块加载失败", error, true};
+                return result;
+            }
+            std::unique_ptr<canton::quickjs::QuickJsScriptHost> scriptHost;
+            try {
+                scriptHost = loader.createHost(liveResources ? liveResources(devServerUrl) : RuntimeLoadResources{});
+            } catch (const std::exception& failure) {
+                result.error = makeErrorScreenModel(ErrorSource::AppPackage, failure.what(), {}, devServerUrl);
+                result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 资源来源无效", failure.what(), true};
+                return result;
+            }
+            const auto executed = scriptHost->executeLiveModules(snapshot);
+            if (!executed.ok) {
+                result.error = makeErrorScreenModel(ErrorSource::ScriptRuntime, executed.error, {}, devServerUrl);
+                result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 运行时异常", executed.error, true};
+                return result;
+            }
+            result.initialTransaction = scriptHost->takePendingTransaction();
+            result.scriptHost = std::move(scriptHost);
+            result.ok = true;
+            result.toast = RuntimeLoadToast{core::LogLevel::Info, "Live App 已启动", devServerUrl, true};
+            return result;
+        }
+
+        class LiveSessionImpl final : public LiveSession {
+           public:
+            LiveSessionImpl(std::unique_ptr<LiveModuleClient> client, RuntimePackageLoader::LiveResources resources) : client_(std::move(client)), resources_(std::move(resources)) {}
+
+            void start(const std::string& devServerUrl) override {
+                unavailable_ = false;
+                hotUpdateFailed_ = false;
+                client_->start(devServerUrl);
+            }
+
+            void requestReload() override {
+                client_->requestReload();
+            }
+
+            bool unavailable() const noexcept override {
+                return unavailable_;
+            }
+
+            void pump(PackageRuntimeSource& source, CantonRuntime& runtime, DiagnosticsState& diagnostics, const std::function<void(PackageLoadOutcome)>& apply) override {
+                for (auto& packet : client_->takePackets()) {
+                    if (packet.reload) {
+                        hotUpdateFailed_ = false;
+                        apply(completeLoad(source, std::move(packet)));
+                        continue;
+                    }
+                    const auto live = source.activeSource() == PackageSource::Live;
+                    if (packet.message.type == "update" && (!live || (diagnostics.hasError() && !hotUpdateFailed_))) {
+                        hotUpdateFailed_ = false;
+                        apply(source.reload());
+                        continue;
+                    }
+                    if (packet.error.empty() && live) {
+                        auto* host = runtime.scriptHost();
+                        const auto result = host ? host->applyHotUpdate(packet.snapshot, packet.message) : quickjs::CallbackInvokeResult{false, "没有 live script host"};
+                        runtime.notifyWorkAvailable();
+                        if (!result.ok)
+                            packet.error = result.error;
+                        else if (hotUpdateFailed_ && packet.message.type == "update") {
+                            hotUpdateFailed_ = false;
+                            diagnostics.clearError();
+                            (void)diagnostics.notify(core::LogLevel::Info, SESSION_TAG, "热更新已恢复", source.config().devServerUrl);
+                            runtime.enqueueIntent(core::InputIntent::diagnostics());
+                        }
+                    }
+                    if (!packet.error.empty()) {
+                        diagnostics.setError(makeErrorScreenModel(ErrorSource::Hmr, packet.error, "改好后保存，画面会自动恢复", source.config().devServerUrl));
+                        (void)diagnostics.notify(core::LogLevel::Error, SESSION_TAG, "Live 热更新失败", packet.error);
+                        hotUpdateFailed_ = true;
+                        runtime.enqueueIntent(core::InputIntent::diagnostics());
+                    }
+                }
+                if (auto* host = runtime.scriptHost())
+                    for (const auto& message : host->takeHotMessages()) client_->send(message);
+            }
+
+           private:
+            PackageLoadOutcome completeLoad(PackageRuntimeSource& source, LiveModulePacket packet) {
+                const auto& config = source.config();
+                if (packet.unavailable) {
+                    unavailable_ = true;
+                    if (config.policy == LoadPolicy::LiveThenDist && !source.resolver().locateDist(config).missing) {
+                        auto outcome = source.loadDistPackage();
+                        outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
+                        outcome.toasts.insert(outcome.toasts.begin(), RuntimeLoadToast{core::LogLevel::Warn, "Live 不可用，已回退到 Dist", packet.error + "；DevServer 恢复后自动切回 Live", false});
+                        return outcome;
+                    }
+                    PackageLoadOutcome outcome;
+                    outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
+                    source.setActiveSource(PackageSource::None);
+                    const auto detail = config.policy == LoadPolicy::LiveThenDist ? "也没有可回退的 Dist 包。启动 DevServer 后会自动连接" : "启动 DevServer 后会自动连接";
+                    outcome.error = makeErrorScreenModel(ErrorSource::AppPackage, "连不上 Live DevServer：" + config.devServerUrl, packet.error + "\n" + detail, {}, true);
+                    outcome.toasts.push_back({core::LogLevel::Error, "Live 不可用", packet.error, true});
+                    return outcome;
+                }
+                auto outcome = PackageRuntimeSource::fromLoadResult(loadLiveSnapshot(source.loader(), resources_, config.devServerUrl, packet.snapshot, packet.error), PackageSource::Live);
+                outcome.intentKind = PackageLoadOutcome::IntentKind::HmrReload;
+                unavailable_ = false;
+                source.setActiveSource(outcome.loaded ? PackageSource::Live : PackageSource::None);
+                return outcome;
+            }
+
+            std::unique_ptr<LiveModuleClient> client_;
+            RuntimePackageLoader::LiveResources resources_;
+            bool unavailable_ = false;
+            bool hotUpdateFailed_ = false;
+        };
+    }
+
+    PackageRuntimeSource::LiveSessionFactory makeLiveSessionFactory(std::function<void()> wake, RuntimePackageLoader::LiveResources resources) {
+        return [wake = std::move(wake), resources = std::move(resources)] {
+            return std::make_unique<LiveSessionImpl>(createLiveModuleClient(wake), resources);
+        };
     }
 }

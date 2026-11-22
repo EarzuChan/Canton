@@ -45,14 +45,12 @@ namespace canton::runtime {
         using LiveResources = std::function<RuntimeLoadResources(std::string_view)>;
         using DistResources = std::function<RuntimeLoadResources(std::shared_ptr<const core::UiPackage>)>;
 
-        RuntimePackageLoader(LiveResources liveResources, DistResources distResources, std::shared_ptr<core::FontRegistry> fonts, std::shared_ptr<const core::NativePainterRegistry> painters) : liveResources_(std::move(liveResources)), distResources_(std::move(distResources)), fonts_(std::move(fonts)), painters_(std::move(painters)) {}
+        RuntimePackageLoader(DistResources distResources, std::shared_ptr<core::FontRegistry> fonts, std::shared_ptr<const core::NativePainterRegistry> painters) : distResources_(std::move(distResources)), fonts_(std::move(fonts)), painters_(std::move(painters)) {}
 
-        RuntimePackageLoadResult loadLiveSnapshot(const std::string& devServerUrl, const quickjs::LiveModuleSnapshot& snapshot, const std::string& error) const;
+        [[nodiscard]] std::unique_ptr<quickjs::QuickJsScriptHost> createHost(RuntimeLoadResources resources) const;
         RuntimePackageLoadResult loadDist(const ResolvedDist& dist) const;
 
        private:
-        void configureHost(quickjs::QuickJsScriptHost& host, RuntimeLoadResources resources) const;
-        LiveResources liveResources_;
         DistResources distResources_;
         std::shared_ptr<core::FontRegistry> fonts_;
         std::shared_ptr<const core::NativePainterRegistry> painters_;

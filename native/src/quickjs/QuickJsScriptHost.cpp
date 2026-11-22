@@ -1,5 +1,4 @@
 #include <quickjs/QuickJsScriptHost.h>
-#include "QuickJsHotTransport.h"
 
 #include "QuickJsNativeApi.h"
 #include "QuickJsRuntimeContext.h"
@@ -117,7 +116,7 @@ namespace canton::quickjs {
             runtime.moduleLoader.clear();
             runtime.diagnosticToasts.clear();
             runtime.diagnosticActions.clear();
-            runtime.hotMessages.clear();
+            runtime.live.reset();
         }
 
         void initialise(QuickJsScriptHost* owner) {
@@ -512,43 +511,20 @@ namespace canton::quickjs {
         return {true, {}};
     }
 
-    ScriptExecutionResult QuickJsScriptHost::executeLiveModules(const LiveModuleSnapshot& snapshot) {
-        pendingTransactions_.clear();
-        impl_->initialise(this);
-        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
-        auto& state = impl_->runtime;
-        state.moduleLoader.install(snapshot);
-        installHotTransport(state.context);
-        auto* module = QuickJsModuleLoader::load(state.context, snapshot.entry.c_str(), &state.moduleLoader);
-        if (!module) return {false, impl_->exceptionText(state.context)};
-        ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, JS_MKPTR(JS_TAG_MODULE, module))));
-        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
-        const auto drained = impl_->drainJobs();
-        return {drained.ok, drained.error};
+    QuickJsRuntimeContext* QuickJsScriptHost::runtimeContext() noexcept {
+        return impl_ ? &impl_->runtime : nullptr;
     }
 
-    CallbackInvokeResult QuickJsScriptHost::applyHotUpdate(const LiveModuleSnapshot& snapshot, const HotMessage& message) {
-        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
-        auto& state = impl_->runtime;
-        if (!state.context) return {false, "HMR runtime 尚未初始化"};
-        if (message.event == "canton:import-ready") {
-            const auto* data = std::get_if<HotValue::Object>(&message.data.value);
-            if (!data || !data->contains("session") || !std::holds_alternative<std::string>(data->at("session").value) || std::get<std::string>(data->at("session").value) != state.hotSession) return {true, {}};
+    ScriptExecutionResult QuickJsScriptHost::runModuleTask(const char* name, bool resetFirst, const std::function<bool(QuickJsRuntimeContext&, std::string&)>& step) {
+        if (resetFirst) {
+            pendingTransactions_.clear();
+            impl_->initialise(this);
         }
-        state.moduleLoader.install(snapshot);
-        ScopedValue global(state.context, JS_GetGlobalObject(state.context));
-        ScopedValue receive(state.context, JS_GetPropertyStr(state.context, global.get(), "__CANTON_HOT_RECEIVE__"));
-        if (!JS_IsFunction(state.context, receive.get())) return {false, "HMR runtime 未安装"};
-        ScopedValue argument(state.context, hotMessageValue(state.context, message));
-        JSValueConst argv[] = {argument.get()};
-        ScopedValue result(state.context, JS_Call(state.context, receive.get(), JS_UNDEFINED, 1, argv));
-        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        Impl::TaskBudget budget(*impl_, name, impl_->limits.moduleMillis);
+        std::string customError;
+        if (!step(impl_->runtime, customError)) return {false, customError.empty() ? impl_->exceptionText(impl_->runtime.context) : std::move(customError)};
         const auto drained = impl_->drainJobs();
         return {drained.ok, drained.error};
-    }
-
-    std::vector<HotMessage> QuickJsScriptHost::takeHotMessages() {
-        return std::exchange(impl_->runtime.hotMessages, {});
     }
 
     std::vector<canton::core::FocusCommand> QuickJsScriptHost::takeFocusCommands() {

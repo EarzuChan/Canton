@@ -1,31 +1,34 @@
 #include <runtime/DiagnosticsState.h>
 
-
+#include <core/InputIntent.h>
 #include <core/TextLayoutService.h>
+#include <runtime/CantonRuntime.h>
+
+#include <algorithm>
 #include <sstream>
 #include <utility>
 
 namespace canton::runtime {
     namespace {
-        std::string diagnosticsFrameSignature(core::Rect bounds, const DiagnosticsState& diagnostics, bool detailedErrorScreen, const DiagnosticsBadgeModel& badgeModel) {
+        void replacePreparedOps(std::vector<canton::core::DrawOp>& target, std::vector<canton::core::DrawOp> source) {
+            for (std::size_t index = 0; index < std::min(target.size(), source.size()); ++index) {
+                auto& next = source[index];
+                const auto& previous = target[index];
+                if (next.type == canton::core::DrawOpType::DrawText && previous.type == canton::core::DrawOpType::DrawText && !next.textLayout && next.text == previous.text && next.textStyle == previous.textStyle && next.rect.width == previous.rect.width && next.maxLines == previous.maxLines && next.overflow == previous.overflow) next.textLayout = previous.textLayout;
+            }
+            target = std::move(source);
+        }
+
+        std::string errorFrameSignature(core::Rect bounds, const ErrorScreenModel* error, bool detailedErrorScreen, std::uint64_t environment) {
             std::ostringstream out;
-            out << bounds.x << ',' << bounds.y << ',' << bounds.width << ',' << bounds.height;
-            out << "|detail=" << (detailedErrorScreen ? 1 : 0);
-            out << "|badge=" << static_cast<int>(diagnostics.badgeVisibility()) << ':' << badgeModel.text << ':' << badgeModel.dot;
-            out << "|toastVisibility=" << static_cast<int>(diagnostics.toastVisibility());
-            if (const auto* error = diagnostics.error()) {
-                out << "|error=" << error->diagnosticText();
-            }
-            for (const auto& toast : diagnostics.activeToastModels()) {
-                out << "|toast=" << static_cast<int>(toast.level) << ':' << toast.title << ':' << toast.message;
-            }
+            out << bounds.x << ',' << bounds.y << ',' << bounds.width << ',' << bounds.height << "|detail=" << (detailedErrorScreen ? 1 : 0) << "|font=" << environment;
+            if (error) out << "|error=" << (detailedErrorScreen ? error->diagnosticText() : error->summary);
             return out.str();
         }
     }
 
-    void DiagnosticsState::configure(DiagnosticsConfig config) {
-        model_.configure(std::move(config));
-        error_.reset();
+    void DiagnosticsState::setHud(std::unique_ptr<DiagnosticsHud> hud) noexcept {
+        hud_ = std::move(hud);
         invalidatePreparedFrame();
     }
 
@@ -51,80 +54,55 @@ namespace canton::runtime {
         invalidatePreparedFrame();
     }
 
-    bool DiagnosticsState::addToast(core::LogLevel level, std::string title, std::string message, double nowMillis, bool coalesce) {
-        const auto changed = model_.addToast(level, std::move(title), std::move(message), nowMillis, coalesce);
-        invalidatePreparedFrame();
-        return changed;
+    bool DiagnosticsState::notify(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce) {
+        if (hud_) return hud_->showToast(level, tag, std::move(title), std::move(message), coalesce);
+        core::Log::write(level, tag, message.empty() ? title : title + "：" + message);
+        return false;
     }
 
-    bool DiagnosticsState::tick(double nowMillis) {
-        const auto changed = model_.tick(nowMillis);
-        if (changed) invalidatePreparedFrame();
-        return changed;
+    bool DiagnosticsState::tick(CantonRuntime& runtime, double nowMillis) {
+        if (hud_) {
+            if (!hud_->tick(runtime, nowMillis)) return false;
+            runtime.enqueueIntent(canton::core::InputIntent::diagnostics());
+            return true;
+        }
+        (void)runtime.takeDiagnosticToasts();
+        for (const auto& action : runtime.takeDiagnosticActions())
+            if (action.kind == canton::quickjs::QuickJsDiagnosticActionKind::RequestReload) runtime.requestReload();
+        return false;
     }
 
     bool DiagnosticsState::hasActiveToasts() const noexcept {
-        return model_.hasActiveToasts();
+        return hud_ && hud_->hasActiveToasts();
     }
 
-    std::vector<DiagnosticsToastModel> DiagnosticsState::activeToastModels() const {
-        return model_.activeToastModels();
+    bool DiagnosticsState::fpsEnabled() const noexcept {
+        return hud_ && hud_->fpsEnabled();
     }
 
-    DiagnosticVisibility DiagnosticsState::badgeVisibility() const noexcept {
-        return model_.badgeVisibility();
-    }
-
-    DiagnosticVisibility DiagnosticsState::toastVisibility() const noexcept {
-        return model_.toastVisibility();
-    }
-
-    void DiagnosticsState::setToastsEnabled(bool enabled) noexcept {
-        model_.setToastsEnabled(enabled);
-        invalidatePreparedFrame();
+    void DiagnosticsState::recordFrame(bool changed, bool ready, double nowMillis, CantonRuntime& runtime) {
+        if (hud_) hud_->recordFrame(changed, ready, nowMillis, runtime);
     }
 
     void DiagnosticsState::invalidatePreparedFrame() noexcept {
         preparedSignature_.clear();
         preparedErrorOps_.clear();
-        preparedBadgeOps_.clear();
-        preparedToastOps_.clear();
     }
 
-    bool DiagnosticsState::prepareFrame(core::Rect bounds, bool detailedErrorScreen, const DiagnosticsBadgeModel& badgeModel, const canton::core::TextLayoutService& textLayout) {
-        const auto environment = textLayout.environment();
-        const auto fps = error_ ? std::nullopt : fps_;
-        const auto fpsChanged = preparedFps_ != fps || (fps && (preparedFpsBounds_ != bounds || preparedFpsOps_.back().textLayout->environment != environment));
-        if (fpsChanged) {
-            preparedFpsOps_ = fps ? diagnosticsScene_.buildFpsBadge(bounds, *fps, textLayout) : std::vector<canton::core::DrawOp>{};
-            preparedFpsBounds_ = bounds;
-            preparedFps_ = fps;
+    void DiagnosticsState::prepareFrame(core::Rect bounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, core::PublishedFrameContent& content) {
+        const auto signature = errorFrameSignature(bounds, error(), detailedErrorScreen, textLayout.environment());
+        if (signature != preparedSignature_) {
+            preparedErrorOps_ = error_ ? buildErrorScreenOps(bounds, *error_, detailedErrorScreen) : std::vector<canton::core::DrawOp>{};
+            preparedSignature_ = signature;
         }
-
-        const auto signature = diagnosticsFrameSignature(bounds, *this, detailedErrorScreen, badgeModel) + "|font=" + std::to_string(environment);
-        if (signature == preparedSignature_) {
-            return fpsChanged;
+        replacePreparedOps(content.diagnosticsErrorDrawOps, preparedErrorOps_);
+        if (hud_) {
+            hud_->prepare(bounds, hasError(), activeSource, liveUnavailable, textLayout, content);
+            return;
         }
-
-        preparedErrorOps_.clear();
-        if (error_) {
-            preparedErrorOps_ = diagnosticsScene_.buildErrorScreen(bounds, *error_, detailedErrorScreen);
-        }
-        preparedBadgeOps_ = diagnosticsScene_.buildBadge(bounds, badgeModel, badgeVisibility(), textLayout);
-        preparedToastOps_ = diagnosticsScene_.buildToasts(bounds, activeToastModels(), toastVisibility());
-        preparedSignature_ = signature;
-        return true;
-    }
-
-    std::string DiagnosticsState::diagnosticsText(DiagnosticsTextContext context) const {
-        if (context.error == nullptr && error_) {
-            context.error = &*error_;
-        }
-        return model_.diagnosticsText(context);
-    }
-
-    std::string DiagnosticsState::currentLocalTimeLabel() {
-        return DiagnosticsModel::currentLocalTimeLabel();
+        content.diagnosticsBadgeDrawOps.clear();
+        content.diagnosticsFpsDrawOps.clear();
+        content.diagnosticsToastDrawOps.clear();
     }
 }
 

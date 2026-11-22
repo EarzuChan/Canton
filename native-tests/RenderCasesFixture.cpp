@@ -2,6 +2,7 @@
 #include "TextFixtures.h"
 
 #include <d3d11/DWriteText.h>
+#include <runtime/DiagnosticsScene.h>
 #include <runtime/SceneHost.h>
 
 #include <atomic>
@@ -88,8 +89,6 @@ namespace render_regression {
             static runtime::SceneHostOptions options() {
                 runtime::SceneHostOptions result;
                 // 画面只留应用内容；错误屏用精简样式，不带因机器而异的路径
-                result.diagnostics.badge = runtime::DiagnosticVisibility::Hidden;
-                result.diagnostics.toasts = runtime::DiagnosticVisibility::Hidden;
                 result.detailedErrorScreen = false;
                 result.diagnosticsFontFamily = {test_support::testFontFamily};
                 return result;

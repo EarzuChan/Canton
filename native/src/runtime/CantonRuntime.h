@@ -76,8 +76,10 @@ namespace canton::runtime {
         }
 
         void setScriptHost(std::unique_ptr<canton::quickjs::QuickJsScriptHost> host) noexcept;
-        quickjs::CallbackInvokeResult applyHotUpdate(const quickjs::LiveModuleSnapshot& snapshot, const quickjs::HotMessage& message);
-        std::vector<quickjs::HotMessage> takeHotMessages();
+        [[nodiscard]] canton::quickjs::QuickJsScriptHost* scriptHost() noexcept {
+            return rearrangeHost_.scriptHost();
+        }
+        void notifyWorkAvailable();
 
         void setInteractionPreparation(std::function<void(canton::core::LayoutTree&)> prepare) {
             interactionPreparation_ = std::move(prepare);

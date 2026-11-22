@@ -282,6 +282,13 @@ namespace canton::d3d11 {
         impl_->rebuildDevice();
     }
 
+    void Renderer::simulateDeviceLoss(long code, int count, bool onPresent) noexcept {
+        static_assert(std::is_same_v<HRESULT, long>);
+        impl_->injectedLossCode = code;
+        impl_->injectedLossRemaining = count;
+        impl_->injectedLossOnPresent = onPresent;
+    }
+
     void Renderer::render(RenderTarget& target, const FrameInput& frame) {
         auto& output = static_cast<TargetImpl&>(target);
         if (!frame.content) throw std::invalid_argument("渲染缺少发布帧内容");
@@ -293,6 +300,10 @@ namespace canton::d3d11 {
                 output.ensure();
                 impl_->drawFrame(output, frame);
                 if (output.swapChain) {
+                    if (impl_->injectedLossRemaining > 0 && impl_->injectedLossOnPresent) {
+                        --impl_->injectedLossRemaining;
+                        throw PlatformError("呈现失败", impl_->injectedLossCode);
+                    }
                     const auto presented = output.swapChain->Present(1, 0);
                     if (FAILED(presented)) throw PlatformError("呈现失败", presented);
                 }
@@ -301,6 +312,9 @@ namespace canton::d3d11 {
             } catch (const PlatformError& error) {
                 impl_->pending.clear();
                 impl_->states.clear();
+                impl_->batchImage = impl_->batchCoverage = nullptr;
+                impl_->focused = {};
+                impl_->focusedOps = {};
                 if (attempt >= 2 || !(isDeviceLost(error.code()) || impl_->deviceLost())) throw;
                 core::Log::w(Impl::TAG, "显示设备丢失，正在重建", error.what());
                 impl_->rebuildDevice();
