@@ -341,6 +341,65 @@ n.setModifier(1, { elements: [{ type: 'clickable', value: { onClick() {
         runtime.enqueueEvent(slot);
         check(runtime.semanticCheckpoint(48).ok, "旧代际事件命中了新上下文");
     }
+
+    // 输入耦合帧提交不变量：输入几何与已发布快照绑定、节点退休丢弃迟到事件、同帧连续指针移动合并屏障与连续滚轮累积
+    void inputCoupledFrameSubmission() {
+        auto script = std::make_unique<canton::quickjs::QuickJsScriptHost>();
+        const auto loaded = script->executeModule("input-frame-barriers.js", R"JS(
+const n = globalThis.__CANTON_NATIVE__
+const log = msg => n.diagnosticsToast('i', 'probe', 'ev', [msg], false)
+n.createNode(1, 'LayoutNode')
+n.updateBinding(n.registerBinding(1, 'measurePolicy'), { kind: 'Column' })
+n.createNode(2, 'LayoutNode')
+n.insertChild(1, 2, 0)
+n.setModifier(2, {
+    elements: [
+        { type: 'size', value: { width: 100, height: 40 } },
+        { type: 'draggable', value: { axis: 'horizontal', onDelta: d => log(`drag:${d.deltaX}`) } },
+        { type: 'clickable', value: { onClick: () => log('click') } },
+        { type: 'onWheel', value: { axis: 'vertical', callback: w => { log(`wheel:${w.deltaY}`); return true } } },
+    ]
+})
+n.createNode(3, 'LayoutNode')
+n.insertChild(1, 3, 1)
+n.setModifier(3, { elements: [{ type: 'size', value: { width: 100, height: 40 } }, { type: 'clickable', value: { onClick: () => log('retired-click') } }] })
+)JS");
+        check(loaded.ok, loaded.error);
+        canton::runtime::CantonRuntime runtime;
+        auto initial = script->takePendingTransaction();
+        runtime.setScriptHost(std::move(script));
+        runtime.enqueue(std::move(*initial));
+        check(runtime.pumpFrame(1, {0, 200, 0, 200}, 0).ok, "初始输入帧失败");
+
+        const auto& n2 = runtime.scene().node(2).modifier.elements();
+        const auto dragSlot = std::get<InputModifierSemantics>(n2[1].descriptor.value).eventSlot;
+        const auto clickSlot = std::get<InputModifierSemantics>(n2[2].descriptor.value).eventSlot;
+        const auto wheelSlot = std::get<InputModifierSemantics>(n2[3].descriptor.value).eventSlot;
+        const auto retiredSlot = std::get<InputModifierSemantics>(runtime.scene().node(3).modifier.elements()[1].descriptor.value).eventSlot;
+
+        // 连续 DragDelta 在离散点击前合并，离散点击作为屏障阻止跨屏障合并，点击后的 DragDelta 独立合并；同帧多次滚轮按序完整送达
+        runtime.enqueueInputEvent(dragSlot, DragDeltaPayload{3.0f, 0.0f, {}});
+        runtime.enqueueInputEvent(dragSlot, DragDeltaPayload{5.0f, 0.0f, {}});
+        runtime.enqueueEvent(clickSlot);
+        runtime.enqueueInputEvent(dragSlot, DragDeltaPayload{7.0f, 0.0f, {}});
+        runtime.enqueueInputEvent(dragSlot, DragDeltaPayload{2.0f, 0.0f, {}});
+        runtime.enqueueInputEvent(wheelSlot, WheelEventPayload{0.0f, -12.0f, {}});
+        runtime.enqueueInputEvent(wheelSlot, WheelEventPayload{0.0f, -18.0f, {}});
+
+        check(runtime.semanticCheckpoint(16).ok, "合并屏障检查点失败");
+        const auto toasts = runtime.takeDiagnosticToasts();
+        check(toasts.size() == 5 && toasts[0].content == "drag:8" && toasts[1].content == "click" && toasts[2].content == "drag:9" && toasts[3].content == "wheel:-12" && toasts[4].content == "wheel:-18",
+              "指针移动合并屏障或同帧滚轮序列错误");
+
+        // 节点 3 退休发布后，迟到到达的旧事件槽回调必须被安全丢弃
+        MutationTransaction retireNode3;
+        retireNode3.operations = {RemoveChildMutation{1, 3}, DeleteNodeMutation{3}, RetireEventSlot{retiredSlot}};
+        runtime.enqueue(std::move(retireNode3));
+        check(runtime.pumpFrame(1, {0, 200, 0, 200}, 32).ok, "退休节点帧失败");
+        runtime.enqueueEvent(retiredSlot);
+        check(runtime.semanticCheckpoint(40).ok, "退休后语义检查点失败");
+        check(runtime.takeDiagnosticToasts().empty(), "节点退休后迟到排队事件未被丢弃");
+    }
 }
 
 int main() {
@@ -359,7 +418,9 @@ int main() {
         reloadAtFrameBoundary(renderer);
         step = "无帧语义";
         semanticOwnerWithoutFrames();
-        std::cout << "VBlank 节拍、失败提交回滚、收尾发布、宿主错误边界、帧边界重载与无帧语义通过\n";
+        step = "输入帧提交与合并屏障";
+        inputCoupledFrameSubmission();
+        std::cout << "VBlank 节拍、失败提交回滚、收尾发布、宿主错误边界、帧边界重载、无帧语义与输入帧提交屏障全部通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << step << "：" << error.what() << '\n';

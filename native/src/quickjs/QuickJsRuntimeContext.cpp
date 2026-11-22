@@ -35,8 +35,28 @@ namespace canton::quickjs {
     void QuickJsRuntimeContext::beginRearrange() {
         if (rearrangeCheckpoint) throw std::logic_error("重排候选不能重入");
         if (!pendingTransactions) throw std::logic_error("重排缺少原生提交队列");
-        rearrangeCheckpoint = RearrangeCheckpoint{rootNodeId, pendingTransactions->pending(), bindings, publishedModifiers, modifierInputs, nodeTypes, measurePolicies, nodeGenerations, hostBindings, modifierBindings, childrenByNode, parentByNode};
+        std::unordered_map<canton::core::WindowId, std::optional<canton::core::MutationTransaction>> savedWindowPending;
+        for (const auto& [windowId, queue] : windowTransactions) savedWindowPending.emplace(windowId, queue.pending());
+        rearrangeCheckpoint = RearrangeCheckpoint{
+            rootNodeId,
+            pendingTransactions->pending(),
+            std::move(savedWindowPending),
+            pendingAppConfig,
+            windowMutations,
+            nodeWindows,
+            bindings,
+            publishedModifiers,
+            modifierInputs,
+            nodeTypes,
+            measurePolicies,
+            nodeGenerations,
+            hostBindings,
+            modifierBindings,
+            childrenByNode,
+            parentByNode,
+        };
         rearrangeSubmission = std::make_shared<canton::core::RearrangeSubmission>(canton::core::RearrangeSubmission{canton::core::allocateRuntimeIdentity(), false});
+        submittedRearrange.reset();
         events.beginCandidate();
     }
 
@@ -44,11 +64,19 @@ namespace canton::quickjs {
         if (!rearrangeCheckpoint) return;
         if (rearrangeSubmission) rearrangeSubmission->cancelled = true;
         rearrangeSubmission.reset();
+        submittedRearrange.reset();
         auto saved = std::move(*rearrangeCheckpoint);
         rearrangeCheckpoint.reset();
         rootNodeId = saved.root;
         pendingTransactions->clear();
         if (saved.pending) pendingTransactions->push(std::move(*saved.pending));
+        windowTransactions.clear();
+        for (auto& [windowId, pending] : saved.savedWindowPending) {
+            if (pending) windowTransactions[windowId].push(std::move(*pending));
+        }
+        pendingAppConfig = std::move(saved.savedAppConfig);
+        windowMutations = std::move(saved.savedWindowMutations);
+        nodeWindows = std::move(saved.savedNodeWindows);
         bindings = std::move(saved.savedBindings);
         publishedModifiers = std::move(saved.savedPublishedModifiers);
         modifierInputs = std::move(saved.savedModifierInputs);
@@ -64,22 +92,54 @@ namespace canton::quickjs {
 
     void QuickJsRuntimeContext::commitRearrange() {
         rearrangeSubmission.reset();
+        submittedRearrange.reset();
         rearrangeCheckpoint.reset();
         events.commitCandidate();
+    }
+
+    canton::core::WindowId QuickJsRuntimeContext::windowOfNode(canton::core::NodeId id) const noexcept {
+        const auto found = nodeWindows.find(id);
+        return found == nodeWindows.end() ? 0 : found->second;
     }
 
     canton::core::MutationTransaction* QuickJsRuntimeContext::currentTransaction() noexcept {
         return pendingTransactions == nullptr ? nullptr : &pendingTransactions->ensurePending();
     }
 
-    void QuickJsRuntimeContext::push(canton::core::TreeMutation mutation) {
-        if (auto* transaction = currentTransaction()) transaction->operations.emplace_back(std::move(mutation));
+    canton::core::MutationTransaction* QuickJsRuntimeContext::transactionForWindow(canton::core::WindowId windowId) noexcept {
+        if (windowId == 0) return currentTransaction();
+        auto& tx = windowTransactions[windowId].ensurePending();
+        if (rearrangeSubmission && !JS_IsUndefined(rearrangeCompletion)) tx.rearrange = rearrangeSubmission;
+        return &tx;
+    }
+
+    canton::core::MutationTransaction* QuickJsRuntimeContext::transactionForNode(canton::core::NodeId id) noexcept {
+        return transactionForWindow(windowOfNode(id));
+    }
+
+    void QuickJsRuntimeContext::stampRearrangeSubmission() {
+        submittedRearrange = rearrangeSubmission;
+        if (windowTransactions.empty() && windowMutations.empty()) {
+            if (pendingTransactions) pendingTransactions->ensurePending().rearrange = rearrangeSubmission;
+            return;
+        }
+        if (pendingTransactions && pendingTransactions->hasPending()) {
+            pendingTransactions->ensurePending().rearrange = rearrangeSubmission;
+        }
+        for (auto& [_, queue] : windowTransactions) {
+            if (queue.hasPending()) queue.ensurePending().rearrange = rearrangeSubmission;
+        }
+    }
+
+    void QuickJsRuntimeContext::push(canton::core::NodeId ownerNode, canton::core::TreeMutation mutation) {
+        if (auto* transaction = transactionForNode(ownerNode)) transaction->operations.emplace_back(std::move(mutation));
     }
 
     canton::core::BindingHandle QuickJsRuntimeContext::registerBinding(canton::core::BindingTarget target) {
+        const auto nodeId = std::visit([](const auto& item) { return item.node.id; }, target);
         const canton::core::BindingHandle handle{canton::core::allocateRuntimeIdentity(), 1};
         bindings.emplace(handle.identity, canton::core::RegisterBinding{handle, target});
-        if (auto* transaction = currentTransaction()) transaction->operations.emplace_back(canton::core::RegisterBinding{handle, std::move(target)});
+        if (auto* transaction = transactionForNode(nodeId)) transaction->operations.emplace_back(canton::core::RegisterBinding{handle, std::move(target)});
         return handle;
     }
 
@@ -94,6 +154,7 @@ namespace canton::quickjs {
 
     void QuickJsRuntimeContext::updateBinding(canton::core::BindingHandle handle, canton::core::SlotValue value) {
         const auto& target = bindings.at(handle.identity).target;
+        const auto nodeId = std::visit([](const auto& item) { return item.node.id; }, target);
         if (const auto* chain = std::get_if<canton::core::ModifierChainTarget>(&target)) {
             const auto& descriptors = std::get<canton::core::ModifierDescriptors>(value);
             const auto previous = modifierInputDescriptors(chain->node.id);
@@ -115,12 +176,13 @@ namespace canton::quickjs {
                 }
             }
         }
-        if (auto* transaction = currentTransaction()) transaction->operations.emplace_back(canton::core::SlotUpdate{handle, std::move(value)});
+        if (auto* transaction = transactionForNode(nodeId)) transaction->operations.emplace_back(canton::core::SlotUpdate{handle, std::move(value)});
     }
 
     void QuickJsRuntimeContext::retireBinding(canton::core::BindingHandle handle) {
         const auto found = bindings.find(handle.identity);
         if (found == bindings.end() || found->second.handle != handle) return;
+        const auto nodeId = std::visit([](const auto& item) { return item.node.id; }, found->second.target);
         std::visit(
             [&](const auto& target) {
                 using T = std::decay_t<decltype(target)>;
@@ -135,7 +197,7 @@ namespace canton::quickjs {
             },
             found->second.target);
         bindings.erase(found);
-        if (auto* transaction = currentTransaction()) transaction->operations.emplace_back(canton::core::RetireBinding{handle});
+        if (auto* transaction = transactionForNode(nodeId)) transaction->operations.emplace_back(canton::core::RetireBinding{handle});
     }
 
     void QuickJsRuntimeContext::setHostInput(canton::core::NodeId id, canton::core::HostInput input, canton::core::PropValue value) {
@@ -152,6 +214,7 @@ namespace canton::quickjs {
 
     void QuickJsRuntimeContext::attachChild(canton::core::NodeId parent, canton::core::NodeId child, std::uint32_t index) {
         if (parent == 0 || child == 0) return;
+        if (windowOfNode(parent) != windowOfNode(child)) throw std::logic_error("不能跨窗口挂载布局节点");
         if (const auto oldParent = parentByNode.find(child); oldParent != parentByNode.end()) detachChild(oldParent->second, child);
         auto& children = childrenByNode[parent];
         children.erase(std::remove(children.begin(), children.end(), child), children.end());
@@ -170,6 +233,7 @@ namespace canton::quickjs {
     }
 
     void QuickJsRuntimeContext::retireSubtree(canton::core::NodeId id) {
+        const auto windowId = windowOfNode(id);
         std::vector<canton::core::NodeId> pending{id};
         std::unordered_set<canton::core::NodeId> retiredNodes;
         while (!pending.empty()) {
@@ -185,7 +249,7 @@ namespace canton::quickjs {
         }
         for (const auto handle : retiredBindings) retireBinding(handle);
 
-        events.releaseNodes(retiredNodes, currentTransaction());
+        events.releaseNodes(retiredNodes, transactionForWindow(windowId));
         if (const auto parent = parentByNode.find(id); parent != parentByNode.end()) detachChild(parent->second, id);
 
         for (const auto current : retiredNodes) {
@@ -197,6 +261,7 @@ namespace canton::quickjs {
             measurePolicies.erase(current);
             childrenByNode.erase(current);
             parentByNode.erase(current);
+            nodeWindows.erase(current);
         }
     }
 
@@ -209,4 +274,3 @@ namespace canton::quickjs {
         while (diagnosticActions.size() > 64) diagnosticActions.erase(diagnosticActions.begin());
     }
 }
-

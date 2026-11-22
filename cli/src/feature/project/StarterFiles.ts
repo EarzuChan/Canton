@@ -13,18 +13,22 @@ export function uiStarterFiles(state: ProjectState): InitialFile[] {
     const outputDirectory = state.project.ui.outputDirectory ?? defaultUiOutputDirectory
     return [
         {
-            path: resolve(root, "src/main.ts"), content: `import { createApp } from '@canton/framework'
+            path: resolve(root, "src/main.ts"), content: `import { appBuilder } from '@canton/framework'
 import App from './App.cta'
 
-createApp(App).mount()
+export default appBuilder(App).build()
 ` },
         {
             path: resolve(root, "src/App.cta"), content: `<template>
-    <Column :modifier="M.fillMaxSize().background(Color(0xff17212e)).padding(24.dp)" :vertical-arrangement="Arrangement.spacedBy(16.dp)">
-        <Text :text="projectTitle" :style="{ fontSize: 28.sp, color: Color(0xfff4f6fa) }"/>
+    <App &app-handle>
+        <Window :title="projectTitle" :on-close-request="appHandle.exitApplication">
+            <Column :modifier="M.fillMaxSize().background(Color(0xff17212e)).padding(24.dp)" :vertical-arrangement="Arrangement.spacedBy(16.dp)">
+                <Text :text="projectTitle" :style="{ fontSize: 28.sp, color: Color(0xfff4f6fa) }"/>
 
-        <Text :text="'点击次数：' + count" :modifier="M.clickable(increment).padding(12.dp).background(Color(0xff336699))" :style="{ fontSize: 18.sp, color: Color(0xffffffff) }"/>
-    </Column>
+                <Text :text="'点击次数：' + count" :modifier="M.clickable(increment).padding(12.dp).background(Color(0xff336699))" :style="{ fontSize: 18.sp, color: Color(0xffffffff) }"/>
+            </Column>
+        </Window>
+    </App>
 </template>
 
 <script>

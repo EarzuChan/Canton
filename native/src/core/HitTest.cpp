@@ -11,7 +11,7 @@ namespace canton::core {
             const auto* input = std::get_if<InputModifierSemantics>(&value);
             if (!input || !input->enabled || input->kind == InputModifierKind::Focusable || input->kind == InputModifierKind::KeyEvent) return;
             const auto clickable = input->kind == InputModifierKind::Clickable;
-            regions.push_back({instance.bounds, {true, id, clickable, input->eventSlot, instance.handle, generation, input->kind}, constraint});
+            regions.push_back({instance.bounds, {true, id, clickable, input->eventSlot, instance.handle, generation, input->kind, input->captionButton}, constraint});
         }
 
         void collect(const LayoutTree& tree, NodeId id, std::size_t constraint, HitGeometry& snapshot) {
@@ -191,5 +191,79 @@ namespace canton::core {
 
     HitTestResult HitTester::hitTestClickable(const LayoutTree& tree, NodeId root, Point point) const {
         return hitTestClickable(buildHitTestSnapshot(tree, root), point);
+    }
+
+    namespace {
+        std::optional<WindowHitResult> classifyChromeRegion(const HitGeometry& geometry, Point point, const WindowCapabilities& capabilities) {
+            // 同节点上先检查 captionButton（优先级 2），再检查可交互受体与 nonDraggableArea（优先级 3），最后 draggableArea（优先级 4）
+            for (auto region = geometry.regions.rbegin(); region != geometry.regions.rend(); ++region) {
+                if (region->target.input != InputModifierKind::CaptionButton) continue;
+                auto local = point;
+                if (!enter(geometry, region->constraint, local) || !containsRect(region->bounds, local)) continue;
+                switch (region->target.captionButton) {
+                    case CaptionButtonKind::Minimize:
+                        return capabilities.minimizable ? WindowHitResult::MinimizeButton : WindowHitResult::ClientInteractive;
+                    case CaptionButtonKind::Maximize:
+                        return capabilities.maximizable ? WindowHitResult::MaximizeButton : WindowHitResult::ClientInteractive;
+                    case CaptionButtonKind::Close:
+                        return capabilities.closable ? WindowHitResult::CloseButton : WindowHitResult::ClientInteractive;
+                }
+            }
+            for (auto region = geometry.regions.rbegin(); region != geometry.regions.rend(); ++region) {
+                const auto kind = region->target.input;
+                const auto isTextField = !kind.has_value() && region->target.modifier.valid();
+                const auto isInteractive = isTextField || kind == InputModifierKind::Clickable || kind == InputModifierKind::ContextClick || kind == InputModifierKind::Draggable || kind == InputModifierKind::PointerInput || kind == InputModifierKind::Wheel || kind == InputModifierKind::NonDraggableArea;
+                if (!isInteractive) continue;
+                auto local = point;
+                if (enter(geometry, region->constraint, local) && containsRect(region->bounds, local)) return WindowHitResult::ClientInteractive;
+            }
+            for (auto region = geometry.regions.rbegin(); region != geometry.regions.rend(); ++region) {
+                if (region->target.input != InputModifierKind::DraggableArea) continue;
+                auto local = point;
+                if (enter(geometry, region->constraint, local) && containsRect(region->bounds, local)) return WindowHitResult::Draggable;
+            }
+            return std::nullopt;
+        }
+
+        std::optional<WindowHitResult> walkWindowChrome(const HitFragment& fragment, Point point, const WindowCapabilities& capabilities) {
+            if (!fragment.enabled || !fragment.local) return std::nullopt;
+            const auto& geometry = *fragment.local;
+            auto contentPoint = point;
+            if (enter(geometry, fragment.contentConstraint, contentPoint)) {
+                for (auto child = fragment.children.rbegin(); child != fragment.children.rend(); ++child) {
+                    if (const auto childHit = walkWindowChrome(**child, contentPoint, capabilities)) return childHit;
+                }
+            }
+            return classifyChromeRegion(geometry, point, capabilities);
+        }
+    }
+
+    WindowHitResult resolveWindowHitTest(const HitTestSnapshot& snapshot, Size windowSizePx, Point point, const WindowCapabilities& capabilities) {
+        if (capabilities.chrome != WindowChrome::System && capabilities.resizable && capabilities.placement == WindowPlacement::Normal && capabilities.resizeBorderPx > 0.0f && windowSizePx.width > 0.0f && windowSizePx.height > 0.0f) {
+            const auto b = capabilities.resizeBorderPx;
+            const auto corner = std::max(b * 2.0f, 12.0f);
+            const auto onLeft = point.x >= 0.0f && point.x < b;
+            const auto onRight = point.x <= windowSizePx.width && point.x >= windowSizePx.width - b;
+            const auto onTop = point.y >= 0.0f && point.y < b;
+            const auto onBottom = point.y <= windowSizePx.height && point.y >= windowSizePx.height - b;
+            if (onTop || onBottom || onLeft || onRight) {
+                const auto nearLeft = point.x < corner;
+                const auto nearRight = point.x >= windowSizePx.width - corner;
+                const auto nearTop = point.y < corner;
+                const auto nearBottom = point.y >= windowSizePx.height - corner;
+                if ((onTop && nearLeft) || (onLeft && nearTop)) return WindowHitResult::TopLeft;
+                if ((onTop && nearRight) || (onRight && nearTop)) return WindowHitResult::TopRight;
+                if ((onBottom && nearLeft) || (onLeft && nearBottom)) return WindowHitResult::BottomLeft;
+                if ((onBottom && nearRight) || (onRight && nearBottom)) return WindowHitResult::BottomRight;
+                if (onLeft) return WindowHitResult::Left;
+                if (onRight) return WindowHitResult::Right;
+                if (onTop) return WindowHitResult::Top;
+                return WindowHitResult::Bottom;
+            }
+        }
+        if (snapshot.root) {
+            if (const auto matched = walkWindowChrome(*snapshot.root, point, capabilities)) return *matched;
+        }
+        return WindowHitResult::Client;
     }
 }

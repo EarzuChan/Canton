@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { painter, M } from '../../packages/framework/src/ui.ts'
-import { Column, Icon, Text } from '../../packages/framework/src/foundation.ts'
-import { createApp, diagnostics, DiagnosticsToast, Log, nextTick, ref, createScrollState, onScopeDispose } from '../../packages/framework/src/index.ts'
+import { App, Column, Icon, Text, Window } from '../../packages/framework/src/foundation.ts'
+import { appBuilder, diagnostics, DiagnosticsToast, Log, ref, createScrollState, onScopeDispose } from '../../packages/framework/src/index.ts'
 import { scrollStateInternal } from '../../packages/framework/src/layout/state.ts'
 import { defineArrangable } from '../../packages/framework/src/internal.ts'
 import type { NativeTransactionTarget } from '../../packages/framework/src/internal.ts'
@@ -21,24 +21,37 @@ function diagnosticNative(): NativeTransactionTarget & { calls: (readonly [strin
     }
 }
 
-test('App 经 Layout 结构调用提交原生父子关系、Policy 与 Modifier', () => {
+test('App 与 Window 经 Layout 结构调用提交原生父子关系、Policy 与 Modifier', () => {
     const native = recordingNative()
-    const Root = defineArrangable({ setup: (_props, { call }) => () => call(0, Column, { modifier: () => M.padding(8, 0) }, { default: () => call(0, Text, { text: () => '正文' }) }) })
-    const app = createApp(Root)
-    mountFrame(app, native.target)
-    assert.deepEqual(native.nodes.get(1)!.children, [2])
-    assert.deepEqual(native.nodes.get(2)!.children, [3])
-    assert.deepEqual(native.textNodes(), [{ id: 3, text: '正文' }])
-    assert.equal((native.nodes.get(2)!.inputs.get('modifier') as Modifier).elements[0].type, 'padding')
-    assert.ok(native.nodes.get(2)!.inputs.get('measurePolicy'))
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Column, { modifier: () => M.padding(8, 0) }, { default: () => call(0, Text, { text: () => '正文' }) }),
+            }),
+        }),
+    })
+    const app = mountFrame(appBuilder(Root).build(), native.target)
+    const root = native.windowRoot(0)
+    assert.equal(root.children.length, 1)
+    const columnId = root.children[0]
+    const textId = native.nodes.get(columnId)!.children[0]
+    assert.deepEqual(native.textNodes(), [{ id: textId, text: '正文' }])
+    assert.equal((native.nodes.get(columnId)!.inputs.get('modifier') as Modifier).elements[0].type, 'padding')
+    assert.ok(native.nodes.get(columnId)!.inputs.get('measurePolicy'))
     app.unmount()
 })
 
 test('反应式文字通过文本 Modifier 更新既有受体', async () => {
     const text = ref('原文')
     const native = recordingNative()
-    const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, Text, { text: () => text.value }) }))
-    mountFrame(app, native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Text, { text: () => text.value }),
+            }),
+        }),
+    })
+    const app = mountFrame(appBuilder(Root).build(), native.target)
     const id = native.textNodes()[0].id
     text.value = '新文'
     advanceFrames()
@@ -50,13 +63,17 @@ test('同批多受体值变化只产生一次候选，等待 apply 期间的新�
     const first = ref('甲')
     const second = ref('乙')
     const native = recordingNative(false)
-    const app = createApp(defineArrangable({
-        setup: (_props, { call }) => () => {
-            call(0, Text, { text: () => first.value })
-            call(1, Text, { text: () => second.value })
-        }
-    }))
-    mountFrame(app, native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    call(0, Text, { text: () => first.value })
+                    call(1, Text, { text: () => second.value })
+                },
+            }),
+        }),
+    })
+    const app = mountFrame(appBuilder(Root).build(), native.target)
     native.finish()
     const initialSubmissions = native.submissions
 
@@ -85,17 +102,21 @@ test('父范围退出时取消同批旧子参数求值，候选内替换的 Layo
     const shown = ref(true)
     const invalid = ref(false)
     const native = recordingNative()
-    const app = createApp(defineArrangable({
-        setup: (_props, { call }) => () => {
-            if (shown.value) call(0, Text, {
-                text: () => {
-                    if (invalid.value) throw new Error('已退出的参数不应求值')
-                    return '旧内容'
-                }
-            })
-        }
-    }))
-    mountFrame(app, native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    if (shown.value) call(0, Text, {
+                        text: () => {
+                            if (invalid.value) throw new Error('已退出的参数不应求值')
+                            return '旧内容'
+                        }
+                    })
+                },
+            }),
+        }),
+    })
+    const app = mountFrame(appBuilder(Root).build(), native.target)
     invalid.value = true
     shown.value = false
     advanceFrames()
@@ -104,59 +125,92 @@ test('父范围退出时取消同批旧子参数求值，候选内替换的 Layo
 
     const phase = ref(0)
     const Trigger = defineArrangable({ setup: () => () => { if (phase.value === 0) phase.value = 1 } })
-    const replacement = createApp(defineArrangable({
-        setup: (_props, { call }) => () => {
-            if (phase.value === 0) call(0, Text, { text: () => '未提交内容' })
-            else call(1, Text, { text: () => '最终内容' })
-            call(2, Trigger, {})
-        }
-    }))
-    mountFrame(replacement, native.target)
+    const ReplacementRoot = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    if (phase.value === 0) call(0, Text, { text: () => '未提交内容' })
+                    else call(1, Text, { text: () => '最终内容' })
+                    call(2, Trigger, {})
+                },
+            }),
+        }),
+    })
+    const replacement = mountFrame(appBuilder(ReplacementRoot).build(), native.target)
     assert.equal(native.nodes.size, 2)
     assert.deepEqual(native.textNodes().map(node => node.text), ['最终内容'])
     replacement.unmount()
 })
 
-test('原生宿主拒绝双 App，清理异常仍释放宿主以便重新挂载', () => {
+test('原生宿主拒绝双应用会话，清理异常仍释放宿主以便重新挂载', () => {
     const native = recordingNative()
-    const first = createApp(Text, { text: '第一份' })
-    const second = createApp(Text, { text: '第二份' })
-    mountFrame(first, native.target)
+    const FirstRoot = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Text, { text: () => '第一份' }),
+            }),
+        }),
+    })
+    const SecondRoot = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Text, { text: () => '第二份' }),
+            }),
+        }),
+    })
+    const first = appBuilder(FirstRoot).build()
+    const second = appBuilder(SecondRoot).build()
+    const firstRunning = mountFrame(first, native.target)
     assert.throws(() => mountFrame(second, native.target), /已经|占用/)
     assert.deepEqual(native.textNodes().map(node => node.text), ['第一份'])
-    first.unmount()
-    mountFrame(second, native.target)
+    firstRunning.unmount()
+    const secondRunning = mountFrame(second, native.target)
     assert.deepEqual(native.textNodes().map(node => node.text), ['第二份'])
-    second.unmount()
+    secondRunning.unmount()
 
-    const failing = createApp(defineArrangable({
+    const FailingLeaf = defineArrangable({
         setup() {
             onScopeDispose(() => { throw new Error('清理失败') })
             return () => { }
         }
-    }))
-    mountFrame(failing, native.target)
+    })
+    const FailingRoot = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, FailingLeaf, {}),
+            }),
+        }),
+    })
+    const failing = mountFrame(appBuilder(FailingRoot).build(), native.target)
     assert.throws(() => failing.unmount(), AggregateError)
     assert.equal(native.nodes.size, 0)
-    mountFrame(second, native.target)
-    second.unmount()
+    const afterFailure = mountFrame(second, native.target)
+    afterFailure.unmount()
 })
 
 test('ScrollState 接收原生对象快照并更新文本和滚动 Modifier', async () => {
     const native = recordingNative()
     const scroll = createScrollState()
-    const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, Column, { modifier: () => M.verticalScroll(scroll) }, { default: () => call(0, Text, { text: () => `滚动 ${scroll.valuePx}` }) }) }))
-    mountFrame(app, native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Column, { modifier: () => M.verticalScroll(scroll) }, { default: () => call(0, Text, { text: () => `滚动 ${scroll.valuePx}` }) }),
+            }),
+        }),
+    })
+    const app = mountFrame(appBuilder(Root).build(), native.target)
     scrollStateInternal(scroll).native({ value: 12, maxValue: 40, viewportSize: 80, contentSize: 120 })
     advanceFrames()
     assert.equal(native.textNodes()[0].text, '滚动 12')
     assert.equal(scroll.maxValuePx, 40)
-    assert.equal((native.nodes.get(2)!.inputs.get('modifier') as Modifier).elements[0].value.value, 12)
+    const colId = native.windowRoot(0).children[0]
+    assert.equal((native.nodes.get(colId)!.inputs.get('modifier') as Modifier).elements[0].value.value, 12)
     app.unmount()
 })
 
 test('App 拒绝不一致的协议版本', () => {
-    assert.throws(() => mountFrame(createApp(Text), { ...recordingNative().target, runtimeVersion: 999 }), /脚本与原生协议版本不一致/)
+    const Root = defineArrangable({ setup: () => () => { } })
+    assert.throws(() => mountFrame(appBuilder(Root).build(), { ...recordingNative().target, runtimeVersion: 999 }), /脚本与原生协议版本不一致/)
 })
 
 test("诊断 API 交付明确原生入口", () => {
@@ -205,7 +259,7 @@ test('Icon 未指定 tint 保留 Painter 原色，指定 tint 只增加 colorFil
     const previous = globalThis.__CANTON_NATIVE__
     globalThis.__CANTON_NATIVE__ = native.target
     try {
-        const app = createApp(defineArrangable({
+        const Page = defineArrangable({
             setup(_props, { call }) {
                 const image = painter('icons/play.svg')
                 return () => {
@@ -213,8 +267,15 @@ test('Icon 未指定 tint 保留 Painter 原色，指定 tint 只增加 colorFil
                     call(1, Icon, { painter: () => image, tint: () => 0xffe8eaed })
                 }
             }
-        }))
-        mountFrame(app, native.target)
+        })
+        const Root = defineArrangable({
+            setup: (_props, { call }) => () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Page, {}),
+                }),
+            }),
+        })
+        const app = mountFrame(appBuilder(Root).build(), native.target)
         const paints = [...native.nodes.values()].flatMap(node => (node.inputs.get('modifier') as Modifier | undefined)?.elements ?? []).filter(element => element.type === 'paint')
         assert.equal(paints.length, 2)
         assert.equal(paints[0].value.colorFilter, undefined)

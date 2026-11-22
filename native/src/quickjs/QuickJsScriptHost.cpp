@@ -39,6 +39,38 @@ namespace canton::quickjs {
             bool ok = true;
             std::string error;
         };
+
+        const char* placementLabel(canton::core::WindowPlacement placement) noexcept {
+            switch (placement) {
+                case canton::core::WindowPlacement::Normal:
+                    return "normal";
+                case canton::core::WindowPlacement::Minimized:
+                    return "minimized";
+                case canton::core::WindowPlacement::Maximized:
+                    return "maximized";
+                case canton::core::WindowPlacement::Fullscreen:
+                    return "fullscreen";
+            }
+            return "normal";
+        }
+
+        bool launchModuleDefaultExport(QuickJsRuntimeContext& state, JSModuleDef* module, std::string& error) {
+            ScopedValue ns(state.context, JS_GetModuleNamespace(state.context, module));
+            if (JS_IsException(ns.get())) return false;
+            ScopedValue defaultExport(state.context, JS_GetPropertyStr(state.context, ns.get(), "default"));
+            if (JS_IsException(defaultExport.get())) return false;
+            if (JS_IsUndefined(defaultExport.get())) return true;
+
+            ScopedValue global(state.context, JS_GetGlobalObject(state.context));
+            ScopedValue launcher(state.context, JS_GetPropertyStr(state.context, global.get(), "__CANTON_LAUNCH_APP__"));
+            if (!JS_IsFunction(state.context, launcher.get())) {
+                error = "入口模块导出了 default，但未通过 @canton/framework 的 appBuilder 构建应用定义";
+                return false;
+            }
+            JSValueConst argv[] = {defaultExport.get()};
+            ScopedValue launched(state.context, JS_Call(state.context, launcher.get(), JS_UNDEFINED, 1, argv));
+            return !JS_IsException(launched.get());
+        }
     }
 
     struct QuickJsScriptHost::Impl {
@@ -62,14 +94,12 @@ namespace canton::quickjs {
                     ScopedValue disposed(runtime.context, JS_Call(runtime.context, callback.get(), JS_UNDEFINED, 0, nullptr));
                     if (JS_IsException(disposed.get())) (void)quickJsExceptionText(runtime.context);
                 }
-                JS_FreeValue(runtime.context, runtime.prepareFrame);
-                JS_FreeValue(runtime.context, runtime.completeFrame);
-                JS_FreeValue(runtime.context, runtime.disposeApp);
+                for (auto* val : {&runtime.prepareFrame, &runtime.completeFrame, &runtime.disposeApp, &runtime.materializeLayout, &runtime.onWindowCloseRequest, &runtime.onWindowGeometryChanged, &runtime.onWindowFocusChanged, &runtime.onWindowDpiChanged}) {
+                    JS_FreeValue(runtime.context, *val);
+                    *val = JS_UNDEFINED;
+                }
                 for (const auto& prepared : runtime.preparedDrawCallbacks) JS_FreeValue(runtime.context, prepared.callback);
                 runtime.preparedDrawCallbacks.clear();
-                JS_FreeValue(runtime.context, runtime.materializeLayout);
-                runtime.materializeLayout = JS_UNDEFINED;
-                runtime.prepareFrame = runtime.completeFrame = runtime.disposeApp = JS_UNDEFINED;
                 runtime.painters.reset();
                 for (auto& request : runtime.assetRequests) {
                     JS_FreeValue(runtime.context, request.resolve);
@@ -80,6 +110,7 @@ namespace canton::quickjs {
                 runtime.rearrangeCompletion = JS_UNDEFINED;
                 if (runtime.rearrangeSubmission) runtime.rearrangeSubmission->cancelled = true;
                 runtime.rearrangeSubmission.reset();
+                runtime.submittedRearrange.reset();
                 runtime.rearrangeCheckpoint.reset();
                 runtime.events.reset(nullptr);
                 for (auto& [promise, reason] : runtime.unhandledRejections) {
@@ -99,6 +130,13 @@ namespace canton::quickjs {
             runtime.rootNodeId = 0;
             runtime.frameRequested = false;
             runtime.focusCommands.clear();
+            runtime.scopedFocusCommands.clear();
+            runtime.pendingAppConfig.reset();
+            runtime.appExitRequested = false;
+            runtime.windowMutations.clear();
+            runtime.windowCommands.clear();
+            runtime.windowTransactions.clear();
+            runtime.nodeWindows.clear();
             runtime.framePrepared = false;
             runtime.frameTimeMillis = 0.0;
             runtime.publishedModifiers.clear();
@@ -210,6 +248,16 @@ namespace canton::quickjs {
             }
             return {};
         }
+
+        CallbackInvokeResult callDriver(JSValueConst callback, int argc, JSValueConst* argv, const char* name) {
+            TaskBudget budget(*this, name);
+            if (!runtime.context || !JS_IsFunction(runtime.context, callback)) return {true, {}};
+            ScopedValue fn(runtime.context, JS_DupValue(runtime.context, callback));
+            ScopedValue result(runtime.context, JS_Call(runtime.context, fn.get(), JS_UNDEFINED, argc, argv));
+            if (JS_IsException(result.get())) return {false, exceptionText(runtime.context)};
+            const auto drained = drainJobs();
+            return {drained.ok, drained.error};
+        }
     };
 
     QuickJsScriptHost::QuickJsScriptHost(ScriptExecutionLimits limits) : impl_(std::make_unique<Impl>(limits)) {}
@@ -222,6 +270,10 @@ namespace canton::quickjs {
 
     void QuickJsScriptHost::setPainterLoader(canton::core::PainterLoader loader) {
         impl_->runtime.painterLoader = std::move(loader);
+    }
+
+    const canton::core::PainterLoader& QuickJsScriptHost::painterLoader() const noexcept {
+        return impl_->runtime.painterLoader;
     }
 
     void QuickJsScriptHost::setFontRegistry(std::shared_ptr<core::FontRegistry> fonts) {
@@ -259,6 +311,115 @@ namespace canton::quickjs {
         return impl_ ? impl_->heap.stats() : ScriptMemoryStats{};
     }
 
+    bool QuickJsScriptHost::hasMountedApp() const noexcept {
+        if (!impl_ || !impl_->runtime.context) return false;
+        const auto& pending = pendingTransactions_.pending();
+        return !JS_IsUndefined(impl_->runtime.prepareFrame) || (pending && pending->hasTreeMutations()) || !impl_->runtime.windowMutations.empty() || !impl_->runtime.windowTransactions.empty();
+    }
+
+    std::optional<core::AppConfigSpec> QuickJsScriptHost::takeAppConfig() {
+        if (!impl_) return std::nullopt;
+        return std::exchange(impl_->runtime.pendingAppConfig, std::nullopt);
+    }
+
+    bool QuickJsScriptHost::consumeAppExitRequest() noexcept {
+        return impl_ && std::exchange(impl_->runtime.appExitRequested, false);
+    }
+
+    std::vector<WindowMutation> QuickJsScriptHost::takeWindowMutations() {
+        if (!impl_) return {};
+        return std::exchange(impl_->runtime.windowMutations, {});
+    }
+
+    std::vector<WindowCommand> QuickJsScriptHost::takeWindowCommands() {
+        if (!impl_) return {};
+        return std::exchange(impl_->runtime.windowCommands, {});
+    }
+
+    bool QuickJsScriptHost::hasPendingWindowWork() const noexcept {
+        if (!impl_) return false;
+        const auto& state = impl_->runtime;
+        if (state.pendingAppConfig || state.appExitRequested || !state.windowMutations.empty() || !state.windowCommands.empty() || !state.scopedFocusCommands.empty()) return true;
+        for (const auto& [_, queue] : state.windowTransactions)
+            if (queue.hasPending()) return true;
+        return false;
+    }
+
+    std::vector<core::WindowId> QuickJsScriptHost::pendingTransactionWindows() const {
+        std::vector<core::WindowId> ids;
+        if (!impl_) return ids;
+        for (const auto& [windowId, queue] : impl_->runtime.windowTransactions) {
+            if (queue.hasPending()) ids.push_back(windowId);
+        }
+        std::sort(ids.begin(), ids.end());
+        return ids;
+    }
+
+    bool QuickJsScriptHost::hasWindowTransaction(core::WindowId windowId) const noexcept {
+        if (!impl_) return false;
+        const auto it = impl_->runtime.windowTransactions.find(windowId);
+        return it != impl_->runtime.windowTransactions.end() && it->second.hasPending();
+    }
+
+    std::optional<core::MutationTransaction> QuickJsScriptHost::takeWindowTransaction(core::WindowId windowId) noexcept {
+        if (!impl_) return std::nullopt;
+        const auto it = impl_->runtime.windowTransactions.find(windowId);
+        if (it == impl_->runtime.windowTransactions.end()) return std::nullopt;
+        auto tx = it->second.take();
+        if (!it->second.hasPending()) impl_->runtime.windowTransactions.erase(it);
+        return tx;
+    }
+
+    void QuickJsScriptHost::clearWindowTransactions() noexcept {
+        if (impl_) impl_->runtime.windowTransactions.clear();
+    }
+
+    std::shared_ptr<core::RearrangeSubmission> QuickJsScriptHost::pendingRearrangeSubmission() const noexcept {
+        return impl_ ? impl_->runtime.submittedRearrange : nullptr;
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeWindowCloseRequest(core::WindowId windowId) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        ScopedValue idVal(impl_->runtime.context, JS_NewUint32(impl_->runtime.context, windowId));
+        JSValueConst argv[] = {idVal.get()};
+        return impl_->callDriver(impl_->runtime.onWindowCloseRequest, 1, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeWindowGeometryChanged(core::WindowId windowId, const core::WindowGeometryEvent& event) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        auto* ctx = impl_->runtime.context;
+        ScopedValue idVal(ctx, JS_NewUint32(ctx, windowId));
+        ScopedValue payload(ctx, JS_NewObject(ctx));
+        JS_SetPropertyStr(ctx, payload.get(), "widthPx", JS_NewInt32(ctx, event.widthPx));
+        JS_SetPropertyStr(ctx, payload.get(), "heightPx", JS_NewInt32(ctx, event.heightPx));
+        JS_SetPropertyStr(ctx, payload.get(), "hasPosition", JS_NewBool(ctx, event.hasPosition));
+        if (event.hasPosition) {
+            JS_SetPropertyStr(ctx, payload.get(), "x", JS_NewInt32(ctx, event.x));
+            JS_SetPropertyStr(ctx, payload.get(), "y", JS_NewInt32(ctx, event.y));
+        }
+        JS_SetPropertyStr(ctx, payload.get(), "placement", JS_NewString(ctx, placementLabel(event.placement)));
+        JSValueConst argv[] = {idVal.get(), payload.get()};
+        return impl_->callDriver(impl_->runtime.onWindowGeometryChanged, 2, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeWindowFocusChanged(core::WindowId windowId, bool focused) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        auto* ctx = impl_->runtime.context;
+        ScopedValue idVal(ctx, JS_NewUint32(ctx, windowId));
+        ScopedValue focusedVal(ctx, JS_NewBool(ctx, focused));
+        JSValueConst argv[] = {idVal.get(), focusedVal.get()};
+        return impl_->callDriver(impl_->runtime.onWindowFocusChanged, 2, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::invokeWindowDpiChanged(core::WindowId windowId, double dpiScale) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        auto* ctx = impl_->runtime.context;
+        ScopedValue idVal(ctx, JS_NewUint32(ctx, windowId));
+        ScopedValue scaleVal(ctx, JS_NewFloat64(ctx, dpiScale));
+        JSValueConst argv[] = {idVal.get(), scaleVal.get()};
+        return impl_->callDriver(impl_->runtime.onWindowDpiChanged, 2, argv, __func__);
+    }
+
     CallbackInvokeResult QuickJsScriptHost::completeRearrange(const std::shared_ptr<canton::core::RearrangeSubmission>& submission, const std::string& error) {
         if (!impl_) return {true, {}};
         auto& state = impl_->runtime;
@@ -284,12 +445,28 @@ namespace canton::quickjs {
     }
 
     void QuickJsScriptHost::publishScene(const canton::core::NativeScene& scene) {
+        publishWindowScene(0, scene);
+    }
+
+    void QuickJsScriptHost::publishWindowScene(core::WindowId windowId, const canton::core::NativeScene& scene) {
         if (!impl_) return;
         auto& state = impl_->runtime;
-        state.events.publish(scene.activeEventSlots());
-        state.publishedModifiers.clear();
-        state.modifierInputs.clear();
+        if (windowId == 0)
+            state.events.publish(scene.activeEventSlots());
+        else
+            state.events.publishWindow(windowId, scene.activeEventSlots(), state.nodeWindows);
+
+        std::erase_if(state.publishedModifiers, [&](const auto& entry) {
+            return state.windowOfNode(entry.second.node.id) == windowId || !state.nodeGenerations.contains(entry.second.node.id);
+        });
+        for (auto it = state.modifierInputs.begin(); it != state.modifierInputs.end();) {
+            if (state.windowOfNode(it->first) == windowId || !state.nodeGenerations.contains(it->first))
+                it = state.modifierInputs.erase(it);
+            else
+                ++it;
+        }
         for (const auto& [id, generation] : state.nodeGenerations) {
+            if (state.windowOfNode(id) != windowId) continue;
             if (!scene.contains(id) || scene.node(id).generation != generation) continue;
             std::size_t position = 0;
             for (const auto& instance : scene.node(id).modifier.elements()) {
@@ -300,10 +477,26 @@ namespace canton::quickjs {
         }
         std::erase_if(state.bindings, [&](const auto& entry) {
             const auto* target = std::get_if<canton::core::ModifierInputTarget>(&entry.second.target);
-            if (!target) return false;
+            if (!target || state.windowOfNode(target->node.id) != windowId) return false;
             const auto found = state.publishedModifiers.find(target->modifier.identity);
             return found == state.publishedModifiers.end() || found->second.handle != target->modifier;
         });
+    }
+
+    void QuickJsScriptHost::unpublishWindowScene(core::WindowId windowId) {
+        if (!impl_) return;
+        auto& state = impl_->runtime;
+        state.events.unpublishWindow(windowId, state.nodeWindows);
+        std::erase_if(state.publishedModifiers, [&](const auto& entry) {
+            return state.windowOfNode(entry.second.node.id) == windowId || !state.nodeGenerations.contains(entry.second.node.id);
+        });
+        for (auto it = state.modifierInputs.begin(); it != state.modifierInputs.end();) {
+            if (state.windowOfNode(it->first) == windowId || !state.nodeGenerations.contains(it->first))
+                it = state.modifierInputs.erase(it);
+            else
+                ++it;
+        }
+        state.windowTransactions.erase(windowId);
     }
 
     bool QuickJsScriptHost::hasPendingDiagnostics() const noexcept {
@@ -362,7 +555,6 @@ namespace canton::quickjs {
     }
 
     bool QuickJsScriptHost::hasPendingVisualWork() const noexcept {
-        // 播放中的走带与观测订阅按帧拉取，由 VBlank 驱动语义检查点交付
         return impl_ && impl_->runtime.frameRequested;
     }
 
@@ -482,12 +674,21 @@ namespace canton::quickjs {
         const auto normalizedModulePath = std::filesystem::absolute(modulePath).lexically_normal();
         impl_->initialise(this);
         Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
-        ScopedValue result(impl_->runtime.context, JS_Eval(impl_->runtime.context, source.data(), source.size(), normalizedModulePath.generic_string().c_str(), JS_EVAL_TYPE_MODULE));
-        if (JS_IsException(result.get())) return {false, impl_->exceptionText(impl_->runtime.context)};
-        const auto drained = impl_->drainJobs();
+        auto& state = impl_->runtime;
+        ScopedValue compiled(state.context, JS_Eval(state.context, source.data(), source.size(), normalizedModulePath.generic_string().c_str(), JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY));
+        if (JS_IsException(compiled.get())) return {false, impl_->exceptionText(state.context)};
+        if (JS_VALUE_GET_TAG(compiled.get()) != JS_TAG_MODULE) return {false, "模块载荷不是有效的 ESM"};
+        auto* module = static_cast<JSModuleDef*>(JS_VALUE_GET_PTR(compiled.get()));
+        if (JS_ResolveModule(state.context, compiled.get()) < 0) return {false, impl_->exceptionText(state.context)};
+        ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, compiled.get())));
+        if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
+        auto drained = impl_->drainJobs();
         if (!drained.ok) return {false, drained.error};
-        const auto& pending = pendingTransactions_.pending();
-        if ((!pending || !pending->hasTreeMutations()) && JS_IsUndefined(impl_->runtime.prepareFrame)) return {false, "应用未挂载：需要 createApp(App).mount() 安装帧驱动"};
+        std::string launchError;
+        if (!launchModuleDefaultExport(state, module, launchError)) return {false, launchError.empty() ? impl_->exceptionText(state.context) : launchError};
+        drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        if (!hasMountedApp()) return {false, "入口模块未启动应用：需要默认导出 appBuilder(Root).build() 的应用定义"};
         return {true, {}};
     }
 
@@ -504,10 +705,13 @@ namespace canton::quickjs {
         if (JS_ResolveModule(state.context, value) < 0) return {false, impl_->exceptionText(state.context)};
         ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, value)));
         if (JS_IsException(result.get())) return {false, impl_->exceptionText(state.context)};
-        const auto drained = impl_->drainJobs();
+        auto drained = impl_->drainJobs();
         if (!drained.ok) return {false, drained.error};
-        const auto& pending = pendingTransactions_.pending();
-        if ((!pending || !pending->hasTreeMutations()) && JS_IsUndefined(state.prepareFrame)) return {false, "应用未挂载：需要 createApp(App).mount() 安装帧驱动"};
+        std::string launchError;
+        if (!launchModuleDefaultExport(state, module, launchError)) return {false, launchError.empty() ? impl_->exceptionText(state.context) : launchError};
+        drained = impl_->drainJobs();
+        if (!drained.ok) return {false, drained.error};
+        if (!hasMountedApp()) return {false, "入口模块未启动应用：需要默认导出 appBuilder(Root).build() 的应用定义"};
         return {true, {}};
     }
 
@@ -528,11 +732,17 @@ namespace canton::quickjs {
     }
 
     std::vector<canton::core::FocusCommand> QuickJsScriptHost::takeFocusCommands() {
+        impl_->runtime.scopedFocusCommands.clear();
         return std::exchange(impl_->runtime.focusCommands, {});
     }
 
+    std::vector<ScopedFocusCommand> QuickJsScriptHost::takeScopedFocusCommands() {
+        impl_->runtime.focusCommands.clear();
+        return std::exchange(impl_->runtime.scopedFocusCommands, {});
+    }
+
     bool QuickJsScriptHost::hasPendingFocusCommands() const noexcept {
-        return !impl_->runtime.focusCommands.empty();
+        return !impl_->runtime.focusCommands.empty() || !impl_->runtime.scopedFocusCommands.empty();
     }
 
     CallbackInvokeResult QuickJsScriptHost::invokeEventSlot(const canton::core::EventSlotId& slot, const CallbackInvokeOptions& options) {
@@ -689,4 +899,3 @@ namespace canton::quickjs {
         return {true, {}, consumed};
     }
 }
-

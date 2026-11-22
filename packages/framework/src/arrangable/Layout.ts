@@ -1,7 +1,7 @@
 import { currentInstance, ValueBinding, invokeContent } from '../runtime/internal.ts'
 import { defineArrangable, slotParams } from '../runtime/index.ts'
 import type { ArrangableProps, PropType } from '../runtime/index.ts'
-import { LayoutRearrangeNode, NativeRearrangeHost } from '../bridge/nativeRearrange.ts'
+import { LayoutRearrangeNode, SurfaceDomainKey } from '../bridge/nativeRearrange.ts'
 import { isMeasurePolicy } from '../layout/measurePolicy.ts'
 import type { MeasurePolicy } from '../layout/measurePolicy.ts'
 import { M, Modifier } from '../modifier/modifier.ts'
@@ -18,16 +18,15 @@ export const Layout = defineArrangable({
     setup(props, { slot, source }) {
         const instance = currentInstance!
 
+        const domain = inject(SurfaceDomainKey, undefined)
+        if (!domain) throw new Error('Layout 只能挂载在 <Window> 建立的画区作用域内')
+
         const density = inject(DensityKey)
-        if (!density) throw new Error('Layout 缺少 App 的 Density 服务')
+        if (!density) throw new Error('Layout 缺少所属窗口的 Density 服务')
 
-        const units = new ModifierLowering(density, instance)
+        const units = new ModifierLowering(density, instance, domain.windowId)
 
-        // TIPS：唯一真豪组件，可以直撅NativeRearrangeHost
-        const host = instance.appContext.host
-        if (!(host instanceof NativeRearrangeHost)) throw new Error('Layout 需要正式原生应用宿主')
-
-        const node = new LayoutRearrangeNode(instance, host)
+        const node = new LayoutRearrangeNode(instance, domain.host, domain.windowId)
         instance.node = node
         if (props.contentProvider) node.setContentProvider(props.contentProvider)
 

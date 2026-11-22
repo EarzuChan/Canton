@@ -89,6 +89,7 @@ namespace canton::core {
             std::optional<HitTestResult> clickable;
             std::optional<HitTestResult> draggable;
             std::optional<HitTestResult> pointer;
+            std::optional<HitTestResult> caption;
             bool moved = false;
             bool dragging = false;
             bool locked = false;

@@ -475,6 +475,7 @@ namespace canton::quickjs {
                     field.placeholder = reader_.stringField(payload, "placeholder");
                     field.presentation = std::move(text);
                     field.enabled = boolField(payload, "enabled", true);
+                    field.readOnly = boolField(payload, "readOnly", false);
                     field.selectAllOnFocus = boolField(payload, "selectAllOnFocus", false);
                     for (const auto* name : {"onValueChange", "onSubmit", "onChange", "onBlur"}) callbacks.push_back({result.size(), eventKind(name), ScopedValue(context_, JS_GetPropertyStr(context_, payload, name))});
                     result.push_back({std::move(field), key});
@@ -668,7 +669,7 @@ namespace canton::quickjs {
                     callbacks.push_back({result.size(), eventKind("callback"), std::move(callback)});
                 }
                 result.push_back({item, key});
-            } else if (type == "clickable" || type == "hoverable" || type == "focusable" || type == "onContextClick" || type == "pointerIcon" || type == "onKeyEvent" || type == "onWheel" || type == "draggable" || type == "pointerInput") {
+            } else if (type == "clickable" || type == "hoverable" || type == "focusable" || type == "onContextClick" || type == "pointerIcon" || type == "onKeyEvent" || type == "onWheel" || type == "draggable" || type == "pointerInput" || type == "draggableArea" || type == "nonDraggableArea" || type == "captionButton") {
                 using InputKind = canton::core::InputModifierKind;
                 canton::core::InputModifierSemantics item;
                 item.enabled = boolField(payload, "enabled", true);
@@ -729,6 +730,25 @@ namespace canton::quickjs {
                         return {};
                     }
                     item.icon = static_cast<canton::core::PointerIcon>(found - std::begin(icons));
+                } else if (type == "draggableArea") {
+                    item.kind = InputKind::DraggableArea;
+                } else if (type == "nonDraggableArea") {
+                    item.kind = InputKind::NonDraggableArea;
+                } else if (type == "captionButton") {
+                    item.kind = InputKind::CaptionButton;
+                    const auto button = requiredStringField(payload, "button", type);
+                    if (failed_) return {};
+                    if (button == "minimize")
+                        item.captionButton = canton::core::CaptionButtonKind::Minimize;
+                    else if (button == "maximize")
+                        item.captionButton = canton::core::CaptionButtonKind::Maximize;
+                    else if (button == "close")
+                        item.captionButton = canton::core::CaptionButtonKind::Close;
+                    else {
+                        (void)throwTypeError("captionButton.button 只能是 minimize、maximize 或 close");
+                        return {};
+                    }
+                    ok = callback("interaction", false);
                 } else {
                     item.kind = InputKind::Draggable;
                     if (!readAxis()) {

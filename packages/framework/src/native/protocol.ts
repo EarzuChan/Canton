@@ -45,9 +45,72 @@ export type NativeBindingHandle = Readonly<{ identity: bigint; generation: bigin
 
 export type NativeModifierHandle = NativeBindingHandle & Readonly<{ key: string; kind: string }>
 
+export type WindowPlacement = 'normal' | 'minimized' | 'maximized' | 'fullscreen'
+export type WindowPositionPreset = 'platformDefault' | 'centerScreen' | 'centerOwner'
+export type WindowPosition = WindowPositionPreset | Readonly<{ x: number; y: number }>
+export type WindowChrome = 'system' | 'customTitleBar' | 'frameless'
+export type WindowRole = 'standard' | 'utility'
+export type WindowModality = 'none' | 'owner' | 'application'
+export type WindowBackdrop = 'none' | 'mica' | 'micaAlt' | 'acrylic'
+export type WindowCornerPreference = 'default' | 'round' | 'roundSmall' | 'square'
+export type CaptionButtonKind = 'minimize' | 'maximize' | 'close'
+
+export type NativeAppConfig = Readonly<{
+    exitOnLastWindowClosed: boolean
+    appId?: string
+    icon?: string
+}>
+
+export type NativeWindowConfig = Readonly<{
+    ownerWindowId?: number
+    title: string
+    icon?: string
+    visible: boolean
+    sizeDp: Readonly<{ width: number; height: number }>
+    minSizeDp?: Readonly<{ width: number; height: number }>
+    maxSizeDp?: Readonly<{ width: number; height: number }>
+    position: WindowPosition
+    placement: WindowPlacement
+    modality: WindowModality
+    chrome: WindowChrome
+    role: WindowRole
+    resizable: boolean
+    minimizable: boolean
+    maximizable: boolean
+    closable: boolean
+    alwaysOnTop: boolean
+    showInTaskbar?: boolean
+    backdrop: WindowBackdrop
+    cornerPreference: WindowCornerPreference
+}>
+
+export type NativeWindowGeometryEvent = Readonly<{
+    widthPx: number
+    heightPx: number
+    x?: number
+    y?: number
+    hasPosition?: boolean
+    placement: WindowPlacement
+}>
+
+export type NativeWindowDriver = Readonly<{
+    onCloseRequest: (windowId: number) => void
+    onGeometryChanged: (windowId: number, event: NativeWindowGeometryEvent) => void
+    onFocusChanged: (windowId: number, focused: boolean) => void
+    onDpiChanged: (windowId: number, dpiScale: number) => void
+}>
+
 // 真实宿主（QuickJsNativeApi）必然提供的成员均为必选
 export type NativeTransactionTarget = {
-    focusCommand: (operation: 'request' | 'clear' | 'move' | 'cancel', requester: number, direction?: FocusDirection) => boolean
+    configureApp: (config: NativeAppConfig) => void
+    requestAppExit: () => void
+    allocateWindowId: () => number
+    createWindow: (windowId: number, rootNodeId: NodeId, config: NativeWindowConfig) => void
+    updateWindow: (windowId: number, config: NativeWindowConfig) => void
+    destroyWindow: (windowId: number) => void
+    windowCommand: (windowId: number, command: 'activate' | 'requestClose') => void
+    installWindowDriver: (driver: NativeWindowDriver) => void
+    focusCommand: (operation: 'request' | 'clear' | 'move' | 'cancel', requester: number, direction?: FocusDirection, windowId?: number) => boolean
     installFrameDriver: (prepare: (time: number) => void, complete: (success: boolean) => void, dispose: () => void) => void
     installLayoutDriver: (materialize: (id: NodeId, indices: readonly number[]) => void) => void
     continueRearrange: () => void
@@ -74,7 +137,7 @@ export type NativeTransactionTarget = {
     registerModifierBinding: (id: NodeId, instance: NativeModifierHandle) => NativeBindingHandle
     runtimeVersion: number
     readAsset?: { (reference: string, text: true): Promise<string>, (reference: string, text: false): Promise<Uint8Array> }
-    createNode: (id: NodeId, type: string) => void
+    createNode: (id: NodeId, type: string, windowId?: number) => void
     deleteNode: (id: NodeId) => void
     insertChild: (parent: NodeId, child: NodeId, index: number) => void
     removeChild: (parent: NodeId, child: NodeId) => void

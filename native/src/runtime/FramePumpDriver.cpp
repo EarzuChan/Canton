@@ -11,8 +11,9 @@ namespace canton::runtime {
     bool FramePumpDriver::pumpFrame(CantonRuntime& runtime, RuntimeSessionState& session, DiagnosticsState& diagnostics, canton::core::NodeId root, const std::filesystem::path& frameErrorPath, core::Rect diagnosticsBounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, double nowMillis, const core::FrameFinalizer& finalizeContent) const {
         (void)diagnostics.tick(runtime, nowMillis);
         const auto finalize = [&](const canton::core::NativeScene& scene, canton::core::PublishedFrame& frame) {
+            const auto effectiveRoot = runtime.effectiveRootNodeId(root);
             // 首帧为等预加载字体而按住时流水线还没跑过，这时树是空的属正常
-            if (session.loaded() && !diagnostics.hasError() && !scene.contains(root) && !runtime.awaitingFontPreload()) {
+            if (session.loaded() && !diagnostics.hasError() && !scene.contains(effectiveRoot) && !runtime.awaitingFontPreload()) {
                 throw std::runtime_error("Canton layout tree is empty after loading UI package.");
             }
             diagnostics.prepareFrame(diagnosticsBounds, detailedErrorScreen, activeSource, liveUnavailable, textLayout, frame.content);

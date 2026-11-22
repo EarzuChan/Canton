@@ -84,13 +84,14 @@ namespace canton::core {
         for (const auto& [receptor, state] : interactions_) add(receptor.node);
         for (const auto& item : chain_) add({item.node, item.generation});
         if (press_)
-            for (const auto* target : {press_->clickable ? &*press_->clickable : nullptr, press_->draggable ? &*press_->draggable : nullptr, press_->pointer ? &*press_->pointer : nullptr})
+            for (const auto* target : {press_->clickable ? &*press_->clickable : nullptr, press_->draggable ? &*press_->draggable : nullptr, press_->pointer ? &*press_->pointer : nullptr, press_->caption ? &*press_->caption : nullptr})
                 if (target) add({target->node, target->generation});
         std::vector<std::pair<InteractionReceptor, InteractionPayload>> next;
         for (const auto node : nodes) {
             if (!tree.contains(node.id) || tree.node(node.id).generation != node.generation) continue;
-            // 悬停以节点为单位；按下与拖动只归属被按下的受体
+            // 悬停以节点为单位；按下与拖动只归属被按下的受体（同节点的 captionButton 按压同步驱动该节点 hoverable 的按压态）
             const auto hovered = std::any_of(chain_.begin(), chain_.end(), [&](const auto& item) { return item.node == node.id && item.generation == node.generation; });
+            const auto captionPressedOnNode = press_ && press_->caption && press_->caption->node == node.id && press_->caption->generation == node.generation;
             for (const auto& instance : tree.node(node.id).modifier.elements()) {
                 const auto* input = std::get_if<InputModifierSemantics>(&instance.descriptor.value);
                 if (!input || !input->interaction.valid()) continue;
@@ -99,7 +100,7 @@ namespace canton::core {
                 };
                 InteractionPayload state;
                 state.hovered = hovered;
-                state.pressed = press_ && (owns(press_->clickable) || owns(press_->draggable) || owns(press_->pointer));
+                state.pressed = press_ && (owns(press_->clickable) || owns(press_->draggable) || owns(press_->pointer) || owns(press_->caption) || (captionPressedOnNode && input->kind == InputModifierKind::Hoverable));
                 state.dragged = press_ && press_->dragging && owns(press_->draggable);
                 const InteractionReceptor receptor{node, instance.handle};
                 const auto previous = std::find_if(interactions_.begin(), interactions_.end(), [&](const auto& item) { return item.first == receptor; });
@@ -139,7 +140,8 @@ namespace canton::core {
         if (auto clickable = first(chain, InputModifierKind::Clickable); clickable && liveInputModifier(tree, *clickable)) press.clickable = clickable;
         if (auto draggable = first(chain, InputModifierKind::Draggable); draggable && liveInputModifier(tree, *draggable)) press.draggable = draggable;
         if (auto pointer = first(chain, InputModifierKind::PointerInput); pointer && liveInputModifier(tree, *pointer)) press.pointer = pointer;
-        if (!press.clickable && !press.draggable && !press.pointer) {
+        if (auto caption = first(chain, InputModifierKind::CaptionButton); caption && liveInputModifier(tree, *caption)) press.caption = caption;
+        if (!press.clickable && !press.draggable && !press.pointer && !press.caption) {
             syncInteractions(tree, out);
             return;
         }
@@ -269,7 +271,8 @@ namespace canton::core {
         }
         if (press_->clickable && !liveInputModifier(tree, *press_->clickable)) press_->clickable.reset();
         if (press_->pointer && !liveInputModifier(tree, *press_->pointer)) press_->pointer.reset();
-        if (!press_->clickable && !press_->draggable && !press_->pointer) press_.reset();
+        if (press_->caption && !liveInputModifier(tree, *press_->caption)) press_->caption.reset();
+        if (!press_->clickable && !press_->draggable && !press_->pointer && !press_->caption) press_.reset();
         syncInteractions(tree, out);
     }
 

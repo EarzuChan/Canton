@@ -1,4 +1,4 @@
-import { createApp } from '@canton/framework'
-import ViewportApp from './ViewportApp.cta'
+import { appBuilder } from '@canton/framework'
+import ViewportRoot from './ViewportRoot.cta'
 
-createApp(ViewportApp).mount()
+export default appBuilder(ViewportRoot).build()

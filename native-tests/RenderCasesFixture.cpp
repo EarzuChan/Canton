@@ -2,6 +2,7 @@
 #include "TextFixtures.h"
 
 #include <d3d11/DWriteText.h>
+#include <runtime/AppSession.h>
 #include <runtime/DiagnosticsScene.h>
 #include <runtime/SceneHost.h>
 
@@ -98,6 +99,78 @@ namespace render_regression {
             std::shared_ptr<core::FontRegistry> fonts_;
             d3d11::DWriteTextMeasurer measurer_;
             runtime::SceneHost scene_;
+            std::atomic<bool> woken_{false};
+            double now_ = 0;
+        };
+
+        // 多窗口离屏回归会话：默认取主窗口（索引 0），也可按窗口序号或窗口标题指定目标窗口离屏取图
+        class MultiWindowFixtureSession {
+           public:
+            MultiWindowFixtureSession(CaseContext& context, const std::string& fixture)
+                : context_(context),
+                  fonts_(std::make_shared<core::FontRegistry>()),
+                  measurer_(fonts_.get()),
+                  app_(measurer_, fonts_, makeOptions()) {
+                if (context.fixtures.empty()) throw std::runtime_error("夹具用例需要 --fixtures 指向构建好的夹具目录");
+                app_.setWorkAvailable([this] { woken_.store(true, std::memory_order_release); });
+                runtime::AppSourceConfig source;
+                source.policy = runtime::LoadPolicy::OnlyDist;
+                source.distOverride = context.fixtures / fixture;
+                app_.configure(std::move(source));
+                settle();
+                if (!app_.ready()) {
+                    const auto* error = app_.globalDiagnostics().error();
+                    throw std::runtime_error("多窗口夹具没有成功出首帧：" + (error ? error->summary : std::string("未知原因")));
+                }
+            }
+
+            void settle() {
+                auto quietSince = std::chrono::steady_clock::now();
+                const auto deadline = quietSince + std::chrono::seconds(10);
+                while (std::chrono::steady_clock::now() < deadline) {
+                    const auto changed = app_.pumpFrame(now_);
+                    if (woken_.exchange(false, std::memory_order_acq_rel) || !changed.empty())
+                        quietSince = std::chrono::steady_clock::now();
+                    else if (std::chrono::steady_clock::now() - quietSince > std::chrono::milliseconds(120))
+                        return;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                }
+                throw std::runtime_error("多窗口夹具迟迟安定不下来");
+            }
+
+            [[nodiscard]] Image captureWindow(std::size_t windowIndex = 0) {
+                const auto ids = app_.windowIds();
+                if (windowIndex >= ids.size()) throw std::runtime_error("目标窗口索引越界");
+                const auto* win = app_.window(ids[windowIndex]);
+                context_.width = win->widthPx;
+                context_.height = win->heightPx;
+                return context_.render(win->pipeline.publishedFrame().content);
+            }
+
+            [[nodiscard]] Image captureWindowByTitle(std::string_view title) {
+                for (const auto id : app_.windowIds()) {
+                    const auto* win = app_.window(id);
+                    if (win && win->config.title == title) {
+                        context_.width = win->widthPx;
+                        context_.height = win->heightPx;
+                        return context_.render(win->pipeline.publishedFrame().content);
+                    }
+                }
+                throw std::runtime_error("未找到标题匹配的目标窗口");
+            }
+
+           private:
+            static runtime::AppSessionOptions makeOptions() {
+                runtime::AppSessionOptions result;
+                result.detailedErrorScreen = false;
+                result.diagnosticsFontFamily = {test_support::testFontFamily};
+                return result;
+            }
+
+            CaseContext& context_;
+            std::shared_ptr<core::FontRegistry> fonts_;
+            d3d11::DWriteTextMeasurer measurer_;
+            runtime::AppSession app_;
             std::atomic<bool> woken_{false};
             double now_ = 0;
         };

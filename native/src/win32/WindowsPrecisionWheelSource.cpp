@@ -23,7 +23,6 @@ namespace canton::win32 {
             canton::core::WheelInput input;
         };
 
-        // 未测试！
         struct ManipulationState {
             std::mutex mutex;
             std::vector<PendingWheelInput> pending;

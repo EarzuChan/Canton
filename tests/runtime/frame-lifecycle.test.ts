@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp, nextTick, onBeforeMount, onMounted, onScopeDispose, ref, watch, type CantonApp } from '@canton/framework'
-import { Text } from '@canton/framework/foundation'
-import { defineArrangable } from '@canton/framework/internal'
+import { appBuilder, nextTick, onBeforeMount, onMounted, onScopeDispose, ref, watch, type CantonRunningApplication } from '@canton/framework'
+import { App, Text, Window } from '@canton/framework/foundation'
+import { defineArrangable, mountApplication } from '@canton/framework/internal'
 import { FrameScheduler, type SchedulerJob } from '../../packages/framework/src/runtime/scheduler.ts'
 import { scheduleFrameDeadline } from '../../packages/framework/src/runtime/frameDeadline.ts'
 import { RearrangeSession } from '../../packages/framework/src/runtime/rearrange.ts'
@@ -15,13 +15,20 @@ test('nextTick 交付普通语义观察和回调，UI 失效仍等待同一宿�
     const events: string[] = []
     const semantic = watch(value, next => events.push(`语义：${next}`))
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             watch(value, next => events.push(`帧前：${next}`))
             return () => call(0, Text, { text: () => String(value.value) })
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const submissions = native.submissions
     value.value = 1
@@ -134,8 +141,8 @@ test('setup 与挂载生命周期主动卸载立即清理，剩余结构和通�
         const events: string[] = []
         const errors: unknown[] = []
         const native = recordingNative()
-        let app: CantonApp
-        app = createApp(defineArrangable({
+        let app!: CantonRunningApplication
+        const Probe = defineArrangable({
             setup(_props, { call }) {
                 onScopeDispose(() => events.push('释放'))
                 if (phase === 'setup') app.unmount()
@@ -147,17 +154,31 @@ test('setup 与挂载生命周期主动卸载立即清理，剩余结构和通�
                     call(0, Text, { text: () => '不应留下节点' })
                 }
             }
-        }))
-        app.config.errorHandler = error => errors.push(error)
-        app.mount(native.target)
+        })
+        const Root = defineArrangable({
+            setup: (_props, { call }) => () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Probe, {}),
+                }),
+            }),
+        })
+        const builder = appBuilder(Root)
+        builder.config.errorHandler = error => errors.push(error)
+        app = mountApplication(builder.build(), native.target)
         native.frame()
         assert.deepEqual(errors, [], phase)
         assert.deepEqual(events, phase === 'mounted' ? ['结构', '释放'] : ['释放'], phase)
         assert.equal(native.nodes.size, 0, phase)
         assert.equal(native.pendingFrame, false, phase)
         assert.equal(native.submissions, Number(phase === 'mounted'), phase)
-        const replacement = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, Text, { text: () => '新应用' }) }))
-        replacement.mount(native.target)
+        const ReplacementRoot = defineArrangable({
+            setup: (_props, { call }) => () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Text, { text: () => '新应用' }),
+                }),
+            }),
+        })
+        const replacement = mountApplication(appBuilder(ReplacementRoot).build(), native.target)
         native.frame()
         assert.equal(native.textNodes()[0].text, '新应用', phase)
         replacement.unmount()
@@ -170,7 +191,7 @@ test('参数传播中的帧前观察或结构执行主动卸载撤销候选，�
         const errors: unknown[] = []
         const native = recordingNative()
         let released = 0
-        let app: CantonApp
+        let app!: CantonRunningApplication
         const Child = defineArrangable({
             props: { count: { type: Number, required: true } },
             setup(props, { call }) {
@@ -182,9 +203,16 @@ test('参数传播中的帧前观察或结构执行主动卸载撤销候选，�
                 }
             }
         })
-        app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, Child, { count: () => count.value }) }))
-        app.config.errorHandler = error => errors.push(error)
-        app.mount(native.target)
+        const Root = defineArrangable({
+            setup: (_props, { call }) => () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Child, { count: () => count.value }),
+                }),
+            }),
+        })
+        const builder = appBuilder(Root)
+        builder.config.errorHandler = error => errors.push(error)
+        app = mountApplication(builder.build(), native.target)
         native.frame()
         assert.equal(native.textNodes()[0].text, '0')
         const submissions = native.submissions
@@ -209,8 +237,8 @@ test('setup 失败及卸载取消中的清理错误保留原错误并完成其�
         const errors: unknown[] = []
         const events: string[] = []
         const native = recordingNative()
-        let app: CantonApp
-        app = createApp(defineArrangable({
+        let app!: CantonRunningApplication
+        const Probe = defineArrangable({
             setup() {
                 onScopeDispose(() => {
                     events.push('第一项清理')
@@ -222,9 +250,17 @@ test('setup 失败及卸载取消中的清理错误保留原错误并完成其�
                 if (phase !== 'unmount') throw primary
                 return () => { }
             }
-        }))
-        app.config.errorHandler = error => errors.push(error)
-        app.mount(native.target)
+        })
+        const Root = defineArrangable({
+            setup: (_props, { call }) => () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Probe, {}),
+                }),
+            }),
+        })
+        const builder = appBuilder(Root)
+        builder.config.errorHandler = error => errors.push(error)
+        app = mountApplication(builder.build(), native.target)
         native.frame()
         assert.deepEqual(events, ['第一项清理', '第二项清理'], phase)
         assert.equal(errors.length, 1, phase)
@@ -244,14 +280,21 @@ test('已挂载 App 最终卸载的业务清理异常传给调用者，其他资
     const cleanup = new Error('最终清理失败')
     const events: string[] = []
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Probe = defineArrangable({
         setup(_props, { call }) {
             onScopeDispose(() => { throw cleanup })
             onScopeDispose(() => events.push('其余资源释放'))
             return () => call(0, Text, { text: () => '已挂载' })
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Probe, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     assert.throws(() => app.unmount(), error => {
         assert.ok(error instanceof AggregateError)

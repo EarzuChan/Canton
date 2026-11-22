@@ -66,14 +66,17 @@ namespace canton::runtime {
             enqueueInputEvent(slot, payload);
             return false;
         }
-        if (!semanticCheckpoint(nowMillis).ok || !pipelineState_.scene().hasEventSlot(slot)) return false;
+        const auto slotAlive = [&](const canton::core::EventSlotId& id) {
+            return eventSlotValidator_ ? eventSlotValidator_(id) : pipelineState_.scene().hasEventSlot(id);
+        };
+        if (!semanticCheckpoint(nowMillis).ok || !slotAlive(slot)) return false;
         const ProcessingGuard guard(inSemantic_);
         const auto invoked = rearrangeHost_.invokeInput(slot, nowMillis, payload);
         if (!invoked.ok) {
             semanticError_ = invoked.error;
             return false;
         }
-        if (invoked.invoked) (void)captureRearrangeTransactions();
+        if (invoked.invoked && !externalSurfaceHost_) (void)captureRearrangeTransactions();
         const auto completed = rearrangeHost_.semanticCheckpoint(nowMillis);
         if (!completed.ok) semanticError_ = completed.error;
         wake_->request();
@@ -108,6 +111,8 @@ namespace canton::runtime {
         pipelineState_.reset();
         frame_.reset();
         events_.clear();
+        boundWindowId_.reset();
+        boundRootNodeId_ = 1;
     }
 
     void CantonRuntime::notifyWorkAvailable() {
@@ -115,6 +120,8 @@ namespace canton::runtime {
     }
 
     void CantonRuntime::setScriptHost(std::unique_ptr<canton::quickjs::QuickJsScriptHost> host) noexcept {
+        boundWindowId_.reset();
+        boundRootNodeId_ = 1;
         fonts_ = host ? host->fontRegistry() : nullptr;
         fontGeneration_ = fonts_ ? fonts_->generation() : 0;
         fontPreloadSince_.reset();
@@ -259,7 +266,29 @@ namespace canton::runtime {
 
     bool CantonRuntime::captureRearrangeTransactions() {
         if (!rearrangeHost_.hasScriptHost()) return false;
-        auto transaction = rearrangeHost_.takePendingTransaction();
+        if (auto* host = rearrangeHost_.scriptHost()) {
+            (void)host->takeAppConfig();
+            (void)host->takeWindowCommands();
+        }
+        for (const auto& mutation : rearrangeHost_.takeWindowMutations()) {
+            if (mutation.kind == canton::quickjs::WindowMutationKind::Create) {
+                if (!boundWindowId_) {
+                    boundWindowId_ = mutation.windowId;
+                    boundRootNodeId_ = mutation.rootNodeId;
+                }
+            } else if (mutation.kind == canton::quickjs::WindowMutationKind::Destroy && boundWindowId_ == mutation.windowId) {
+                boundWindowId_.reset();
+                boundRootNodeId_ = 1;
+            }
+        }
+        auto transaction = boundWindowId_ ? rearrangeHost_.takeWindowTransaction(*boundWindowId_) : rearrangeHost_.takePendingTransaction();
+        if (!transaction && boundWindowId_) {
+            if (const auto rearrange = rearrangeHost_.pendingRearrangeSubmission()) {
+                canton::core::MutationTransaction empty;
+                empty.rearrange = rearrange;
+                transaction = std::move(empty);
+            }
+        }
         if (!transaction) return false;
         enqueue(std::move(*transaction));
         return true;
@@ -286,7 +315,8 @@ namespace canton::runtime {
             }
             auto event = std::move(events_.front());
             events_.pop_front();
-            if (event.ownerGeneration != ownerGeneration_ || !pipelineState_.scene().hasEventSlot(event.slot)) continue;
+            const auto slotAlive = eventSlotValidator_ ? eventSlotValidator_(event.slot) : pipelineState_.scene().hasEventSlot(event.slot);
+            if (event.ownerGeneration != ownerGeneration_ || !slotAlive) continue;
 
             RearrangeInvokeResult invoked;
             switch (event.kind) {
@@ -310,7 +340,7 @@ namespace canton::runtime {
             if (!invoked.ok) return {true, false, invoked.error};
             if (invoked.invoked) {
                 result.changed = true;
-                result.changed = captureRearrangeTransactions() || result.changed;
+                if (!externalSurfaceHost_) result.changed = captureRearrangeTransactions() || result.changed;
             }
         }
 
@@ -322,11 +352,12 @@ namespace canton::runtime {
         const auto hasPending = pipelineState_.hasPendingTransactions() || pipelineState_.hasPendingIntents();
         if (!hasPending && !frame_.framePipelineRunRequested()) return {};
 
+        const auto actualRoot = boundWindowId_ ? boundRootNodeId_ : root;
         const canton::core::FramePreparation preparation{
             [&](canton::core::NodeId id, const std::vector<int>& indices) {
                 const auto materialized = rearrangeHost_.materializeLayout(id, indices);
                 if (!materialized.ok) throw std::runtime_error(materialized.error);
-                auto transaction = rearrangeHost_.takePendingTransaction();
+                auto transaction = boundWindowId_ ? rearrangeHost_.takeWindowTransaction(*boundWindowId_) : rearrangeHost_.takePendingTransaction();
                 if (!transaction) throw std::runtime_error("Layout 材料化未提交原生候选");
                 return std::move(*transaction);
             },
@@ -336,7 +367,7 @@ namespace canton::runtime {
             },
             interactionPreparation_,
         };
-        auto result = pipelineState_.run(root, constraints, frame_.framePipelineRunRequested(), finalize, preparation);
+        auto result = pipelineState_.run(actualRoot, constraints, frame_.framePipelineRunRequested(), finalize, preparation);
         frame_.clearFramePipelineRunRequest();
         if (result.error) {
             const auto completed = rearrangeHost_.completeRearrange(result.rearrange, *result.error);
@@ -345,7 +376,10 @@ namespace canton::runtime {
             return {true, completed.ok ? *result.error : *result.error + "\n撤销回调失败：" + completed.error};
         }
 
-        rearrangeHost_.publishScene(pipelineState_.scene());
+        if (boundWindowId_)
+            rearrangeHost_.publishWindowScene(*boundWindowId_, pipelineState_.scene());
+        else
+            rearrangeHost_.publishScene(pipelineState_.scene());
         // 布局反馈属于本次成功发布，必须在后续输入及挂载回调前交付
         // 反馈引出的视觉提交留在队列中，不在当前帧重入流水线
         for (const auto& snapshot : result.scrollUpdates) {

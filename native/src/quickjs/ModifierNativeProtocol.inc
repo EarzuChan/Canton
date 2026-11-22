@@ -1,7 +1,7 @@
 // 由 scripts/modifier-native-protocol.ts 依 @canton/shared 的 Modifier 原生协议表生成，勿手改
 
 inline constexpr std::string_view textFields[]{"text", "style", "singleLine", "minLines", "maxLines", "textAlign", "overflow"};
-inline constexpr std::string_view textFieldFields[]{"value", "textStyle", "singleLine", "minLines", "maxLines", "placeholder", "enabled", "selectAllOnFocus", "onValueChange", "onSubmit", "onChange", "onBlur"};
+inline constexpr std::string_view textFieldFields[]{"value", "textStyle", "singleLine", "minLines", "maxLines", "placeholder", "enabled", "readOnly", "selectAllOnFocus", "onValueChange", "onSubmit", "onChange", "onBlur"};
 inline constexpr ModifierCallbackField textFieldCallbacks[]{{"onValueChange", canton::core::EventSlotKind::InputUpdate}, {"onSubmit", canton::core::EventSlotKind::InputSubmit}, {"onChange", canton::core::EventSlotKind::InputChange}, {"onBlur", canton::core::EventSlotKind::InputBlur}};
 inline constexpr std::string_view paintFields[]{"painter", "contentScale", "alignment", "alpha", "colorFilter", "sizeToIntrinsics", "tile", "ninePatch"};
 inline constexpr std::string_view paddingFields[]{"start", "top", "end", "bottom"};
@@ -72,6 +72,8 @@ inline constexpr ModifierCallbackField semanticsCallbacks[]{{"increment", canton
 inline constexpr std::string_view onFocusChangedFields[]{"callback"};
 inline constexpr ModifierCallbackField onFocusChangedCallbacks[]{{"callback", canton::core::EventSlotKind::FocusChanged}};
 inline constexpr std::string_view focusPropertiesFields[]{"canFocus", "next", "previous", "up", "down", "left", "right"};
+inline constexpr std::string_view captionButtonFields[]{"button", "interaction"};
+inline constexpr ModifierCallbackField captionButtonCallbacks[]{{"interaction", canton::core::EventSlotKind::Interaction}};
 
 inline constexpr ModifierProtocolEntry modifierProtocolEntries[]{
     {"text", textFields, {}},
@@ -132,4 +134,7 @@ inline constexpr ModifierProtocolEntry modifierProtocolEntries[]{
     {"focusGroup", {}, {}},
     {"onFocusChanged", onFocusChangedFields, onFocusChangedCallbacks},
     {"focusProperties", focusPropertiesFields, {}},
+    {"draggableArea", {}, {}},
+    {"nonDraggableArea", {}, {}},
+    {"captionButton", captionButtonFields, captionButtonCallbacks},
 };

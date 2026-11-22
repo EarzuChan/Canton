@@ -54,6 +54,14 @@ namespace canton::core {
             pointer_ = pointer;
         }
 
+        void setDpiScale(float scale) noexcept {
+            dpiScale_ = scale > 0.0f ? scale : 1.0f;
+        }
+
+        [[nodiscard]] float dpiScale() const noexcept {
+            return dpiScale_;
+        }
+
         // 每个视觉 tick 调用；返回叠加层自身需要的重绘范围，不计入场景脏区
         RepaintRegion update(const FrameTimeline& timeline, const PublishedFrame& frame, const LayoutTree& tree, NodeId root, double nowMillis);
 
@@ -84,6 +92,7 @@ namespace canton::core {
         Part buildPanel(const FrameTimeline& timeline, float y) const;
 
         bool enabled_ = false;
+        float dpiScale_ = 1.0f;
         OverlayLayers layers_;
         std::optional<Point> pointer_;
         std::uint64_t seenSequence_ = 0;

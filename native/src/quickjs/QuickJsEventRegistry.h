@@ -2,6 +2,7 @@
 
 #include <core/EventSlot.h>
 #include <core/MutationTransaction.h>
+#include <core/WindowTypes.h>
 
 #include <cstddef>
 #include <optional>
@@ -39,23 +40,28 @@ namespace canton::quickjs {
         void releaseModifierCallbacksExcept(canton::core::NodeId node, const std::vector<canton::core::EventSlotId>& retained, canton::core::MutationTransaction* transaction);
         void releaseAll(canton::core::MutationTransaction* transaction);
         void publish(const canton::core::EventSlotSet& active);
+        void publishWindow(canton::core::WindowId windowId, const canton::core::EventSlotSet& active, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows);
+        void unpublishWindow(canton::core::WindowId windowId, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows);
 
        private:
         canton::core::EventSlotId retain(canton::core::NodeId node, canton::core::EventSlotKind kind, JSValueConst callback, canton::core::MutationTransaction* transaction);
         void releaseWithoutTreeWalk(const canton::core::EventSlotId& slot, canton::core::MutationTransaction* transaction);
+        void rebuildPublishedUnion();
+        void sweepWindowSlots(canton::core::WindowId windowId, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows);
 
         JSContext* context_ = nullptr;
         std::unordered_map<canton::core::EventSlotId, JSValue, canton::core::EventSlotIdHash> eventSlots_;
         canton::core::EventSlotSet retiredEventSlots_;
         canton::core::EventSlotSet publishedEventSlots_;
+        std::unordered_map<canton::core::WindowId, canton::core::EventSlotSet> publishedByWindow_;
 
         struct CandidateCheckpoint {
             decltype(eventSlots_) callbacks;
             decltype(retiredEventSlots_) retired;
             decltype(publishedEventSlots_) published;
+            decltype(publishedByWindow_) byWindow;
         };
 
         std::optional<CandidateCheckpoint> checkpoint_;
     };
 }
-

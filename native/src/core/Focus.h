@@ -24,6 +24,7 @@ namespace canton::core {
         std::vector<FocusObservation> observers;
         EventSlotId click;
         bool editable = false;
+        bool readOnly = false;
 
         bool operator==(const FocusTarget& other) const {
             return node == other.node && modifier == other.modifier;

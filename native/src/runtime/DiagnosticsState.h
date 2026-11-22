@@ -26,7 +26,7 @@ namespace canton::runtime {
         virtual void setFpsEnabled(bool enabled, CantonRuntime& runtime) = 0;
         [[nodiscard]] virtual bool fpsEnabled() const noexcept = 0;
         virtual void recordFrame(bool changed, bool ready, double nowMillis, CantonRuntime& runtime) = 0;
-        virtual void prepare(core::Rect bounds, bool hasError, PackageSource activeSource, bool liveUnavailable, const core::TextLayoutService& textLayout, core::PublishedFrameContent& content) = 0;
+        virtual void prepare(core::Rect bounds, bool hasError, PackageSource activeSource, bool liveUnavailable, const core::TextLayoutService& textLayout, core::PublishedFrameContent& content, float dpiScale = 1.0f) = 0;
     };
 
     class DiagnosticsState final {
@@ -49,7 +49,7 @@ namespace canton::runtime {
         void recordFrame(bool changed, bool ready, double nowMillis, CantonRuntime& runtime);
 
         void invalidatePreparedFrame() noexcept;
-        void prepareFrame(core::Rect bounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, core::PublishedFrameContent& content);
+        void prepareFrame(core::Rect bounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, core::PublishedFrameContent& content, float dpiScale = 1.0f);
 
        private:
         std::unique_ptr<DiagnosticsHud> hud_;

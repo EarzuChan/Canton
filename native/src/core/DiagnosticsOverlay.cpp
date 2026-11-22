@@ -42,14 +42,14 @@ namespace canton::core {
             return op;
         }
 
-        DrawOp text(Rect rect, std::string value, std::uint32_t color) {
+        DrawOp text(Rect rect, std::string value, std::uint32_t color, float scale = 1.0f) {
             DrawOp op;
             op.type = DrawOpType::DrawText;
             op.rect = rect;
             op.text = std::move(value);
             op.color = color;
-            op.textStyle.fontSize = 9.5f;
-            op.textStyle.lineHeight = lineHeight;
+            op.textStyle.fontSize = 9.5f * scale;
+            op.textStyle.lineHeight = lineHeight * scale;
             op.maxLines = 1;
             op.overflow = TextOverflow::Clip;
             return op;
@@ -157,9 +157,10 @@ namespace canton::core {
             replace(flash_, buildFlashes(nowMillis));
             replace(bounds_, layers_.bounds ? buildBounds() : Part{});
             replace(hit_, layers_.hit ? buildHit(frame) : Part{});
+            const auto s = dpiScale_;
             const auto& fps = frame.content.diagnosticsFpsDrawOps;
             // 左上角有帧率徽标时，F9 面板在其下方，其他诊断图层位置不变。
-            const auto y = fps.empty() ? panelY : fps.front().rect.y + fps.front().rect.height + panelY;
+            const auto y = fps.empty() ? panelY * s : fps.front().rect.y + fps.front().rect.height + panelY * s;
             replace(panel_, layers_.frameTime || layers_.status ? buildPanel(timeline, y) : Part{});
         }
         ops_.clear();
@@ -172,7 +173,7 @@ namespace canton::core {
         for (const auto& flash : flashes_) {
             const auto fade = 1.0 - std::clamp((nowMillis - flash.started) / flashMillis, 0.0, 1.0);
             part.ops.push_back(fill(flash.rect, withAlpha(0xff3b30u, 0.3 * fade)));
-            part.ops.push_back(stroke(flash.rect, withAlpha(0xff3b30u, 0.8 * fade), 1));
+            part.ops.push_back(stroke(flash.rect, withAlpha(0xff3b30u, 0.8 * fade), dpiScale_));
             part.areas.push_back(flash.rect);
         }
         return part;
@@ -182,7 +183,7 @@ namespace canton::core {
         Part part;
         Rect area;
         for (const auto& outline : outlines_) {
-            part.ops.push_back(stroke(outline.rect, 0x9938bdf8u, 1));
+            part.ops.push_back(stroke(outline.rect, 0x9938bdf8u, dpiScale_));
             area = unite(area, outline.rect);
         }
         if (!part.ops.empty()) part.areas.push_back(area);
@@ -197,25 +198,29 @@ namespace canton::core {
         const auto found = std::find_if(outlines_.begin(), outlines_.end(), [&](const NodeOutline& outline) { return outline.node == hit.node; });
         if (found == outlines_.end()) return part;
         part.ops.push_back(fill(found->rect, 0x3322c55eu));
-        part.ops.push_back(stroke(found->rect, 0xff22c55eu, 2));
+        part.ops.push_back(stroke(found->rect, 0xff22c55eu, 2.0f * dpiScale_));
         part.areas.push_back(found->rect);
         return part;
     }
 
     DiagnosticsOverlay::Part DiagnosticsOverlay::buildPanel(const FrameTimeline& timeline, float top) const {
         Part part;
-        auto height = padding * 2;
-        if (layers_.frameTime) height += graphHeight + 4 + lineHeight;
-        if (layers_.status) height += lineHeight * 2;
-        const Rect panel{panelX, top, panelWidth, height};
-        part.ops.push_back(fill(panel, 0xd0111827u, 6));
+        const auto s = dpiScale_;
+        const auto pad = padding * s;
+        const auto gHeight = graphHeight * s;
+        const auto lHeight = lineHeight * s;
+        auto height = pad * 2;
+        if (layers_.frameTime) height += gHeight + 4.0f * s + lHeight;
+        if (layers_.status) height += lHeight * 2;
+        const Rect panel{panelX * s, top, panelWidth * s, height};
+        part.ops.push_back(fill(panel, 0xd0111827u, 6.0f * s));
         part.areas.push_back(panel);
-        auto y = panel.y + padding;
+        auto y = panel.y + pad;
         const auto* latest = timeline.latest();
         // 最新一帧的绘制耗时要到宿主重放后才补记，读数取上一帧
         const auto* painted = timeline.size() >= 2 ? &timeline.at(timeline.size() - 2) : nullptr;
         if (layers_.frameTime) {
-            const Rect graph{panel.x + padding, y, panel.width - padding * 2, graphHeight};
+            const Rect graph{panel.x + pad, y, panel.width - pad * 2, gHeight};
             part.ops.push_back(fill(graph, 0x40ffffffu));
             const auto count = std::min(timeline.size(), graphFrames);
             const auto barWidth = graph.width / static_cast<float>(graphFrames);
@@ -227,14 +232,14 @@ namespace canton::core {
                 worst = std::max(worst, millis);
                 const auto barHeight = record.failed ? graph.height : static_cast<float>(std::min(1.0, millis / graphMillis)) * graph.height;
                 const auto x = graph.x + graph.width - static_cast<float>(count - index) * barWidth;
-                part.ops.push_back(fill({x, graph.y + graph.height - barHeight, std::max(1.0f, barWidth - 1), barHeight}, frameColor(record, millis)));
+                part.ops.push_back(fill({x, graph.y + graph.height - barHeight, std::max(1.0f, barWidth - s), barHeight}, frameColor(record, millis)));
             }
             const auto budgetY = graph.y + graph.height - static_cast<float>(budgetMillis / graphMillis) * graph.height;
-            part.ops.push_back(fill({graph.x, budgetY, graph.width, 1}, 0x80ffffffu));
-            y += graphHeight + 4;
+            part.ops.push_back(fill({graph.x, budgetY, graph.width, s}, 0x80ffffffu));
+            y += gHeight + 4.0f * s;
             const auto line = latest ? format("frame %.2f ms  paint %.2f ms  max %.1f", latest->millis.total, painted ? painted->millis.paint : 0.0, worst) : std::string("frame -");
-            part.ops.push_back(text({panel.x + padding, y, panel.width - padding * 2, lineHeight}, line, 0xffe5e7ebu));
-            y += lineHeight;
+            part.ops.push_back(text({panel.x + pad, y, panel.width - pad * 2, lHeight}, line, 0xffe5e7ebu, s));
+            y += lHeight;
         }
         if (layers_.status) {
             std::string first = "rev -", second = "frag -";
@@ -243,9 +248,9 @@ namespace canton::core {
                 const auto dirty = latest->repaint.full ? std::string("full") : std::to_string(latest->repaint.rects.size());
                 second = format("frag %llu/%llu  content %llu/%llu  dirty %s", static_cast<unsigned long long>(latest->fragmentsBuilt), static_cast<unsigned long long>(latest->fragmentsBuilt + latest->fragmentsReused), static_cast<unsigned long long>(latest->contentBuilds), static_cast<unsigned long long>(latest->contentBuilds + latest->contentReuses), dirty.c_str());
             }
-            part.ops.push_back(text({panel.x + padding, y, panel.width - padding * 2, lineHeight}, first, 0xffcbd5e1u));
-            y += lineHeight;
-            part.ops.push_back(text({panel.x + padding, y, panel.width - padding * 2, lineHeight}, second, 0xffcbd5e1u));
+            part.ops.push_back(text({panel.x + pad, y, panel.width - pad * 2, lHeight}, first, 0xffcbd5e1u, s));
+            y += lHeight;
+            part.ops.push_back(text({panel.x + pad, y, panel.width - pad * 2, lHeight}, second, 0xffcbd5e1u, s));
         }
         return part;
     }

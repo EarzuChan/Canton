@@ -8,12 +8,15 @@
 #include <core/Version.h>
 #include <core/Log.h>
 
+#include <atomic>
+#include <cmath>
 #include <iterator>
 #include <optional>
-#include <cmath>
 
 namespace canton::quickjs {
     namespace {
+        std::atomic<canton::core::WindowId> nextGlobalWindowId{1};
+
         QuickJsRuntimeContext* runtime(JSContext* context) {
             return static_cast<QuickJsRuntimeContext*>(JS_GetContextOpaque(context));
         }
@@ -64,6 +67,187 @@ namespace canton::quickjs {
             return static_cast<std::uint32_t>(number);
         }
 
+        bool readSizeField(JSContext* context, JSValueConst object, const char* key, bool required, canton::core::Size& out) {
+            ScopedValue value(context, JS_GetPropertyStr(context, object, key));
+            if (JS_IsUndefined(value.get()) || JS_IsNull(value.get())) {
+                if (!required) return false;
+                JS_ThrowTypeError(context, "窗口配置缺少 %s", key);
+                return false;
+            }
+            if (!JS_IsObject(value.get()) || JS_IsArray(value.get())) {
+                JS_ThrowTypeError(context, "窗口配置 %s 需要 { width, height }", key);
+                return false;
+            }
+            ScopedValue w(context, JS_GetPropertyStr(context, value.get(), "width"));
+            ScopedValue h(context, JS_GetPropertyStr(context, value.get(), "height"));
+            double width = 0, height = 0;
+            if (!JS_IsNumber(w.get()) || !JS_IsNumber(h.get()) || JS_ToFloat64(context, &width, w.get()) < 0 || JS_ToFloat64(context, &height, h.get()) < 0 || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) {
+                JS_ThrowRangeError(context, "窗口尺寸 %s 必须是正有限数值", key);
+                return false;
+            }
+            out = {static_cast<float>(width), static_cast<float>(height)};
+            return true;
+        }
+
+        bool readWindowConfig(JSContext* context, JSValueConst value, canton::core::WindowConfigSpec& out) {
+            if (!JS_IsObject(value) || JS_IsArray(value)) {
+                JS_ThrowTypeError(context, "窗口配置需要对象");
+                return false;
+            }
+            QuickJsValueReader reader(context);
+            ScopedValue ownerVal(context, JS_GetPropertyStr(context, value, "ownerWindowId"));
+            if (!JS_IsUndefined(ownerVal.get()) && !JS_IsNull(ownerVal.get())) {
+                const auto ownerId = readIndex(context, ownerVal.get());
+                if (JS_HasException(context)) return false;
+                out.ownerWindowId = ownerId;
+            }
+            out.title = payloadStringField(context, reader, value, "title");
+            out.icon = payloadStringField(context, reader, value, "icon");
+            ScopedValue visibleVal(context, JS_GetPropertyStr(context, value, "visible"));
+            if (!JS_IsUndefined(visibleVal.get())) {
+                if (!JS_IsBool(visibleVal.get())) {
+                    JS_ThrowTypeError(context, "窗口 visible 需要布尔值");
+                    return false;
+                }
+                out.visible = JS_ToBool(context, visibleVal.get()) > 0;
+            }
+            if (!readSizeField(context, value, "sizeDp", true, out.sizeDp) && JS_HasException(context)) return false;
+            canton::core::Size minSize{}, maxSize{};
+            if (readSizeField(context, value, "minSizeDp", false, minSize)) out.minSizeDp = minSize;
+            else if (JS_HasException(context)) return false;
+            if (readSizeField(context, value, "maxSizeDp", false, maxSize)) out.maxSizeDp = maxSize;
+            else if (JS_HasException(context)) return false;
+
+            ScopedValue posVal(context, JS_GetPropertyStr(context, value, "position"));
+            if (JS_IsString(posVal.get())) {
+                const auto preset = reader.toString(posVal.get());
+                if (preset == "platformDefault")
+                    out.position = {canton::core::WindowPositionPreset::PlatformDefault, 0, 0};
+                else if (preset == "centerScreen")
+                    out.position = {canton::core::WindowPositionPreset::CenterScreen, 0, 0};
+                else if (preset == "centerOwner")
+                    out.position = {canton::core::WindowPositionPreset::CenterOwner, 0, 0};
+                else {
+                    JS_ThrowTypeError(context, "窗口位置预设无效: %s", preset.c_str());
+                    return false;
+                }
+            } else if (JS_IsObject(posVal.get()) && !JS_IsArray(posVal.get())) {
+                ScopedValue xVal(context, JS_GetPropertyStr(context, posVal.get(), "x"));
+                ScopedValue yVal(context, JS_GetPropertyStr(context, posVal.get(), "y"));
+                double x = 0, y = 0;
+                if (!JS_IsNumber(xVal.get()) || !JS_IsNumber(yVal.get()) || JS_ToFloat64(context, &x, xVal.get()) < 0 || JS_ToFloat64(context, &y, yVal.get()) < 0 || !std::isfinite(x) || !std::isfinite(y)) {
+                    JS_ThrowRangeError(context, "窗口坐标 { x, y } 必须是有限数值");
+                    return false;
+                }
+                out.position = {canton::core::WindowPositionPreset::Coordinates, static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y))};
+            } else if (!JS_IsUndefined(posVal.get())) {
+                JS_ThrowTypeError(context, "窗口 position 无效");
+                return false;
+            }
+
+            const auto placement = payloadStringField(context, reader, value, "placement", "normal");
+            if (placement == "normal")
+                out.placement = canton::core::WindowPlacement::Normal;
+            else if (placement == "minimized")
+                out.placement = canton::core::WindowPlacement::Minimized;
+            else if (placement == "maximized")
+                out.placement = canton::core::WindowPlacement::Maximized;
+            else if (placement == "fullscreen")
+                out.placement = canton::core::WindowPlacement::Fullscreen;
+            else {
+                JS_ThrowTypeError(context, "窗口 placement 无效: %s", placement.c_str());
+                return false;
+            }
+
+            const auto modality = payloadStringField(context, reader, value, "modality", "none");
+            if (modality == "none")
+                out.modality = canton::core::WindowModality::None;
+            else if (modality == "owner") {
+                if (!out.ownerWindowId) {
+                    JS_ThrowTypeError(context, "modality='owner' 需要有效的 ownerWindowId");
+                    return false;
+                }
+                out.modality = canton::core::WindowModality::Owner;
+            } else if (modality == "application")
+                out.modality = canton::core::WindowModality::Application;
+            else {
+                JS_ThrowTypeError(context, "窗口 modality 无效: %s", modality.c_str());
+                return false;
+            }
+
+            const auto chrome = payloadStringField(context, reader, value, "chrome", "system");
+            if (chrome == "system")
+                out.chrome = canton::core::WindowChrome::System;
+            else if (chrome == "customTitleBar")
+                out.chrome = canton::core::WindowChrome::CustomTitleBar;
+            else if (chrome == "frameless")
+                out.chrome = canton::core::WindowChrome::Frameless;
+            else {
+                JS_ThrowTypeError(context, "窗口 chrome 无效: %s", chrome.c_str());
+                return false;
+            }
+
+            const auto role = payloadStringField(context, reader, value, "role", "standard");
+            if (role == "standard")
+                out.role = canton::core::WindowRole::Standard;
+            else if (role == "utility")
+                out.role = canton::core::WindowRole::Utility;
+            else {
+                JS_ThrowTypeError(context, "窗口 role 无效: %s", role.c_str());
+                return false;
+            }
+
+            const auto boolField = [&](const char* key, bool& target) {
+                ScopedValue item(context, JS_GetPropertyStr(context, value, key));
+                if (JS_IsUndefined(item.get())) return true;
+                if (!JS_IsBool(item.get())) {
+                    JS_ThrowTypeError(context, "窗口 %s 需要布尔值", key);
+                    return false;
+                }
+                target = JS_ToBool(context, item.get()) > 0;
+                return true;
+            };
+            if (!boolField("resizable", out.resizable) || !boolField("minimizable", out.minimizable) || !boolField("maximizable", out.maximizable) || !boolField("closable", out.closable) || !boolField("alwaysOnTop", out.alwaysOnTop)) return false;
+
+            ScopedValue taskbarVal(context, JS_GetPropertyStr(context, value, "showInTaskbar"));
+            if (!JS_IsUndefined(taskbarVal.get()) && !JS_IsNull(taskbarVal.get())) {
+                if (!JS_IsBool(taskbarVal.get())) {
+                    JS_ThrowTypeError(context, "窗口 showInTaskbar 需要布尔值");
+                    return false;
+                }
+                out.showInTaskbar = JS_ToBool(context, taskbarVal.get()) > 0;
+            }
+
+            const auto backdrop = payloadStringField(context, reader, value, "backdrop", "none");
+            if (backdrop == "none")
+                out.backdrop = canton::core::WindowBackdrop::None;
+            else if (backdrop == "mica")
+                out.backdrop = canton::core::WindowBackdrop::Mica;
+            else if (backdrop == "micaAlt")
+                out.backdrop = canton::core::WindowBackdrop::MicaAlt;
+            else if (backdrop == "acrylic")
+                out.backdrop = canton::core::WindowBackdrop::Acrylic;
+            else {
+                JS_ThrowTypeError(context, "窗口 backdrop 无效: %s", backdrop.c_str());
+                return false;
+            }
+
+            const auto corner = payloadStringField(context, reader, value, "cornerPreference", "default");
+            if (corner == "default")
+                out.cornerPreference = canton::core::WindowCornerPreference::Default;
+            else if (corner == "round")
+                out.cornerPreference = canton::core::WindowCornerPreference::Round;
+            else if (corner == "roundSmall")
+                out.cornerPreference = canton::core::WindowCornerPreference::RoundSmall;
+            else if (corner == "square")
+                out.cornerPreference = canton::core::WindowCornerPreference::Square;
+            else {
+                JS_ThrowTypeError(context, "窗口 cornerPreference 无效: %s", corner.c_str());
+                return false;
+            }
+            return !JS_HasException(context);
+        }
+
         bool validateHostValue(QuickJsRuntimeContext& runtime, canton::core::NodeId id, canton::core::HostInput input, const canton::core::PropValue& value, std::string& error) {
             if (input == canton::core::HostInput::MeasurePolicy) {
                 const auto previous = runtime.measurePolicies.find(id);
@@ -76,6 +260,109 @@ namespace canton::quickjs {
                 return true;
             }
             return canton::core::validateSetPropMutation(nodeTypeFor(runtime, id), std::string(canton::core::hostInputName(input)), value, error);
+        }
+
+        JSValue nativeConfigureApp(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 1 || !JS_IsObject(argv[0]) || JS_IsArray(argv[0])) return JS_ThrowTypeError(context, "configureApp 需要配置对象");
+            QuickJsValueReader reader(context);
+            canton::core::AppConfigSpec spec;
+            ScopedValue exitVal(context, JS_GetPropertyStr(context, argv[0], "exitOnLastWindowClosed"));
+            if (!JS_IsUndefined(exitVal.get())) {
+                if (!JS_IsBool(exitVal.get())) return JS_ThrowTypeError(context, "exitOnLastWindowClosed 需要布尔值");
+                spec.exitOnLastWindowClosed = JS_ToBool(context, exitVal.get()) > 0;
+            }
+            spec.appId = payloadStringField(context, reader, argv[0], "appId");
+            spec.icon = payloadStringField(context, reader, argv[0], "icon");
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            self->pendingAppConfig = std::move(spec);
+            if (self->wakeOwner) self->wakeOwner();
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeRequestAppExit(JSContext* context, JSValueConst, int, JSValueConst*) {
+            auto* self = runtime(context);
+            if (!self) return JS_UNDEFINED;
+            self->appExitRequested = true;
+            if (self->wakeOwner) self->wakeOwner();
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeAllocateWindowId(JSContext* context, JSValueConst, int, JSValueConst*) {
+            const auto id = nextGlobalWindowId.fetch_add(1, std::memory_order_relaxed);
+            if (id == 0) return JS_ThrowRangeError(context, "窗口身份已耗尽");
+            return JS_NewUint32(context, id);
+        }
+
+        JSValue nativeCreateWindow(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 3) return JS_ThrowTypeError(context, "createWindow 需要 windowId、rootNodeId 和配置");
+            const auto windowId = readIndex(context, argv[0]);
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            const auto rootNodeId = readIndex(context, argv[1]);
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            canton::core::WindowConfigSpec config;
+            if (!readWindowConfig(context, argv[2], config)) return JS_EXCEPTION;
+            self->nodeWindows[rootNodeId] = windowId;
+            self->windowMutations.push_back({WindowMutationKind::Create, windowId, rootNodeId, std::move(config)});
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeUpdateWindow(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 2) return JS_ThrowTypeError(context, "updateWindow 需要 windowId 和配置");
+            const auto windowId = readIndex(context, argv[0]);
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            canton::core::WindowConfigSpec config;
+            if (!readWindowConfig(context, argv[1], config)) return JS_EXCEPTION;
+            self->windowMutations.push_back({WindowMutationKind::Update, windowId, 0, std::move(config)});
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeDestroyWindow(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 1) return JS_ThrowTypeError(context, "destroyWindow 需要 windowId");
+            const auto windowId = readIndex(context, argv[0]);
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            self->windowMutations.push_back({WindowMutationKind::Destroy, windowId, 0, {}});
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeWindowCommand(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 2 || !JS_IsString(argv[1])) return JS_ThrowTypeError(context, "windowCommand 需要 windowId 和命令名称");
+            const auto windowId = readIndex(context, argv[0]);
+            if (JS_HasException(context)) return JS_EXCEPTION;
+            QuickJsValueReader reader(context);
+            const auto cmd = reader.toString(argv[1]);
+            canton::core::WindowCommandKind kind;
+            if (cmd == "activate")
+                kind = canton::core::WindowCommandKind::Activate;
+            else if (cmd == "requestClose")
+                kind = canton::core::WindowCommandKind::RequestClose;
+            else
+                return JS_ThrowTypeError(context, "windowCommand 不支持命令: %s", cmd.c_str());
+            self->windowCommands.push_back({windowId, kind});
+            if (self->wakeOwner) self->wakeOwner();
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeInstallWindowDriver(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc != 1 || !JS_IsObject(argv[0]) || JS_IsArray(argv[0])) return JS_ThrowTypeError(context, "窗口驱动需要回调表对象");
+            if (!JS_IsUndefined(self->onWindowCloseRequest)) return JS_ThrowTypeError(context, "一个 Owner 只能安装一个窗口驱动");
+            ScopedValue closeReq(context, JS_GetPropertyStr(context, argv[0], "onCloseRequest"));
+            ScopedValue geomChanged(context, JS_GetPropertyStr(context, argv[0], "onGeometryChanged"));
+            ScopedValue focusChanged(context, JS_GetPropertyStr(context, argv[0], "onFocusChanged"));
+            ScopedValue dpiChanged(context, JS_GetPropertyStr(context, argv[0], "onDpiChanged"));
+            if (!JS_IsFunction(context, closeReq.get()) || !JS_IsFunction(context, geomChanged.get()) || !JS_IsFunction(context, focusChanged.get()) || !JS_IsFunction(context, dpiChanged.get())) {
+                return JS_ThrowTypeError(context, "窗口驱动回调必须全部是函数");
+            }
+            self->onWindowCloseRequest = JS_DupValue(context, closeReq.get());
+            self->onWindowGeometryChanged = JS_DupValue(context, geomChanged.get());
+            self->onWindowFocusChanged = JS_DupValue(context, focusChanged.get());
+            self->onWindowDpiChanged = JS_DupValue(context, dpiChanged.get());
+            return JS_UNDEFINED;
         }
 
         JSValue nativeBeginRearrange(JSContext* context, JSValueConst, int, JSValueConst*) {
@@ -93,7 +380,7 @@ namespace canton::quickjs {
             if (!self->rearrangeCheckpoint || !JS_IsUndefined(self->rearrangeCompletion)) return JS_ThrowTypeError(context, "没有可提交的重排候选");
             if (argc != 1 || !JS_IsFunction(context, argv[0])) return JS_ThrowTypeError(context, "重排提交必须提供结果回调");
             self->rearrangeCompletion = JS_DupValue(context, argv[0]);
-            self->pendingTransactions->ensurePending().rearrange = self->rearrangeSubmission;
+            self->stampRearrangeSubmission();
             return JS_UNDEFINED;
         }
 
@@ -108,7 +395,7 @@ namespace canton::quickjs {
         JSValue nativeContinueRearrange(JSContext* context, JSValueConst, int, JSValueConst*) {
             auto* self = runtime(context);
             if (!self || !self->materializingLayout || !self->rearrangeCheckpoint || JS_IsUndefined(self->rearrangeCompletion)) return JS_ThrowTypeError(context, "只有原生测量材料化可以继续已提交候选");
-            self->pendingTransactions->ensurePending().rearrange = self->rearrangeSubmission;
+            self->stampRearrangeSubmission();
             return JS_UNDEFINED;
         }
 
@@ -129,50 +416,60 @@ namespace canton::quickjs {
             const auto type = canton::core::nodeTypeFromName(reader.toString(argv[1]));
             if (type == canton::core::NodeType::Unknown) return JS_ThrowTypeError(context, "Canton unknown native node type");
             if (id == 0 || self->nodeTypes.contains(id)) return JS_ThrowTypeError(context, "Canton createNode requires a fresh nonzero node id");
+            canton::core::WindowId windowId = 0;
+            if (argc >= 3 && !JS_IsUndefined(argv[2]) && !JS_IsNull(argv[2])) {
+                windowId = readIndex(context, argv[2], true);
+                if (JS_HasException(context)) return JS_EXCEPTION;
+            }
             const auto generation = canton::core::allocateRuntimeIdentity();
             self->nodeGenerations[id] = generation;
+            self->nodeWindows[id] = windowId;
             if (self->rootNodeId == 0) self->rootNodeId = id;
             self->nodeTypes[id] = type;
-            self->push(canton::core::CreateNodeMutation{id, type, generation});
+            self->push(id, canton::core::CreateNodeMutation{id, type, generation});
             return JS_UNDEFINED;
         }
 
         JSValue nativeDeleteNode(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
             auto* self = runtime(context);
             if (self == nullptr || argc < 1) return JS_UNDEFINED;
-            QuickJsValueReader reader(context);
             const auto id = readIndex(context, argv[0]);
             if (JS_HasException(context)) return JS_EXCEPTION;
+            const auto windowId = self->windowOfNode(id);
             self->retireSubtree(id);
-            self->push(canton::core::DeleteNodeMutation{id});
+            if (auto* transaction = self->transactionForWindow(windowId)) {
+                transaction->operations.emplace_back(canton::core::DeleteNodeMutation{id});
+            }
             return JS_UNDEFINED;
         }
 
         JSValue nativeInsertChild(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
             auto* self = runtime(context);
             if (self == nullptr || argc < 3) return JS_UNDEFINED;
-            QuickJsValueReader reader(context);
             const auto parent = readIndex(context, argv[0]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             const auto child = readIndex(context, argv[1]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             const auto index = readIndex(context, argv[2], true);
             if (JS_HasException(context)) return JS_EXCEPTION;
-            self->attachChild(parent, child, index);
-            self->push(canton::core::InsertChildMutation{parent, child, index});
+            try {
+                self->attachChild(parent, child, index);
+            } catch (const std::exception& error) {
+                return JS_ThrowTypeError(context, "%s", error.what());
+            }
+            self->push(parent, canton::core::InsertChildMutation{parent, child, index});
             return JS_UNDEFINED;
         }
 
         JSValue nativeRemoveChild(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
             auto* self = runtime(context);
             if (self == nullptr || argc < 2) return JS_UNDEFINED;
-            QuickJsValueReader reader(context);
             const auto parent = readIndex(context, argv[0]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             const auto child = readIndex(context, argv[1]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             self->detachChild(parent, child);
-            self->push(canton::core::RemoveChildMutation{parent, child});
+            self->push(parent, canton::core::RemoveChildMutation{parent, child});
             return JS_UNDEFINED;
         }
 
@@ -202,11 +499,10 @@ namespace canton::quickjs {
         JSValue nativeSetModifier(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
             auto* self = runtime(context);
             if (self == nullptr || argc < 2) return JS_UNDEFINED;
-            QuickJsValueReader reader(context);
             const auto id = readIndex(context, argv[0]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             if (!self->nodeGenerations.contains(id)) return JS_ThrowReferenceError(context, "Canton node does not exist");
-            QuickJsModifierReader modifierReader(context, self->events, self->currentTransaction());
+            QuickJsModifierReader modifierReader(context, self->events, self->transactionForNode(id));
             const auto previous = self->modifierInputDescriptors(id);
             auto modifier = modifierReader.read(id, argv[1], nullptr, previous);
             if (modifierReader.failed() || JS_HasException(context)) {
@@ -334,7 +630,7 @@ namespace canton::quickjs {
                         if (!validateHostValue(*self, input.node.id, input.input, value, error)) return JS_ThrowTypeError(context, "%s", error.c_str());
                         self->updateBinding(*handle, std::move(value));
                     } else if constexpr (std::is_same_v<T, canton::core::ModifierChainTarget>) {
-                        QuickJsModifierReader reader(context, self->events, self->currentTransaction());
+                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id));
                         const auto previous = self->modifierInputDescriptors(input.node.id);
                         auto value = reader.read(input.node.id, argv[1], nullptr, previous);
                         if (reader.failed() || JS_HasException(context)) return JS_EXCEPTION;
@@ -345,7 +641,7 @@ namespace canton::quickjs {
                         if (instance == inputs.end()) return JS_ThrowReferenceError(context, "Modifier 实例已从当前候选退出");
                         ScopedValue array(context, JS_NewArray(context));
                         JS_SetPropertyUint32(context, array.get(), 0, JS_DupValue(context, argv[1]));
-                        QuickJsModifierReader reader(context, self->events, self->currentTransaction());
+                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id));
                         auto descriptors = reader.read(input.node.id, array.get(), &instance->descriptor.value);
                         if (reader.failed() || JS_HasException(context)) return JS_EXCEPTION;
                         self->updateBinding(*handle, std::move(descriptors.front().value));
@@ -367,24 +663,27 @@ namespace canton::quickjs {
         JSValue nativeUnmount(JSContext* context, JSValueConst, int, JSValueConst*) {
             auto* self = runtime(context);
             if (self == nullptr) return JS_UNDEFINED;
-            if (self->rootNodeId != 0) self->retireSubtree(self->rootNodeId);
+            if (self->rootNodeId != 0 && self->windowOfNode(self->rootNodeId) == 0) {
+                self->retireSubtree(self->rootNodeId);
+                self->push(self->rootNodeId, canton::core::DeleteNodeMutation{self->rootNodeId});
+            }
             self->events.releaseAll(self->currentTransaction());
-            if (self->rootNodeId != 0) self->push(canton::core::DeleteNodeMutation{self->rootNodeId});
             self->childrenByNode.clear();
             self->parentByNode.clear();
             self->nodeTypes.clear();
             self->publishedModifiers.clear();
             self->nodeGenerations.clear();
+            self->nodeWindows.clear();
             self->hostBindings.clear();
             self->bindings.clear();
             self->modifierBindings.clear();
             self->rootNodeId = 0;
             self->frameRequested = false;
             self->framePrepared = false;
-            JS_FreeValue(context, self->prepareFrame);
-            JS_FreeValue(context, self->completeFrame);
-            JS_FreeValue(context, self->disposeApp);
-            self->prepareFrame = self->completeFrame = self->disposeApp = JS_UNDEFINED;
+            for (auto* val : {&self->prepareFrame, &self->completeFrame, &self->disposeApp, &self->materializeLayout, &self->onWindowCloseRequest, &self->onWindowGeometryChanged, &self->onWindowFocusChanged, &self->onWindowDpiChanged}) {
+                JS_FreeValue(context, *val);
+                *val = JS_UNDEFINED;
+            }
             return JS_UNDEFINED;
         }
 
@@ -498,6 +797,11 @@ namespace canton::quickjs {
             const auto operation = reader.toString(argv[0]);
             const auto requester = readIndex(context, argv[1], operation != "request" && operation != "cancel");
             if (JS_HasException(context)) return JS_EXCEPTION;
+            canton::core::WindowId windowId = 0;
+            if (argc > 3 && !JS_IsUndefined(argv[3]) && !JS_IsNull(argv[3])) {
+                windowId = readIndex(context, argv[3], true);
+                if (JS_HasException(context)) return JS_EXCEPTION;
+            }
             canton::core::FocusCommand command;
             command.requester = requester;
             if (operation == "request")
@@ -508,7 +812,7 @@ namespace canton::quickjs {
                 command.kind = canton::core::FocusCommandKind::Cancel;
             else if (operation == "move") {
                 command.kind = canton::core::FocusCommandKind::Move;
-                const auto direction = argc > 2 ? reader.toString(argv[2]) : "";
+                const auto direction = argc > 2 && !JS_IsUndefined(argv[2]) ? reader.toString(argv[2]) : "";
                 constexpr std::string_view names[]{"next", "previous", "up", "down", "left", "right"};
                 const auto found = std::find(std::begin(names), std::end(names), direction);
                 if (found == std::end(names)) return JS_ThrowTypeError(context, "焦点方向无效");
@@ -516,12 +820,47 @@ namespace canton::quickjs {
             } else
                 return JS_ThrowTypeError(context, "焦点操作无效");
             self->focusCommands.push_back(command);
+            self->scopedFocusCommands.push_back({windowId, command});
             if (self->wakeOwner) self->wakeOwner();
             return JS_TRUE;
         }
 
         const JSCFunctionListEntry nativeApiFunctions[] = {
-            JS_CFUNC_DEF("focusCommand", 3, nativeFocusCommand), JS_CFUNC_DEF("installLayoutDriver", 1, nativeInstallLayoutDriver), JS_CFUNC_DEF("continueRearrange", 0, nativeContinueRearrange), JS_CFUNC_DEF("currentTime", 0, performanceNow), JS_CFUNC_DEF("installFrameDriver", 3, nativeInstallFrameDriver), JS_CFUNC_DEF("requestFrame", 1, nativeRequestFrame), JS_CFUNC_DEF("beginRearrange", 0, nativeBeginRearrange), JS_CFUNC_DEF("submitRearrange", 1, nativeSubmitRearrange), JS_CFUNC_DEF("abortRearrange", 0, nativeAbortRearrange), JS_CFUNC_DEF("createNode", 2, nativeCreateNode), JS_CFUNC_DEF("deleteNode", 1, nativeDeleteNode), JS_CFUNC_DEF("insertChild", 3, nativeInsertChild), JS_CFUNC_DEF("removeChild", 2, nativeRemoveChild), JS_CFUNC_DEF("setProp", 3, nativeSetProp), JS_CFUNC_DEF("setModifier", 2, nativeSetModifier), JS_CFUNC_DEF("registerBinding", 2, nativeRegisterBinding), JS_CFUNC_DEF("modifierInstances", 1, nativeModifierInstances), JS_CFUNC_DEF("registerModifierBinding", 2, nativeRegisterModifierBinding), JS_CFUNC_DEF("updateBinding", 2, nativeUpdateBinding), JS_CFUNC_DEF("releaseBinding", 1, nativeReleaseBinding), JS_CFUNC_DEF("unmount", 0, nativeUnmount), JS_CFUNC_DEF("reload", 1, nativeReload), JS_CFUNC_DEF("log", 3, nativeLog), JS_CFUNC_DEF("diagnosticsToast", 5, nativeDiagnosticsToast), JS_CFUNC_DEF("diagnosticsRequestReload", 1, nativeReload), JS_CFUNC_DEF("diagnosticsTriggerFakeError", 1, nativeDiagnosticsTriggerFakeError), JS_CFUNC_DEF("diagnosticsSetToastsEnabled", 1, nativeDiagnosticsSetToastsEnabled),
+            JS_CFUNC_DEF("configureApp", 1, nativeConfigureApp),
+            JS_CFUNC_DEF("requestAppExit", 0, nativeRequestAppExit),
+            JS_CFUNC_DEF("allocateWindowId", 0, nativeAllocateWindowId),
+            JS_CFUNC_DEF("createWindow", 3, nativeCreateWindow),
+            JS_CFUNC_DEF("updateWindow", 2, nativeUpdateWindow),
+            JS_CFUNC_DEF("destroyWindow", 1, nativeDestroyWindow),
+            JS_CFUNC_DEF("windowCommand", 2, nativeWindowCommand),
+            JS_CFUNC_DEF("installWindowDriver", 1, nativeInstallWindowDriver),
+            JS_CFUNC_DEF("focusCommand", 4, nativeFocusCommand),
+            JS_CFUNC_DEF("installLayoutDriver", 1, nativeInstallLayoutDriver),
+            JS_CFUNC_DEF("continueRearrange", 0, nativeContinueRearrange),
+            JS_CFUNC_DEF("currentTime", 0, performanceNow),
+            JS_CFUNC_DEF("installFrameDriver", 3, nativeInstallFrameDriver),
+            JS_CFUNC_DEF("requestFrame", 1, nativeRequestFrame),
+            JS_CFUNC_DEF("beginRearrange", 0, nativeBeginRearrange),
+            JS_CFUNC_DEF("submitRearrange", 1, nativeSubmitRearrange),
+            JS_CFUNC_DEF("abortRearrange", 0, nativeAbortRearrange),
+            JS_CFUNC_DEF("createNode", 3, nativeCreateNode),
+            JS_CFUNC_DEF("deleteNode", 1, nativeDeleteNode),
+            JS_CFUNC_DEF("insertChild", 3, nativeInsertChild),
+            JS_CFUNC_DEF("removeChild", 2, nativeRemoveChild),
+            JS_CFUNC_DEF("setProp", 3, nativeSetProp),
+            JS_CFUNC_DEF("setModifier", 2, nativeSetModifier),
+            JS_CFUNC_DEF("registerBinding", 2, nativeRegisterBinding),
+            JS_CFUNC_DEF("modifierInstances", 1, nativeModifierInstances),
+            JS_CFUNC_DEF("registerModifierBinding", 2, nativeRegisterModifierBinding),
+            JS_CFUNC_DEF("updateBinding", 2, nativeUpdateBinding),
+            JS_CFUNC_DEF("releaseBinding", 1, nativeReleaseBinding),
+            JS_CFUNC_DEF("unmount", 0, nativeUnmount),
+            JS_CFUNC_DEF("reload", 1, nativeReload),
+            JS_CFUNC_DEF("log", 3, nativeLog),
+            JS_CFUNC_DEF("diagnosticsToast", 5, nativeDiagnosticsToast),
+            JS_CFUNC_DEF("diagnosticsRequestReload", 1, nativeReload),
+            JS_CFUNC_DEF("diagnosticsTriggerFakeError", 1, nativeDiagnosticsTriggerFakeError),
+            JS_CFUNC_DEF("diagnosticsSetToastsEnabled", 1, nativeDiagnosticsSetToastsEnabled),
         };
     }
 
@@ -564,4 +903,3 @@ namespace canton::quickjs {
         JS_SetPropertyStr(context, global.get(), "performance", performance.release());
     }
 }
-

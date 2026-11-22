@@ -3,16 +3,16 @@ import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import * as core from '@canton/framework'
-import { createApp, createFocusRequester, FocusManagerKey, inject, provide, ref, onMounted, nextTick, type FocusRequester, type FocusManager } from '@canton/framework'
-import { Layout } from '@canton/framework/foundation'
+import { appBuilder, createFocusRequester, FocusManagerKey, inject, provide, ref, onMounted, nextTick, type FocusRequester, type FocusManager } from '@canton/framework'
+import { App, Layout, Window } from '@canton/framework/foundation'
 import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
-import { defineArrangable } from '@canton/framework/internal'
+import { defineArrangable, mountApplication } from '@canton/framework/internal'
 import { recordingNative } from './recordingNative.ts'
 import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { checkCtaProject } from '../../packages/compiler/src/typecheck.ts'
 import { evaluateCta } from './ctaModules.ts'
 
-test('焦点请求发送宿主命令；nextTick 不冒充原生焦点回执，unmount 取消请求', async () => {
+test('焦点请求发送窗口级宿主命令；nextTick 不冒充原生焦点回执，unmount 取消请求', async () => {
     const native = recordingNative()
     const commands: unknown[][] = []
     native.target.focusCommand = (...args) => {
@@ -22,25 +22,34 @@ test('焦点请求发送宿主命令；nextTick 不冒充原生焦点回执，un
     let requester!: FocusRequester
     let manager!: FocusManager
     const observed: boolean[] = []
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             requester = createFocusRequester()
             manager = inject(FocusManagerKey)!
             onMounted(() => assert.equal(requester.requestFocus(), true))
             return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => M.focusRequester(requester).onFocusChanged(state => observed.push(state.isFocused)).focusable() })
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
+    const winId = [...native.windows.keys()][0]
     assert.equal(commands[0][0], 'request')
+    assert.equal(commands[0][3], winId)
     await nextTick()
     assert.deepEqual(observed, [])
     assert.equal(manager.moveFocus('previous'), true)
     manager.clearFocus()
-    assert.deepEqual(commands.slice(1), [['move', 0, 'previous'], ['clear', 0]])
+    assert.deepEqual(commands.slice(1), [['move', 0, 'previous', winId], ['clear', 0, undefined, winId]])
     assert.throws(() => manager.moveFocus('diagonal' as never), /方向/)
     app.unmount()
-    assert.deepEqual(commands.at(-1), ['cancel', commands[0][1]])
+    assert.deepEqual(commands.at(-1), ['cancel', commands[0][1], undefined, winId])
     assert.equal(requester.requestFocus(), false)
     assert.equal(manager.moveFocus('next'), false)
 })
@@ -66,69 +75,68 @@ function changed(state: { isFocused: boolean; hasFocus: boolean }) {}
     assert.match(compiled.code, /focusRequester.*onFocusChanged.*focusProperties.*focusGroup.*focusable/s)
 })
 
-test('默认 FocusManager 在同一 Owner 中共享，不同 Owner 的命令与生命周期隔离', () => {
-    const first = recordingNative()
-    const second = recordingNative()
-    const firstCommands: unknown[][] = []
-    const secondCommands: unknown[][] = []
-    first.target.focusCommand = (...args) => {
-        firstCommands.push(args)
+test('默认 FocusManager 按 <Window> 独立提供，同一应用内多窗彼此隔离', () => {
+    const native = recordingNative()
+    const commands: unknown[][] = []
+    native.target.focusCommand = (...args) => {
+        commands.push(args)
         return true
     }
-    second.target.focusCommand = (...args) => {
-        secondCommands.push(args)
-        return true
-    }
-    const consumers: FocusManager[] = []
+    const byWindow = { A: [] as FocusManager[], B: [] as FocusManager[] }
+    const showSecond = ref(true)
     const Child = defineArrangable({
-        setup(_props, { call }) {
-            consumers.push(inject(FocusManagerKey)!)
+        props: { tag: { type: String, required: true } },
+        setup(props, { call }) {
+            byWindow[props.tag as 'A' | 'B'].push(inject(FocusManagerKey)!)
             return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy })
         }
     })
-    const Root = defineArrangable({
-        setup(_props, { call }) {
-            consumers.push(inject(FocusManagerKey)!)
+    const WindowPage = defineArrangable({
+        props: { tag: { type: String, required: true } },
+        setup(props, { call }) {
+            byWindow[props.tag as 'A' | 'B'].push(inject(FocusManagerKey)!)
             return () => {
-                call(0, Child, {})
-                call(1, Child, {})
+                call(0, Child, { tag: () => props.tag })
+                call(1, Child, { tag: () => props.tag })
             }
         }
     })
-    const firstApp = createApp(Root)
-    const secondApp = createApp(Root)
-    firstApp.mount(first.target)
-    first.frame()
-    secondApp.mount(second.target)
-    second.frame()
-    assert.equal(consumers.length, 6)
-    assert.ok(consumers[0])
-    assert.equal(consumers[0], consumers[1])
-    assert.equal(consumers[0], consumers[2])
-    assert.equal(consumers[3], consumers[4])
-    assert.equal(consumers[3], consumers[5])
-    assert.notEqual(consumers[0], consumers[3])
-    assert.equal(consumers[0].moveFocus('right'), true)
-    assert.equal(consumers[3].moveFocus('down'), true)
-    assert.deepEqual(firstCommands, [['move', 0, 'right']])
-    assert.deepEqual(secondCommands, [['move', 0, 'down']])
-    firstApp.unmount()
-    assert.equal(consumers[0].moveFocus('next'), false)
-    consumers[0].clearFocus()
-    assert.deepEqual(firstCommands, [['move', 0, 'right']])
-    assert.equal(consumers[3].moveFocus('previous'), true)
-    assert.deepEqual(secondCommands.at(-1), ['move', 0, 'previous'])
-    secondApp.unmount()
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => {
+                call(0, Window, { title: () => 'A', onCloseRequest: () => appHandle.exitApplication }, { default: () => call(0, WindowPage, { tag: () => 'A' }) })
+                if (showSecond.value) call(1, Window, { title: () => 'B', onCloseRequest: () => () => { showSecond.value = false } }, { default: () => call(0, WindowPage, { tag: () => 'B' }) })
+            },
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
+    native.frame()
+    const [winA, winB] = [...native.windows.keys()]
+    assert.equal(byWindow.A.length, 3)
+    assert.equal(byWindow.B.length, 3)
+    assert.equal(byWindow.A[0], byWindow.A[1])
+    assert.equal(byWindow.A[0], byWindow.A[2])
+    assert.equal(byWindow.B[0], byWindow.B[1])
+    assert.equal(byWindow.B[0], byWindow.B[2])
+    assert.notEqual(byWindow.A[0], byWindow.B[0])
+    assert.equal(byWindow.A[0].moveFocus('right'), true)
+    assert.equal(byWindow.B[0].moveFocus('down'), true)
+    assert.deepEqual(commands, [['move', 0, 'right', winA], ['move', 0, 'down', winB]])
+    showSecond.value = false
+    native.frame()
+    assert.equal(byWindow.B[0].moveFocus('next'), false)
+    assert.equal(byWindow.A[0].moveFocus('previous'), true)
+    assert.deepEqual(commands.at(-1), ['move', 0, 'previous', winA])
+    app.unmount()
+    assert.equal(byWindow.A[0].moveFocus('next'), false)
 })
 
-test('FocusManagerKey 支持 App 默认覆盖与祖先局部覆盖，兄弟分支保持应用服务', () => {
+test('FocusManagerKey 支持窗口子树内祖先局部覆盖，兄弟分支保持窗口默认服务', () => {
     const native = recordingNative()
     const calls: string[] = []
-    const appManager: FocusManager = {
-        clearFocus: () => { calls.push('应用清除') }, moveFocus: direction => {
-            calls.push(`应用:${direction}`)
-            return true
-        }
+    native.target.focusCommand = (op, _req, dir) => {
+        calls.push(`窗口:${op}:${dir ?? ''}`)
+        return true
     }
     const localManager: FocusManager = {
         clearFocus: () => { calls.push('局部清除') }, moveFocus: direction => {
@@ -151,7 +159,7 @@ test('FocusManagerKey 支持 App 默认覆盖与祖先局部覆盖，兄弟分�
             return () => call(0, Consumer, { branch: () => '局部' })
         }
     })
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             seen.set('根', inject(FocusManagerKey)!)
             return () => {
@@ -159,128 +167,28 @@ test('FocusManagerKey 支持 App 默认覆盖与祖先局部覆盖，兄弟分�
                 call(1, Consumer, { branch: () => '兄弟' })
             }
         }
-    })).provide(FocusManagerKey, appManager)
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
-    assert.equal(seen.get('根'), appManager)
-    assert.equal(seen.get('提供者'), appManager)
+    assert.equal(seen.get('根'), seen.get('提供者'))
+    assert.equal(seen.get('根'), seen.get('兄弟'))
     assert.equal(seen.get('局部'), localManager)
-    assert.equal(seen.get('兄弟'), appManager)
     assert.equal(seen.get('局部')!.moveFocus('left'), false)
     seen.get('局部')!.clearFocus()
     assert.equal(seen.get('兄弟')!.moveFocus('next'), true)
     seen.get('兄弟')!.clearFocus()
-    assert.deepEqual(calls, ['局部:left', '局部清除', '应用:next', '应用清除'])
+    assert.deepEqual(calls, ['局部:left', '局部清除', '窗口:move:next', '窗口:clear:'])
     app.unmount()
 })
 
-test('消费者卸载保留 Owner FocusManager，Owner 卸载失效，重挂载创建绑定新宿主的服务', () => {
-    const first = recordingNative()
-    const second = recordingNative()
-    const firstCommands: unknown[][] = []
-    const secondCommands: unknown[][] = []
-    first.target.focusCommand = (...args) => {
-        firstCommands.push(args)
-        return true
-    }
-    second.target.focusCommand = (...args) => {
-        secondCommands.push(args)
-        return true
-    }
-    const show = ref(true)
-    const ownerManagers: FocusManager[] = []
-    const consumerManagers: FocusManager[] = []
-    const Consumer = defineArrangable({
-        setup(_props, { call }) {
-            consumerManagers.push(inject(FocusManagerKey)!)
-            return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy })
-        }
-    })
-    const app = createApp(defineArrangable({
-        setup(_props, { call }) {
-            ownerManagers.push(inject(FocusManagerKey)!)
-            return () => { if (show.value) call(0, Consumer, {}) }
-        }
-    }))
-    app.mount(first.target)
-    first.frame()
-    assert.equal(ownerManagers[0], consumerManagers[0])
-    show.value = false
-    first.frame()
-    assert.equal(consumerManagers[0].moveFocus('up'), true)
-    app.unmount()
-    assert.equal(ownerManagers[0].moveFocus('next'), false)
-    ownerManagers[0].clearFocus()
-    assert.deepEqual(firstCommands, [['move', 0, 'up']])
-    show.value = true
-    app.mount(second.target)
-    second.frame()
-    assert.equal(ownerManagers.length, 2)
-    assert.notEqual(ownerManagers[0], ownerManagers[1])
-    assert.equal(ownerManagers[1], consumerManagers[1])
-    assert.equal(ownerManagers[0].moveFocus('left'), false)
-    assert.equal(ownerManagers[1].moveFocus('right'), true)
-    ownerManagers[1].clearFocus()
-    assert.deepEqual(firstCommands, [['move', 0, 'up']])
-    assert.deepEqual(secondCommands, [['move', 0, 'right'], ['clear', 0]])
-    app.unmount()
-})
-
-test('挂载后 App 覆盖 FocusManager 供新消费者注入，已有默认引用保留至 Owner 卸载', () => {
-    const native = recordingNative()
-    const commands: unknown[][] = []
-    native.target.focusCommand = (...args) => {
-        commands.push(args)
-        return true
-    }
-    const customCalls: string[] = []
-    const custom: FocusManager = {
-        clearFocus() { customCalls.push('清除') },
-        moveFocus(direction) {
-            customCalls.push(direction)
-            return true
-        }
-    }
-    const showNewConsumer = ref(false)
-    const managers: FocusManager[] = []
-    const Consumer = defineArrangable({
-        setup(_props, { call }) {
-            managers.push(inject(FocusManagerKey)!)
-            return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy })
-        }
-    })
-    const app = createApp(defineArrangable({
-        setup: (_props, { call }) => () => {
-            call(0, Consumer, {})
-            if (showNewConsumer.value) call(1, Consumer, {})
-        }
-    }))
-    app.mount(native.target)
-    native.frame()
-    assert.equal(managers.length, 1)
-    const defaultManager = managers[0]
-    assert.notEqual(defaultManager, custom)
-    app.provide(FocusManagerKey, custom)
-    showNewConsumer.value = true
-    native.frame()
-    assert.equal(managers.length, 2)
-    assert.equal(managers[0], defaultManager)
-    assert.equal(managers[1], custom)
-    assert.equal(defaultManager.moveFocus('left'), true)
-    defaultManager.clearFocus()
-    assert.equal(managers[1].moveFocus('right'), true)
-    managers[1].clearFocus()
-    assert.deepEqual(commands, [['move', 0, 'left'], ['clear', 0]])
-    assert.deepEqual(customCalls, ['right', '清除'])
-    app.unmount()
-    assert.equal(defaultManager.moveFocus('next'), false)
-    defaultManager.clearFocus()
-    assert.deepEqual(commands, [['move', 0, 'left'], ['clear', 0]])
-    assert.equal(custom.moveFocus('next'), true)
-    assert.deepEqual(customCalls, ['right', '清除', 'next'])
-})
-
-test('宿主安装失败后可重挂载，默认 FocusManager 绑定成功安装的宿主', () => {
+test('宿主安装失败后可重挂载，窗口默认 FocusManager 绑定成功安装的宿主', () => {
     const failed = recordingNative()
     const successful = recordingNative()
     const failedCommands: unknown[][] = []
@@ -296,34 +204,47 @@ test('宿主安装失败后可重挂载，默认 FocusManager 绑定成功安装
         return true
     }
     const managers: FocusManager[] = []
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             managers.push(inject(FocusManagerKey)!)
             return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy })
         }
-    }))
-    assert.throws(() => app.mount(failed.target), /宿主拒绝安装/)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const definition = appBuilder(Root).build()
+    assert.throws(() => mountApplication(definition, failed.target), /宿主拒绝安装/)
     assert.equal(managers.length, 0)
-    app.mount(successful.target)
+    const firstRun = mountApplication(definition, successful.target)
     successful.frame()
+    const win1 = [...successful.windows.keys()][0]
     assert.equal(managers.length, 1)
     assert.equal(managers[0].moveFocus('next'), true)
     assert.deepEqual(failedCommands, [])
-    assert.deepEqual(commands, [['move', 0, 'next']])
-    app.unmount()
+    assert.deepEqual(commands, [['move', 0, 'next', win1]])
+    firstRun.unmount()
     assert.equal(managers[0].moveFocus('next'), false)
     failed.target.installFrameDriver = installFailedDriver
-    app.mount(failed.target)
+    const secondRun = mountApplication(definition, failed.target)
     failed.frame()
+    const win2 = [...failed.windows.keys()][0]
     assert.equal(managers.length, 2)
     assert.notEqual(managers[0], managers[1])
     assert.equal(managers[1].moveFocus('previous'), true)
-    assert.deepEqual(failedCommands, [['move', 0, 'previous']])
-    app.unmount()
+    assert.deepEqual(failedCommands, [['move', 0, 'previous', win2]])
+    secondRun.unmount()
 })
 
 test('CTA 通过 typed FocusManagerKey 注入消费，方向参数保留真实类型', () => {
-    const source = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).focusable()" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Child /></Window></App></template><script>
+import Child from './Child.cta'
+</script>`
+    const childSource = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).focusable()" /></template><script>
 import { createFocusRequester, FocusManagerKey, inject, onMounted, type FocusManager } from '@canton/framework'
 import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
 const target = createFocusRequester()
@@ -333,11 +254,11 @@ onMounted(() => manager?.moveFocus('next'))
     mkdirSync(resolve('tmp-refs'), { recursive: true })
     const directory = mkdtempSync(resolve('tmp-refs/cta-focus-'))
     try {
-        const file = join(directory, 'Focus.cta')
-        writeFileSync(file, source)
-        assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [file]), [])
-        writeFileSync(file, source.replace("const manager: FocusManager | undefined", 'const manager').replace("moveFocus('next')", "moveFocus('diagonal')"))
-        assert.ok(checkCtaProject(resolve('tsconfig.json'), [file]).some(diagnostic => /diagonal.*FocusDirection/.test(diagnostic.message)))
+        const childFile = join(directory, 'Child.cta')
+        writeFileSync(childFile, childSource)
+        assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [childFile]), [])
+        writeFileSync(childFile, childSource.replace("const manager: FocusManager | undefined", 'const manager').replace("moveFocus('next')", "moveFocus('diagonal')"))
+        assert.ok(checkCtaProject(resolve('tsconfig.json'), [childFile]).some(diagnostic => /diagonal.*FocusDirection/.test(diagnostic.message)))
     } finally {
         rmSync(directory, { recursive: true })
     }
@@ -347,9 +268,11 @@ onMounted(() => manager?.moveFocus('next'))
         commands.push(args)
         return true
     }
-    const app = createApp(evaluateCta(source, {}, '焦点注入.cta'))
-    app.mount(native.target)
+    const Child = evaluateCta(childSource, {}, '焦点注入子项.cta')
+    const Root = evaluateCta(source, { './Child.cta': { default: Child } }, '焦点注入.cta')
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
-    assert.deepEqual(commands, [['move', 0, 'next']])
+    const winId = [...native.windows.keys()][0]
+    assert.deepEqual(commands, [['move', 0, 'next', winId]])
     app.unmount()
 })

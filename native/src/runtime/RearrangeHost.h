@@ -36,6 +36,9 @@ namespace canton::runtime {
         [[nodiscard]] bool hasPendingVisualWork() const noexcept;
         [[nodiscard]] bool hasPendingDiagnostics() const noexcept;
         [[nodiscard]] std::optional<canton::core::MutationTransaction> takePendingTransaction() noexcept;
+        [[nodiscard]] std::optional<canton::core::MutationTransaction> takeWindowTransaction(canton::core::WindowId windowId) noexcept;
+        [[nodiscard]] std::vector<canton::quickjs::WindowMutation> takeWindowMutations();
+        [[nodiscard]] std::shared_ptr<canton::core::RearrangeSubmission> pendingRearrangeSubmission() const noexcept;
 
         void setOwnerWake(std::function<void()> wake);
         RearrangeInvokeResult semanticCheckpoint(double nowMillis);
@@ -52,6 +55,7 @@ namespace canton::runtime {
         [[nodiscard]] RearrangeInvokeResult invokeInput(const canton::core::EventSlotId& slot, double nowMillis, const canton::core::InputEventPayload& payload);
 
         void publishScene(const canton::core::NativeScene& scene);
+        void publishWindowScene(canton::core::WindowId windowId, const canton::core::NativeScene& scene);
         RearrangeInvokeResult completeRearrange(const std::shared_ptr<canton::core::RearrangeSubmission>& submission, const std::string& error = {});
         [[nodiscard]] std::vector<canton::quickjs::QuickJsToastRequest> takeDiagnosticToasts();
         [[nodiscard]] std::vector<canton::quickjs::QuickJsDiagnosticAction> takeDiagnosticActions();

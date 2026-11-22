@@ -58,6 +58,7 @@ namespace canton::core {
                     if (const auto* editor = std::get_if<TextFieldModifier>(&member.descriptor.value); editor && editor->enabled) {
                         target.modifier = member.handle;
                         target.editable = true;
+                        target.readOnly = editor->readOnly;
                         target.bounds = nodeContentRectToRoot(tree, id, member.bounds, member.handle);
                     }
 

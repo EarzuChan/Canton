@@ -75,21 +75,22 @@
 
 ---
 
-## M4：App / Window 多窗口、原生外观与输入（ADR B1：1 / B1：3 / B1：4）
+## M4：App / Window 多窗口、原生外观与输入（ADR B1：1 / B1：3 / B1：4）：已完成
 
-目标：完成运行时从“1 VM : 1 视口”到“1 VM : N 原生表面”的根本扭转，落地 Windows 11 级多窗口、自绘标题栏、DPI 与原生输入体验。
+目标：完成运行时从“1 VM : 1 视口”到“1 VM : N 原生表面”的根本扭转，落地 Windows 11 级多窗口、自绘标题栏、DPI 与原生输入体验。施工清单与实测笔记见 [m4.md](m4.md)。
 
 范围：
-- **多窗口与入口模型**：落地 `appBuilder(App).build()`、`<App>` 与 `<Window>` 生命周期、画区作用域自然分界、每窗独立 `NativeScene`/`SceneFramePipeline`/`Density`/`FocusManager`、`WindowState` 与 `WindowHandle`、私有 `WeakMap` → `WindowId` → `HWND` 映射、Win32 `owner` 与非阻塞模态（`EnableWindow` + 模态锁计数 + 防焦点跌落顺序）。
-- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic）与 `cornerPreference` 静默回退、Per-Monitor V2 DPI 与 `WM_DPICHANGED`（含把窗口缩放比交给脚本侧 `Density` 的通道，M3 固定 1 倍）、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与防复古按钮闪现、`AUMID` 与三层任务栏身份。
-- **原生输入**：鼠标、滚轮、键盘、光标形状、`Input` 的文本输入与剪贴板接入宿主窗口（M3 的窗口不接输入）；Win32 TSF/IMM 中文与组合输入法接入 `InputTextSession`；扶正并实测 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
-- **M3 移交**：依赖按键的调试动作（手动重载、帧率徽标与诊断叠层的快捷键）；恢复 M1 删掉的 `canton_focus_input`、`canton_scroll_input`，以及 `canton_frame_submission`、Lazy 端到端里依赖输入的部分（Input 焦点、拖选、IME 在数据重排中保持）。
+- **多窗口与入口模型**：落地 `appBuilder(App).build()`（全仓清零 `createApp`）、`<App>` 与 `<Window>` 生命周期、画区作用域自然分界、每窗独立 `NativeScene`/`SceneFramePipeline`/`Density`/`FocusManager`、`WindowState` 与 `WindowHandle`、私有 `WeakMap` → `WindowId` → `HWND` 映射、Win32 `owner` 拓扑逆序销毁、非阻塞模态（`EnableWindow` + 模态锁计数 + 防焦点跌落顺序）与 0 窗错误屏兜底。
+- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic，不支持环境静默回退深色底）与 `cornerPreference`、Per-Monitor V2 DPI 与 `WM_DPICHANGED` 驱动窗口级 `Density`、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与非客户区三键防复古按钮闪现托管、`AUMID` 与进程/窗口图标。
+- **原生输入**：鼠标多击与捕获、滚轮平滑与边界接力、键盘与焦点导航、光标形状、`Input` 词级操作/多击选词/`readOnly`/剪贴板接入宿主窗口；纯 Win32 IMM32 中文输入法与显式 `compositionRange` 组合模型接入 `InputTextSession`（按焦点动态启停 `HIMC`）；接通 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
+- **M3 移交与 Dist 物理剥离**：Dev 窗口级调试交互（`F5` 重载、`F8` 帧率徽标、`F9` / `Shift+F9` `DiagnosticsOverlay`、错误屏点击重试与 `Ctrl+C` 复制诊断）经 `DevAssembly` 注入并在 Dist 宿主编译/链接期物理剥离；恢复并扩充 `canton_focus_input`、`canton_scroll_input`、`canton_frame_submission`、`canton_lazy_runtime` 与 `canton_window_runtime`。
 
 验收夹具：
-- 「窗口与模态」夹具：**自绘标题栏 + Mica 背景** 的桌面壳，多窗共享响应式状态、同帧切窗不误退、嵌套模态锁、无框浮窗、跨不同 DPI 显示器拖拽与中文 IME 验收。
+- `window-interaction`（「窗口与交互」夹具）：**自绘标题栏 + Mica 背景** 的桌面工作台，覆盖多窗共享响应式状态、同帧切窗不误退、二级嵌套模态锁、置顶工具窗、无框圆角浮窗、跨 DPI 缩放与中文 IMM32 试验场。
 
 验收：
-- 多窗口创建/销毁/同帧切换、`onCloseRequest` 拦截、嵌套模态、Win11 Snap Layout 悬停最大化键、鼠标/滚轮/键盘基础输入、跨屏 DPI 切换与 IME 实机通过。
+- 多窗口创建/销毁/同帧切换、`onCloseRequest` 拦截、嵌套模态、Win11 Snap Layout 悬停最大化键、鼠标/滚轮/触控板/键盘导航、跨屏 DPI 切换与中文 IME 实机及全套自动化检查通过。
+- 移交后续里程碑事项已分别归入 M5（着色器与离屏组透明度）、M6（托盘/任务栏扩展/单实例/文件存储）、M7（`EXT=1` 宿主与 `CallContext::lookupHwnd` 对接私有窗口表）与 M8（静态打包 PE 图标与默认 AUMID）。
 
 ---
 

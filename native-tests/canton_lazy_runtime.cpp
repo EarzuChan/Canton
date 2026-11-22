@@ -3,7 +3,9 @@
 // Input 的焦点、选区与 IME 部分属 M4
 #include "FixtureRuntime.h"
 
+#include <core/InputSession.h>
 #include <core/LazyLayout.h>
+#include <runtime/InputTextSession.h>
 
 #include <cmath>
 #include <iostream>
@@ -67,10 +69,46 @@ namespace {
         fixture.command("show");
         check(first() == 0, "隐藏期间的按项定位被旧逻辑位置恢复覆盖");
         fixture.command("jump");
-        fixture.command("insert");
-        check(first() == 9001 && fixture.findText("项:9000:0") != 0, "前插项没有保持稳定 key 锚点");
-        fixture.command("reverse");
-        check(fixture.findText("项:9000:0") != 0 && first() == 999, "重排没有按 key 保持首项");
+        // 验证 Lazy 项内 Input 在数据前插（insert）与反转重排（reverse）前后完整保留焦点、选区与活跃 IME compositionRange
+        NodeId input9000 = 0;
+        for (const auto id : fixture.scene().tree().nodeIds()) {
+            if (const auto* ed = test_support::editable(fixture.scene().node(id))) {
+                if (std::get<TextFieldModifier>(ed->descriptor.value).value == "焦点9000") input9000 = id;
+            }
+        }
+        check(input9000 != 0, "Lazy 第 9000 项未挂载测试 Input");
+        {
+            InputSession lazyInput;
+            canton::runtime::InputTextSession lazyText(fixture.text());
+            InputCallbacks lazyCb;
+            struct PrepGuard {
+                canton::runtime::CantonRuntime& rt;
+                ~PrepGuard() { rt.setInteractionPreparation({}); }
+            } prepGuard{fixture.runtime()};
+            fixture.runtime().setInteractionPreparation([&](LayoutTree& tree) { lazyInput.prepareLazyInteraction(tree); });
+            check(lazyInput.requestFocus(fixture.runtime().scene().tree(), input9000, lazyText, lazyCb), "Lazy Input 聚焦请求失败");
+            (void)lazyText.state().selectRange(0, 6);  // 选中 "焦点"
+            check(lazyText.setComposition(fixture.scene().tree(), true, "zhongwen", 8, {{0, 8, true}}, lazyCb), "Lazy Input 进入 IME 组合失败");
+            const auto compRangeBefore = lazyText.state().compositionRange();
+
+            fixture.command("insert");
+            lazyInput.synchronizePublishedInput(fixture.scene().tree(), true, lazyText);
+            check(first() == 9001 && fixture.findText("项:9000:0") != 0, "前插项没有保持稳定 key 锚点");
+            check(lazyText.isActive(fixture.scene().tree(), true) && lazyText.state().composing() && lazyText.state().compositionRange() == compRangeBefore, "Lazy 前插数据重排丢失了 Input 焦点或活跃 IME compositionRange");
+
+            fixture.command("reverse");
+            lazyInput.synchronizePublishedInput(fixture.scene().tree(), true, lazyText);
+            check(fixture.findText("项:9000:0") != 0 && first() == 999, "重排没有按 key 保持首项");
+            check(lazyText.isActive(fixture.scene().tree(), true) && lazyText.state().composing() && lazyText.state().text() == "zhongwen9000", "Lazy 列表反转重排丢失了 Input 活跃 IME 预编辑状态");
+            check(lazyText.commitComposition(fixture.scene().tree(), true, std::string("中文"), lazyCb) && lazyText.state().text() == "中文9000", "重排后提交 IME 结果串失败");
+            (void)lazyText.state().selectRange(0, 6);
+            fixture.command("prepend");
+            lazyInput.synchronizePublishedInput(fixture.scene().tree(), true, lazyText);
+            check(lazyText.state().selectedText() == "中文", "Lazy 重排未保留非组合态 Input 选区");
+            fixture.command("unprepend");
+            lazyInput.clearFocus(fixture.runtime().scene().tree(), lazyText, lazyCb);
+            lazyInput.prepareLazyInteraction(fixture.runtime().scene().tree());
+        }
         fixture.command("start");
         check(first() == 0, "返回首项失败");
         fixture.command("animate");

@@ -1,20 +1,24 @@
 <template>
-    <Column>
-        <Text c-if="shown" :text="`点了 ${clicks} 次`" :modifier="M.width(180.dp).offset({ x: offset }).background(color).clickable(tap)" />
+    <App &app-handle>
+        <Window title="Rearrange" :onCloseRequest="appHandle.exitApplication">
+            <Column>
+                <Text c-if="shown" :text="`点了 ${clicks} 次`" :modifier="M.width(180.dp).offset({ x: offset }).background(color).clickable(tap)" />
 
-        <Text c-for="row in rows" :key="row.id" :text="row.name" />
+                <Text c-for="row in rows" :key="row.id" :text="row.name" />
 
-        <Input :onSubmit="command" />
+                <Input :onSubmit="command" />
 
 
-        <Text c-if="asyncStatus === 'loading'" text="延迟加载提示" />
+                <Text c-if="asyncStatus === 'loading'" text="延迟加载提示" />
 
-        <Text c-else-if="asyncStatus === 'ready'" text="延迟加载完成" />
+                <Text c-else-if="asyncStatus === 'ready'" text="延迟加载完成" />
 
-        <Text c-else-if="asyncStatus === 'failed'" text="延迟加载超时" />
+                <Text c-else-if="asyncStatus === 'failed'" text="延迟加载超时" />
 
-        <Image c-if="missingResource" :painter="missingPainter!" />
-    </Column>
+                <Image c-if="missingResource" :painter="missingPainter!" />
+            </Column>
+        </Window>
+    </App>
 </template>
 
 <script>

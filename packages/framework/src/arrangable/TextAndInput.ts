@@ -19,7 +19,7 @@ export const Text = defineArrangable({
 export type InputProps = ArrangableProps<typeof Input>
 export const Input = defineArrangable({
     name: 'Input',
-    props: { modifier: { type: Modifier, default: M }, enabled: Boolean, textStyle: Object as PropType<TextStyleProp>, singleLine: Boolean, minLines: Number, maxLines: Number, value: { type: String, default: '' }, placeholder: String, selectAllOnFocus: Boolean, onValueChange: Function as PropType<(value: string) => void>, onSubmit: Function as PropType<(value: string) => void>, onChange: Function as PropType<(value: string) => void>, onBlur: Function as PropType<(value: string) => void> },
+    props: { modifier: { type: Modifier, default: M }, enabled: { type: Boolean, default: true }, readOnly: { type: Boolean, default: false }, textStyle: Object as PropType<TextStyleProp>, singleLine: Boolean, minLines: Number, maxLines: Number, value: { type: String, default: '' }, placeholder: String, selectAllOnFocus: Boolean, onValueChange: Function as PropType<(value: string) => void>, onSubmit: Function as PropType<(value: string) => void>, onChange: Function as PropType<(value: string) => void>, onBlur: Function as PropType<(value: string) => void> },
     setup(props, { call, source }) {
         // 编辑值归属逻辑实例，停用时原生实体退休也不会丢失未绑定的文本
         const value = shallowRef(props.value)
@@ -30,7 +30,7 @@ export const Input = defineArrangable({
         }
         return () => call(0, Layout, {
             measurePolicy: () => MinSizeMeasurePolicy,
-            modifier: () => props.modifier.textField(value.value, { textStyle: props.textStyle, singleLine: props.singleLine, minLines: props.minLines, maxLines: props.maxLines, placeholder: props.placeholder, enabled: props.enabled, selectAllOnFocus: props.selectAllOnFocus, onValueChange: edited, onSubmit: props.onSubmit, onChange: props.onChange, onBlur: props.onBlur }),
+            modifier: () => props.modifier.textField(value.value, { textStyle: props.textStyle, singleLine: props.singleLine, minLines: props.minLines, maxLines: props.maxLines, placeholder: props.placeholder, enabled: props.enabled, readOnly: props.readOnly, selectAllOnFocus: props.selectAllOnFocus, onValueChange: edited, onSubmit: props.onSubmit, onChange: props.onChange, onBlur: props.onBlur }),
             enabled: () => props.enabled,
         }, {}, { sources: { modifier: source('value'), enabled: source('enabled') } })
     },

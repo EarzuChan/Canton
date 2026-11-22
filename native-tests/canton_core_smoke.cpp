@@ -355,7 +355,7 @@ namespace {
         state.cursorIndex = 2;
         state.selectionStart = 1;
         state.selectionEnd = 3;
-        state.temporaryUnderlines.push_back({0, 1});
+        state.compositionUnderlines.push_back({0, 1, true});
         const auto ops = canton::core::TextInputOverlayBuilder{}.build(9, input, state, service);
         bool sawCaret = false;
         bool sawSelection = false;

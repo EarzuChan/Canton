@@ -748,16 +748,18 @@ namespace canton::core {
         text.textLayout = state.text.empty() ? instance.textLayout : inputLayout.text;
         ops.push_back(std::move(text));
 
-        for (const auto& range : state.temporaryUnderlines) {
-            for (const auto& area : textBoundsForByteRange(inputLayout, state.text, range.start, range.end, textLayoutService)) {
-                const auto underlineY = area.y + area.height - 2.0f;
+        const auto multiClause = state.compositionUnderlines.size() > 1;
+        for (const auto& clause : state.compositionUnderlines) {
+            for (const auto& area : textBoundsForByteRange(inputLayout, state.text, clause.start, clause.end, textLayoutService)) {
+                const auto gap = multiClause && area.width > 3.0f ? 1.0f : 0.0f;
+                const auto underlineY = area.y + area.height - (clause.target ? 2.0f : 1.5f);
                 DrawOp underline;
                 underline.type = DrawOpType::DrawLine;
                 underline.nodeId = node;
-                underline.rect = {area.x, underlineY, 0.0f, 0.0f};
-                underline.lineEnd = {area.x + area.width, underlineY};
-                underline.color = 0xff7aa2ffu;
-                underline.strokeWidth = 1.0f;
+                underline.rect = {area.x + gap, underlineY, 0.0f, 0.0f};
+                underline.lineEnd = {std::max(area.x + gap, area.x + area.width - gap), underlineY};
+                underline.color = clause.target ? 0xff60a5fau : 0xaa93c5fdu;
+                underline.strokeWidth = clause.target ? 2.0f : 1.0f;
                 ops.push_back(std::move(underline));
             }
         }

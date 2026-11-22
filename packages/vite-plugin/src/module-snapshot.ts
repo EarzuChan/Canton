@@ -80,7 +80,21 @@ export async function createModuleSnapshot(server: ViteDevServer, entry: string,
         const url = pending.shift()!
         if (modules.has(url)) continue
         let result: { code: string; map?: unknown } | null
-        if (url === BOOT_PATH) result = { code: `import '/@vite/env'\nimport { createHotContext } from ${JSON.stringify(CLIENT_PATH)}\ncreateHotContext(${JSON.stringify(BOOT_PATH)})\nimport ${JSON.stringify('/' + entry.replace(/^\//, ''))}` }
+        if (url === BOOT_PATH) {
+            const entryUrl = JSON.stringify('/' + entry.replace(/^\//, ''))
+            result = {
+                code: [
+                    `import '/@vite/env'`,
+                    `import { createHotContext } from ${JSON.stringify(CLIENT_PATH)}`,
+                    `createHotContext(${JSON.stringify(BOOT_PATH)})`,
+                    `import * as __cantonAppEntry from ${entryUrl}`,
+                    `if (__cantonAppEntry.default !== undefined) {`,
+                    `    if (typeof globalThis.__CANTON_LAUNCH_APP__ !== 'function') throw new TypeError('入口模块导出了 default，但未通过 @canton/framework 的 appBuilder 构建应用定义')`,
+                    `    globalThis.__CANTON_LAUNCH_APP__(__cantonAppEntry.default)`,
+                    `}`,
+                ].join('\n'),
+            }
+        }
         else if (url === CLIENT_PATH) {
             result = await transformWithOxc(await readFile(hotRuntimeFilePath(), 'utf8'), hotRuntimePath(), { lang: 'ts', target: 'es2022' })
         }

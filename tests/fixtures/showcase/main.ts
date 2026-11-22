@@ -1,4 +1,4 @@
-import { createApp } from '@canton/framework'
+import { appBuilder } from '@canton/framework'
 import { defineFontFamily } from '@canton/framework/ui'
 import ShowcaseApp from './ShowcaseApp.cta'
 import { fontFamily } from './theme.ts'
@@ -9,4 +9,4 @@ defineFontFamily(fontFamily, {
     preload: true,
 })
 
-createApp(ShowcaseApp).mount()
+export default appBuilder(ShowcaseApp).build()

@@ -19,9 +19,9 @@ namespace canton::runtime {
             target = std::move(source);
         }
 
-        std::string errorFrameSignature(core::Rect bounds, const ErrorScreenModel* error, bool detailedErrorScreen, std::uint64_t environment) {
+        std::string errorFrameSignature(core::Rect bounds, const ErrorScreenModel* error, bool detailedErrorScreen, std::uint64_t environment, float dpiScale) {
             std::ostringstream out;
-            out << bounds.x << ',' << bounds.y << ',' << bounds.width << ',' << bounds.height << "|detail=" << (detailedErrorScreen ? 1 : 0) << "|font=" << environment;
+            out << bounds.x << ',' << bounds.y << ',' << bounds.width << ',' << bounds.height << "|s=" << dpiScale << "|detail=" << (detailedErrorScreen ? 1 : 0) << "|font=" << environment;
             if (error) out << "|error=" << (detailedErrorScreen ? error->diagnosticText() : error->summary);
             return out.str();
         }
@@ -89,15 +89,16 @@ namespace canton::runtime {
         preparedErrorOps_.clear();
     }
 
-    void DiagnosticsState::prepareFrame(core::Rect bounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, core::PublishedFrameContent& content) {
-        const auto signature = errorFrameSignature(bounds, error(), detailedErrorScreen, textLayout.environment());
+    void DiagnosticsState::prepareFrame(core::Rect bounds, bool detailedErrorScreen, PackageSource activeSource, bool liveUnavailable, const canton::core::TextLayoutService& textLayout, core::PublishedFrameContent& content, float dpiScale) {
+        const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
+        const auto signature = errorFrameSignature(bounds, error(), detailedErrorScreen, textLayout.environment(), s);
         if (signature != preparedSignature_) {
-            preparedErrorOps_ = error_ ? buildErrorScreenOps(bounds, *error_, detailedErrorScreen) : std::vector<canton::core::DrawOp>{};
+            preparedErrorOps_ = error_ ? buildErrorScreenOps(bounds, *error_, detailedErrorScreen, s) : std::vector<canton::core::DrawOp>{};
             preparedSignature_ = signature;
         }
         replacePreparedOps(content.diagnosticsErrorDrawOps, preparedErrorOps_);
         if (hud_) {
-            hud_->prepare(bounds, hasError(), activeSource, liveUnavailable, textLayout, content);
+            hud_->prepare(bounds, hasError(), activeSource, liveUnavailable, textLayout, content, s);
             return;
         }
         content.diagnosticsBadgeDrawOps.clear();

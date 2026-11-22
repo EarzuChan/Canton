@@ -143,9 +143,11 @@ namespace canton::core {
         std::shared_ptr<const PaintFragment> buildFragment(LayoutTree& tree, NodeId id, PaintWorkCounters& counters) const;
     };
 
-    struct TextInputOverlayRange {
+    struct TextInputOverlayUnderline {
         std::size_t start = 0;
         std::size_t end = 0;
+        bool target = false;
+        bool operator==(const TextInputOverlayUnderline&) const = default;
     };
 
     struct TextInputOverlayState {
@@ -155,7 +157,7 @@ namespace canton::core {
         std::size_t selectionEnd = 0;
         float viewportX = 0.0f;
         float viewportY = 0.0f;
-        std::vector<TextInputOverlayRange> temporaryUnderlines;
+        std::vector<TextInputOverlayUnderline> compositionUnderlines;
 
         [[nodiscard]] bool hasSelection() const noexcept {
             return selectionStart != selectionEnd;

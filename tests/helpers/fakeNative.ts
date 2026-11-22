@@ -3,8 +3,16 @@ import { CANTON_RUNTIME_VERSION } from '../../packages/framework/src/native/prot
 
 // 补齐真实宿主必然提供的全部成员，测试按需覆盖
 export function createFakeNative(overrides: Partial<NativeTransactionTarget> = {}): NativeTransactionTarget {
-    let handle = 1n, pixelVersion = 1
+    let handle = 1n, pixelVersion = 1, nextWindowId = 1
     return {
+        configureApp: () => { },
+        requestAppExit: () => { },
+        allocateWindowId: () => nextWindowId++,
+        createWindow: () => { },
+        updateWindow: () => { },
+        destroyWindow: () => { },
+        windowCommand: () => { },
+        installWindowDriver: () => { },
         focusCommand: () => false,
         installFrameDriver: () => { },
         installLayoutDriver: () => { },

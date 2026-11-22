@@ -17,6 +17,7 @@ namespace canton::core {
         std::uint64_t generation = 0;
         // 输入受体类型；空表示仅为节点或文本框命中
         std::optional<InputModifierKind> input;
+        CaptionButtonKind captionButton = CaptionButtonKind::Minimize;
         // 受体本地坐标，只在命中链结果中填写
         Point local;
         Rect bounds;
@@ -73,4 +74,8 @@ namespace canton::core {
         // 指针下的全部输入受体，由内向外；遇到含受体的子树后不再查看其下层兄弟
         std::vector<HitTestResult> hitChain(const HitTestSnapshot& snapshot, Point point) const;
     };
+
+    // 自绘标题栏与窗口非客户区 5 级命中：
+    // 1. 四边四角缩放热区 -> 2. captionButton -> 3. 可交互节点与 nonDraggableArea -> 4. draggableArea -> 5. HTCLIENT
+    WindowHitResult resolveWindowHitTest(const HitTestSnapshot& snapshot, Size windowSizePx, Point point, const WindowCapabilities& capabilities);
 }

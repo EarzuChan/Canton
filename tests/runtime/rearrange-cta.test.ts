@@ -14,10 +14,9 @@ function evaluateCta(source: string, state: object = {}) {
 
 test('真实 CTA 纯值变化只更新文本 Modifier，不执行结构且保留 Layout 身份', async () => {
     const title = runtime.ref('旧值')
-    const Root = evaluateCta("<template><Text :text=\"title\" /></template><script>import { title } from \"./state\"\n</script>", { title })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Text :text=\"title\" /></Window></App></template><script>import { title } from \"./state\"\n</script>", { title })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const initial = native.textNodes()
     assert.equal(initial[0].text, '旧值')
     const structures = internal.getCantonExecutionStats().structureRuns
@@ -30,12 +29,17 @@ test('真实 CTA 纯值变化只更新文本 Modifier，不执行结构且保留
 })
 
 test('用户 CTA 直接组合 Layout、Policy 与文本 Modifier，结果等同代码 FA', () => {
-    const Page = evaluateCta("<template><Layout :measurePolicy=\"BoxMeasurePolicy()\" :modifier=\"M.padding(8.dp)\"><Layout :measurePolicy=\"MinSizeMeasurePolicy\" :modifier=\"M.text('正文')\" /></Layout></template><script>import { Layout } from '@canton/framework/foundation'\n\nimport { BoxMeasurePolicy, MinSizeMeasurePolicy, M } from '@canton/framework/ui'\n</script>")
-    const Code = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, foundation.Box, { modifier: () => ui.M.padding(8, 0) }, { default: () => call(0, foundation.Text, { text: () => '正文' }) }) })
+    const Page = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Layout :measurePolicy=\"BoxMeasurePolicy()\" :modifier=\"M.padding(8.dp)\"><Layout :measurePolicy=\"MinSizeMeasurePolicy\" :modifier=\"M.text('正文')\" /></Layout></Window></App></template><script>import { Layout } from '@canton/framework/foundation'\n\nimport { BoxMeasurePolicy, MinSizeMeasurePolicy, M } from '@canton/framework/ui'\n</script>")
+    const Code = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, foundation.Box, { modifier: () => ui.M.padding(8, 0) }, { default: () => call(0, foundation.Text, { text: () => '正文' }) }),
+            }),
+        }),
+    })
     const collect = (definition: runtime.ArrangableDefinition) => {
         const native = recordingNative()
-        const app = runtime.createApp(definition)
-        mountFrame(app, native.target)
+        const app = mountFrame(runtime.appBuilder(definition).build(), native.target)
         const result = JSON.parse(JSON.stringify([...native.nodes.values()].map(node => ({ id: node.id, children: node.children, policy: node.inputs.get('measurePolicy'), modifier: node.inputs.get('modifier') }))))
         app.unmount()
         return result
@@ -48,16 +52,19 @@ test('退出未再访问的对象参数绑定取消订阅，恢复后重新读�
     const text = runtime.ref('旧内容')
     let reads = 0
     const Page = internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            if (shown.value) call(0, foundation.Text, internal.parameterInputs(internal.parameterObject(0, () => {
-                reads++
-                return { text: text.value }
-            })))
-        }
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    if (shown.value) call(0, foundation.Text, internal.parameterInputs(internal.parameterObject(0, () => {
+                        reads++
+                        return { text: text.value }
+                    })))
+                },
+            }),
+        }),
     })
     const native = recordingNative()
-    const app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     shown.value = false
     advanceFrames()
     const stoppedReads = reads
@@ -72,10 +79,9 @@ test('退出未再访问的对象参数绑定取消订阅，恢复后重新读�
 
 test('真实 CTA keyed 列表移动刷新索引并保留各项 Layout 身份', async () => {
     const items = runtime.ref([{ id: 'A' }, { id: 'B' }])
-    const Root = evaluateCta("<template><Column><Text c-for=\"(item, index) in items\" :key=\"item.id\" :text=\"item.id + index\" /></Column></template><script>import { items } from \"./state\"\n</script>", { items })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Column><Text c-for=\"(item, index) in items\" :key=\"item.id\" :text=\"item.id + index\" /></Column></Window></App></template><script>import { items } from \"./state\"\n</script>", { items })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const initial = native.textNodes()
     assert.deepEqual(initial.map(node => node.text), ['A0', 'B1'])
 
@@ -103,10 +109,9 @@ test('真实 CTA 中间条件与单条目条件独立重启，根及无关兄弟
         conditionRuns.set(row.id, (conditionRuns.get(row.id) ?? 0) + 1)
         return row.shown
     }
-    const Page = evaluateCta("<template><Text :key=\"rootKey()\" text=\"固定\"/><Spacer c-if=\"middleShown\"/><Template c-for=\"row in readRows()\" :key=\"row.id\"><Text c-if=\"visible(row)\" :text=\"row.title\"/></Template></template><script>import { rootKey, readRows, visible, middleShown } from \"./state\"\n</script>", { rootKey, readRows, visible, middleShown })
+    const Page = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Text :key=\"rootKey()\" text=\"固定\"/><Spacer c-if=\"middleShown\"/><Template c-for=\"row in readRows()\" :key=\"row.id\"><Text c-if=\"visible(row)\" :text=\"row.title\"/></Template></Window></App></template><script>import { rootKey, readRows, visible, middleShown } from \"./state\"\n</script>", { rootKey, readRows, visible, middleShown })
     const native = recordingNative()
-    const app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const before = internal.getCantonExecutionStats()
     assert.deepEqual([rootRuns, listRuns, ...conditionRuns.values()], [1, 1, 1, 1])
 
@@ -129,10 +134,9 @@ test('真实 CTA 中间条件与单条目条件独立重启，根及无关兄弟
 test('真实 CTA 空分支、多根与重复内容调用维护插入顺序及独立身份', async () => {
     const show = runtime.ref(false)
     const Content = evaluateCta('<template><Slot/><Slot/></template>')
-    const Root = evaluateCta("<template><Text text=\"前\"/><Template c-if=\"show\"><Text text=\"中一\"/><Text text=\"中二\"/></Template><Content><Text text=\"内容\"/></Content><Text text=\"后\"/></template><script>import { show, Content } from \"./state\"\n</script>", { show, Content })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Text text=\"前\"/><Template c-if=\"show\"><Text text=\"中一\"/><Text text=\"中二\"/></Template><Content><Text text=\"内容\"/></Content><Text text=\"后\"/></Window></App></template><script>import { show, Content } from \"./state\"\n</script>", { show, Content })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const initial = native.textNodes()
     assert.deepEqual(initial.map(node => node.text), ['前', '内容', '内容', '后'])
     assert.notEqual(initial[1].id, initial[2].id)
@@ -147,10 +151,9 @@ test('真实 CTA 空分支、多根与重复内容调用维护插入顺序及独
 
 test('对象绑定区分形状和值，字段变化不唤醒结构，移除字段恢复声明默认值', async () => {
     const values = runtime.ref<Record<string, unknown>>({ text: '正文', style: { color: 1 } })
-    const Root = evaluateCta("<template><Text c-bind=\"inputs\" /></template><script>import { computed } from '@canton/framework'\nimport type { TextStyleProp } from '@canton/framework/ui'\nimport { values } from \"./state\"\nconst inputs = computed(() => values.value as { text?: string; style?: TextStyleProp })\n</script>", { values })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Text c-bind=\"inputs\" /></Window></App></template><script>import { computed } from '@canton/framework'\nimport type { TextStyleProp } from '@canton/framework/ui'\nimport { values } from \"./state\"\nconst inputs = computed(() => values.value as { text?: string; style?: TextStyleProp })\n</script>", { values })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const runs = internal.getCantonExecutionStats().structureRuns
 
     values.value = { text: '更新', style: { color: 2 } }
@@ -175,11 +178,11 @@ test('真实 CTA 动态参数改名恢复旧字段默认值，拒绝重复、非
             return () => call(0, foundation.Text, { text: () => `${props.firstValue}/${props.secondValue}/${props.fixedValue}` })
         }
     })
-    const Page = evaluateCta('<template><Receiver :[name].camel="value" fixed-value="固定" /></template><script>import { Receiver, name, value } from "./state"</script>', { Receiver, name, value })
+    const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Receiver :[name].camel="value" fixed-value="固定" /></Window></App></template><script>import { Receiver, name, value } from "./state"</script>', { Receiver, name, value })
     const native = recordingNative(), errors: unknown[] = []
-    const app = runtime.createApp(Page)
-    app.config.errorHandler = error => errors.push(error)
-    mountFrame(app, native.target)
+    const builder = runtime.appBuilder(Page)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountFrame(builder.build(), native.target)
     const id = native.textNodes()[0].id
     assert.deepEqual(native.textNodes(), [{ id, text: '首值/第二默认/固定' }])
 
@@ -216,9 +219,8 @@ test('真实 CTA 动态参数改名恢复旧字段默认值，拒绝重复、非
 test('真实 CTA 的 #header 交付具名多根内容及默认内容', () => {
     const Receiver = evaluateCta('<template><Slot name="header" /><Slot /></template>')
     const title = runtime.ref('标题')
-    const Page = evaluateCta(`<template><Receiver><Template #header><Text :text="title" /><Text text="副标题" /></Template><Text text="正文" /></Receiver></template><script>import { Receiver, title } from "./state"</script>`, { Receiver, title })
-    const native = recordingNative(), app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const Page = evaluateCta(`<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Receiver><Template #header><Text :text="title" /><Text text="副标题" /></Template><Text text="正文" /></Receiver></Window></App></template><script>import { Receiver, title } from "./state"</script>`, { Receiver, title })
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const initial = native.textNodes()
     assert.deepEqual(initial.map(node => node.text), ['标题', '副标题', '正文'])
     title.value = '更新标题'
@@ -242,10 +244,9 @@ test('固定 Modifier 链只重新求值失效分段并精确写入既有实例'
         colors++
         return color.value
     }
-    const Root = evaluateCta("<template><Box :modifier=\"M.width(readWidth().dp).background(Color(readColor()))\" /></template><script>import { M, Color } from '@canton/framework/ui'\n\nimport { readWidth, readColor } from \"./state\"\n</script>", { readWidth, readColor })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Box :modifier=\"M.width(readWidth().dp).background(Color(readColor()))\" /></Window></App></template><script>import { M, Color } from '@canton/framework/ui'\n\nimport { readWidth, readColor } from \"./state\"\n</script>", { readWidth, readColor })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const chains = ui.modifierStats.chainWrites
     const instances = ui.modifierStats.instanceWrites
     assert.equal(widths, 1)
@@ -269,12 +270,11 @@ test('固定 Modifier 链相较完整表达式减少求值及分配，保持相�
             return 20
         }
         const makeModifier = () => ui.M.width(readWidth(), 0).height(30, 0).padding(4, 0).background(color.value)
-        const Page = evaluateCta(`<template><Spacer :modifier="${expression}"/></template><script>import { M, Color } from '@canton/framework/ui'
+        const Page = evaluateCta(`<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Spacer :modifier="${expression}"/></Window></App></template><script>import { M, Color } from '@canton/framework/ui'
  import { color, readWidth, makeModifier } from "./state"
 </script>`, { color, readWidth, makeModifier })
         const native = recordingNative()
-        const app = runtime.createApp(Page)
-        mountFrame(app, native.target)
+        const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
         const initialAllocations = { ...ui.modifierAllocationStats }
         const initialExecutions = internal.getCantonExecutionStats()
         const initialWidths = widths
@@ -288,7 +288,7 @@ test('固定 Modifier 链相较完整表达式减少求值及分配，保持相�
             widths: widths - initialWidths,
             structures: internal.getCantonExecutionStats().structureRuns - initialExecutions.structureRuns,
         }
-        const modifier = native.nodes.get(native.nodes.get(1)!.children[0])!.inputs.get('modifier') as ui.Modifier
+        const modifier = native.nodes.get(native.windowRoot(0).children[0])!.inputs.get('modifier') as ui.Modifier
         app.unmount()
         return { result, modifier }
     }
@@ -312,17 +312,16 @@ test('列表词法环境中的固定 Modifier 链保持分段缓存，重排后�
         widths++
         return value
     }
-    const Page = evaluateCta("<template><Spacer c-for=\"row in rows\" :key=\"row.id\" :modifier=\"M.width(readWidth(row.width).dp).background(Color(color))\" /></template><script>import { M, Color } from '@canton/framework/ui'\n import { rows, color, readWidth } from \"./state\"\n</script>", { rows, color, readWidth })
+    const Page = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Spacer c-for=\"row in rows\" :key=\"row.id\" :modifier=\"M.width(readWidth(row.width).dp).background(Color(color))\" /></Window></App></template><script>import { M, Color } from '@canton/framework/ui'\n import { rows, color, readWidth } from \"./state\"\n</script>", { rows, color, readWidth })
     const native = recordingNative()
-    const app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     assert.equal(widths, 2)
     color.value = 2
     advanceFrames()
     assert.equal(widths, 2)
     rows.value = [{ id: '乙', width: 40 }, { id: '甲', width: 50 }]
     advanceFrames()
-    const children = native.nodes.get(1)!.children
+    const children = native.windowRoot(0).children
     assert.deepEqual(children.map(id => (native.nodes.get(id)!.inputs.get('modifier') as ui.Modifier).elements[0].value.value), [40, 50])
     app.unmount()
 })
@@ -339,10 +338,9 @@ test('KeepAlive 保留调用生命，停用释放原生受体，恢复交付最�
             return () => call(0, foundation.Text, { text: () => value.value })
         }
     })
-    const Root = evaluateCta("<template><KeepAlive :cacheKey=\"selected\"><Child c-if=\"selected === 'A'\"/></KeepAlive></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><KeepAlive :cacheKey=\"selected\"><Child c-if=\"selected === 'A'\"/></KeepAlive></Window></App></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const oldId = native.textNodes()[0].id
 
     selected.value = '空'
@@ -376,10 +374,9 @@ test('KeepAlive 多根内容按 LRU 淘汰，隐藏项与活动项卸载均只�
             }
         }
     })
-    const Root = evaluateCta("<template><KeepAlive :cacheKey=\"selected\" :max=\"2\"><Child /></KeepAlive></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><KeepAlive :cacheKey=\"selected\" :max=\"2\"><Child /></KeepAlive></Window></App></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
     const native = recordingNative()
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
 
     for (const key of ['B', 'A', 'C', 'B']) {
         selected.value = key
@@ -407,11 +404,11 @@ test('KeepAlive 恢复失败保留已提交页面，重试恢复同一逻辑实�
             return () => call(0, foundation.Text, { text: () => `${identity} ${value.value}` })
         }
     })
-    const Root = evaluateCta("<template><KeepAlive :cacheKey=\"selected\"><Child /></KeepAlive></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
+    const Root = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><KeepAlive :cacheKey=\"selected\"><Child /></KeepAlive></Window></App></template><script>import { KeepAlive } from '@canton/framework/foundation'\n import { selected, Child } from \"./state\"\n</script>", { selected, Child })
     const native = recordingNative(false)
-    const app = runtime.createApp(Root)
-    app.config.errorHandler = error => errors.push(error)
-    mountFrame(app, native.target)
+    const builder = runtime.appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountFrame(builder.build(), native.target)
     native.finish()
     selected.value = 'B'
     advanceFrames()
@@ -443,12 +440,15 @@ test('卸载尚未应用的候选会取消原生提交并释放候选资源', ()
     const Root = internal.defineArrangable({
         setup(_props, { call }) {
             runtime.onScopeDispose(() => disposed++)
-            return () => call(0, foundation.Text, { text: () => '候选' })
+            return () => call(0, foundation.App, {}, {
+                default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, foundation.Text, { text: () => '候选' }),
+                }),
+            })
         }
     })
     const native = recordingNative(false)
-    const app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     app.unmount()
     assert.equal(disposed, 1)
     assert.deepEqual(native.textNodes(), [])
@@ -457,7 +457,7 @@ test('卸载尚未应用的候选会取消原生提交并释放候选资源', ()
 
 test('Color.hsl 在 CTA 模板颜色绑定中转换为 ARGB 并响应动画值', () => {
     const hue = runtime.ref(0)
-    const source = `<template><Text text="彩虹" :style="{ color: Color.hsl(hue, 1, 0.5) }" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="彩虹" :style="{ color: Color.hsl(hue, 1, 0.5) }" /></Window></App></template><script>
 import { Color } from '@canton/framework/ui'
 import { hue } from "./state"
 </script>`
@@ -468,8 +468,7 @@ import { hue } from "./state"
     assert.match(compiled.code, /Number\.isFinite\(__cantonColorHue\)/)
     const Page = evaluateCta(source, { hue })
     const native = recordingNative()
-    const app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     assert.equal(native.textNodes()[0].text, '彩虹')
     hue.value = 120
     advanceFrames()
@@ -540,15 +539,15 @@ test('Color 静态十六进制值参与 ARGB 与通道范围校验', () => {
 
 test('Color 动态 ARGB 保留 uint32 校验并在失败后保留已发布颜色', () => {
     const color = runtime.ref(0xff123456)
-    const source = `<template><Text text="颜色" :style="{ color: Color(color) }" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="颜色" :style="{ color: Color(color) }" /></Window></App></template><script>
 import { Color } from '@canton/framework/ui'
 import { color } from './state'
 </script>`
     const Page = evaluateCta(source, { color })
     const native = recordingNative(), errors: unknown[] = []
-    const app = runtime.createApp(Page)
-    app.config.errorHandler = error => errors.push(error)
-    mountFrame(app, native.target)
+    const builder = runtime.appBuilder(Page)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountFrame(builder.build(), native.target)
     const input = native.nodes.get(native.textNodes()[0].id)!
     const published = input.inputs.get('modifier')
     const writes = native.writes
@@ -569,14 +568,13 @@ import { color } from './state'
 })
 
 test('const 通道对象仍可变，Color 不把初始化字段永久折叠成旧颜色', () => {
-    const source = `<template><Text text="可变颜色" :style="{ color: Color(channels) }" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="可变颜色" :style="{ color: Color(channels) }" /></Window></App></template><script>
 import { Color } from '@canton/framework/ui'
 const channels = { red: 1, green: 0, blue: 0 }
 channels.red = 0
 channels.green = 1
 </script>`
-    const native = recordingNative(), app = runtime.createApp(evaluateCta(source))
-    mountFrame(app, native.target)
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(evaluateCta(source)).build(), native.target)
     const node = native.nodes.get(native.textNodes()[0].id)!
     const modifier = node.inputs.get('modifier') as ui.Modifier
     const text = modifier.elements.find(element => element.type === 'text')!
@@ -590,13 +588,12 @@ test('Color 拆箱按对象字面量顺序求值，显式 void alpha 的副作�
         trace.push(name)
         return value
     }
-    const source = `<template><Text text="求值顺序" :style="{ color }" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="求值顺序" :style="{ color }" /></Window></App></template><script>
 import { Color } from '@canton/framework/ui'
 import { readChannel } from './state'
 const color = Color({ red: readChannel('red', 1), green: readChannel('green', 0), blue: readChannel('blue', 0), alpha: void readChannel('alpha', 1) })
 </script>`
-    const native = recordingNative(), app = runtime.createApp(evaluateCta(source, { readChannel }))
-    mountFrame(app, native.target)
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(evaluateCta(source, { readChannel })).build(), native.target)
     assert.deepEqual(trace, ['red', 'green', 'blue', 'alpha'])
     const modifier = native.nodes.get(native.textNodes()[0].id)!.inputs.get('modifier') as ui.Modifier
     const text = modifier.elements.find(element => element.type === 'text')!
@@ -605,13 +602,12 @@ const color = Color({ red: readChannel('red', 1), green: readChannel('green', 0)
 })
 
 test('Color 不把被遮蔽的 Object.freeze 当作纯静态对象构造', () => {
-    const source = `<template><Text text="对象调用" :style="{ color }" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="对象调用" :style="{ color }" /></Window></App></template><script>
 import { Color } from '@canton/framework/ui'
 const Object = { freeze(value: { red: number; green: number; blue: number }) { if ('red' in value) { value.red = 0; value.green = 1 } return value } }
 const color = Color(Object.freeze({ red: 1, green: 0, blue: 0 }))
 </script>`
-    const native = recordingNative(), app = runtime.createApp(evaluateCta(source))
-    mountFrame(app, native.target)
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(evaluateCta(source)).build(), native.target)
     const modifier = native.nodes.get(native.textNodes()[0].id)!.inputs.get('modifier') as ui.Modifier
     const text = modifier.elements.find(element => element.type === 'text')!
     assert.equal((text.value.style as { color: number }).color, 0xff00ff00)
@@ -620,13 +616,12 @@ const color = Color(Object.freeze({ red: 1, green: 0, blue: 0 }))
 
 test('真实 CTA 的 AnimatedVisibility 保留退出和反向期间 Input 编辑值，完全退出后重新初始化', () => {
     const visible = runtime.ref(true)
-    const source = `<template><AnimatedVisibility :visible="visible" :animationSpec="spec"><Input value="初始编辑值" /></AnimatedVisibility></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><AnimatedVisibility :visible="visible" :animationSpec="spec"><Input value="初始编辑值" /></AnimatedVisibility></Window></App></template><script>
 import { AnimatedVisibility, tween, linearEasing } from '@canton/framework/animation'
 import { visible } from './state'
 const spec = tween({ durationMillis: 100, easing: linearEasing })
 </script>`
-    const native = recordingNative(), app = runtime.createApp(evaluateCta(source, { visible }))
-    mountFrame(app, native.target)
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(evaluateCta(source, { visible })).build(), native.target)
     const inputId = native.textNodes()[0].id
     const node = native.nodes.get(inputId)!
     const modifier = node.inputs.get('modifier') as ui.Modifier

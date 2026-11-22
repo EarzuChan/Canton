@@ -1,4 +1,4 @@
-import { createApp } from '@canton/framework'
+import { appBuilder } from '@canton/framework'
 import LazyApp from './LazyApp.cta'
 
-createApp(LazyApp).mount()
+export default appBuilder(LazyApp).build()

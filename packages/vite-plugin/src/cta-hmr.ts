@@ -5,7 +5,7 @@ import type { RawSourceMap } from 'source-map-js'
 import { composeSourceMap } from './source-map.ts'
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex')
-const stateFactories = new Set(['ref', 'shallowRef', 'reactive', 'shallowReactive', 'createScrollState'])
+const stateFactories = new Set(['ref', 'shallowRef', 'reactive', 'shallowReactive', 'createScrollState', 'createWindowState', 'createLazyState', 'createLazyListState', 'createLazyGridState'])
 
 // 在值单位 lowering 之后抽出模板工厂，符号解析确保不误改模板内部局部变量
 export function withCtaHmr(code: string, filename: string, script: string, previousMap?: RawSourceMap): { code: string; map: RawSourceMap } {

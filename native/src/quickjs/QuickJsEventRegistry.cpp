@@ -12,12 +12,13 @@ namespace canton::quickjs {
         eventSlots_.clear();
         retiredEventSlots_.clear();
         publishedEventSlots_.clear();
+        publishedByWindow_.clear();
         context_ = context;
     }
 
     void QuickJsEventRegistry::beginCandidate() {
         if (checkpoint_) throw std::logic_error("事件注册已有未完成候选");
-        checkpoint_ = CandidateCheckpoint{eventSlots_, retiredEventSlots_, publishedEventSlots_};
+        checkpoint_ = CandidateCheckpoint{eventSlots_, retiredEventSlots_, publishedEventSlots_, publishedByWindow_};
         for (auto& [_, callback] : checkpoint_->callbacks) callback = JS_DupValue(context_, callback);
     }
 
@@ -33,6 +34,7 @@ namespace canton::quickjs {
         eventSlots_ = std::move(checkpoint_->callbacks);
         retiredEventSlots_ = std::move(checkpoint_->retired);
         publishedEventSlots_ = std::move(checkpoint_->published);
+        publishedByWindow_ = std::move(checkpoint_->byWindow);
         checkpoint_.reset();
     }
 
@@ -82,18 +84,48 @@ namespace canton::quickjs {
         for (const auto& [slot, _] : eventSlots_) retiredEventSlots_.insert(slot);
     }
 
-    void QuickJsEventRegistry::publish(const canton::core::EventSlotSet& active) {
-        // 只有成功发布的场景决定可调用资源及释放边界
-        publishedEventSlots_ = active;
+    void QuickJsEventRegistry::rebuildPublishedUnion() {
+        publishedEventSlots_.clear();
+        for (const auto& [_, active] : publishedByWindow_) {
+            publishedEventSlots_.insert(active.begin(), active.end());
+        }
+    }
+
+    void QuickJsEventRegistry::sweepWindowSlots(canton::core::WindowId windowId, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows) {
         for (auto it = eventSlots_.begin(); it != eventSlots_.end();) {
-            if (active.contains(it->first)) {
+            if (publishedEventSlots_.contains(it->first)) {
                 ++it;
                 continue;
             }
+            const auto ownerIt = nodeWindows.find(it->first.node);
+            const auto belongsToWindow = windowId == 0 ? (ownerIt == nodeWindows.end() || ownerIt->second == 0) : (ownerIt == nodeWindows.end() || ownerIt->second == windowId);
+            if (!belongsToWindow && !retiredEventSlots_.contains(it->first)) {
+                ++it;
+                continue;
+            }
+            retiredEventSlots_.erase(it->first);
             JS_FreeValue(context_, it->second);
             it = eventSlots_.erase(it);
         }
-        retiredEventSlots_.clear();
+    }
+
+    void QuickJsEventRegistry::publish(const canton::core::EventSlotSet& active) {
+        publishedByWindow_[0] = active;
+        rebuildPublishedUnion();
+        sweepWindowSlots(0, {});
+        if (publishedByWindow_.size() <= 1) retiredEventSlots_.clear();
+    }
+
+    void QuickJsEventRegistry::publishWindow(canton::core::WindowId windowId, const canton::core::EventSlotSet& active, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows) {
+        publishedByWindow_[windowId] = active;
+        rebuildPublishedUnion();
+        sweepWindowSlots(windowId, nodeWindows);
+    }
+
+    void QuickJsEventRegistry::unpublishWindow(canton::core::WindowId windowId, const std::unordered_map<canton::core::NodeId, canton::core::WindowId>& nodeWindows) {
+        publishedByWindow_.erase(windowId);
+        rebuildPublishedUnion();
+        sweepWindowSlots(windowId, nodeWindows);
     }
 
     canton::core::EventSlotId QuickJsEventRegistry::updateModifierCallback(canton::core::NodeId node, canton::core::EventSlotKind kind, JSValueConst callbackValue, const canton::core::EventSlotId& previous, canton::core::MutationTransaction* transaction) {
@@ -109,4 +141,3 @@ namespace canton::quickjs {
         }
     }
 }
-

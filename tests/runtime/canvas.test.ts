@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { effectScope, ref } from '@canton/reactivity'
-import { createApp } from '@canton/framework'
-import { defineArrangable } from '@canton/framework/internal'
-import { Canvas } from '@canton/framework/foundation'
+import { appBuilder } from '@canton/framework'
+import { defineArrangable, mountApplication } from '@canton/framework/internal'
+import { App, Canvas, Window } from '@canton/framework/foundation'
 import { M, createCanvasController, type DrawScope } from '@canton/framework/ui'
 import { DrawInstance, type PreparedDraw } from '../../packages/framework/src/draw/draw.ts'
 import { DataSourceState, sourceView } from '../../packages/framework/src/draw/dataSource.ts'
@@ -80,15 +80,22 @@ test('Canvas 以 drawBehind 降解进节点修饰器，onDraw 读取的状态只
     const color = ref(0xff112233)
     let renders = 0
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             return () => {
                 renders++
                 call(0, Canvas, { modifier: () => M.size(40, 0, 20, 0).pointerInput(() => { }), onDraw: () => (draw: DrawScope) => draw.drawRect({ color: color.value }) })
             }
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const running = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const node = [...native.nodes.values()].find(node => (node.inputs.get('modifier') as { elements?: readonly { type: string }[] } | undefined)?.elements?.some(element => element.type === 'drawBehind'))!
     type Lowered = { elements: readonly { type: string; value: { prepare: (width: number, height: number) => PreparedDraw; revision: number } }[] }
@@ -100,7 +107,7 @@ test('Canvas 以 drawBehind 降解进节点修饰器，onDraw 读取的状态只
     assert.equal(renders, 1)
     assert.equal(element().value.revision, 1)
     assert.equal(decodeDraw(element().value.prepare(40, 20))[0].color, color.value)
-    app.unmount()
+    running.unmount()
 })
 
 test('drawNative 写入名称与冻结参数引用，非法参数在录制时拒绝', () => {

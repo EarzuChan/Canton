@@ -26,7 +26,7 @@ const shadow: ModifierProtocolEntry = { fields: ['shape', 'radius', 'spread', 'o
 export const modifierNativeProtocol: Readonly<Record<string, ModifierProtocolEntry>> = {
     text: { fields: ['text', 'style', 'singleLine', 'minLines', 'maxLines', 'textAlign', 'overflow'], units: { style }, arguments: [undefined, { style }] },
     textField: {
-        fields: ['value', 'textStyle', 'singleLine', 'minLines', 'maxLines', 'placeholder', 'enabled', 'selectAllOnFocus', 'onValueChange', 'onSubmit', 'onChange', 'onBlur'],
+        fields: ['value', 'textStyle', 'singleLine', 'minLines', 'maxLines', 'placeholder', 'enabled', 'readOnly', 'selectAllOnFocus', 'onValueChange', 'onSubmit', 'onChange', 'onBlur'],
         units: { textStyle: style }, arguments: [undefined, { textStyle: style }],
         events: { onValueChange: 'inputUpdate', onSubmit: 'inputSubmit', onChange: 'inputChange', onBlur: 'inputBlur' },
     },
@@ -78,6 +78,10 @@ export const modifierNativeProtocol: Readonly<Record<string, ModifierProtocolEnt
     focusGroup: { fields: [] },
     onFocusChanged: { fields: ['callback'], events: { callback: 'focusChanged' } },
     focusProperties: { fields: ['canFocus', 'next', 'previous', 'up', 'down', 'left', 'right'] },
+    // 以下各项只由 WindowHandle 构造，公开 Modifier 上没有对应方法
+    draggableArea: { fields: [] },
+    nonDraggableArea: { fields: [] },
+    captionButton: { fields: ['button', 'interaction'], events: { interaction: 'interaction' } },
 }
 
 function pick<T>(select: (entry: ModifierProtocolEntry) => T | undefined): Readonly<Record<string, T>> {

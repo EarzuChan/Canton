@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { effectScope, ref } from '@canton/reactivity'
-import { createApp } from '@canton/framework'
-import { defineArrangable, getCantonExecutionStats } from '@canton/framework/internal'
-import { Layout } from '@canton/framework/foundation'
+import { appBuilder } from '@canton/framework'
+import { defineArrangable, getCantonExecutionStats, mountApplication } from '@canton/framework/internal'
+import { App, Layout, Window } from '@canton/framework/foundation'
 import { M, MinSizeMeasurePolicy, createDensity, linearGradient, verticalGradient, radialGradient, sweepGradient, roundedCorners, rounded, solidColor, painter, filmstrip, createPixelBuffer } from '@canton/framework/ui'
 import { createFakeNative } from '../helpers/fakeNative.ts'
 import { painterSnapshot } from '../../packages/framework/src/draw/painter.ts'
@@ -122,7 +122,7 @@ test('绘制反应式依赖通过既有 Modifier 值提交，独立于结构重�
     const color = ref(0xff112233)
     let renders = 0
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             const modifier = M.size(100, 0, 40, 0).drawBehind(scope => scope.drawRect({ color: color.value }))
             return () => {
@@ -130,8 +130,15 @@ test('绘制反应式依赖通过既有 Modifier 值提交，独立于结构重�
                 call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => modifier })
             }
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const running = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const node = [...native.nodes.values()].find(node => node.inputs.has('modifier'))!
     const commands = () => {
@@ -147,7 +154,7 @@ test('绘制反应式依赖通过既有 Modifier 值提交，独立于结构重�
     assert.equal(renders, 1)
     assert.equal(commands()[0].color, color.value)
     assert.equal((native.nodes.get(node.id)!.inputs.get('modifier') as MType).elements[1].value.revision, 1)
-    app.unmount()
+    running.unmount()
     assert.throws(commands, /undefined|inputs/)
 })
 
@@ -224,7 +231,7 @@ test('异步绘制 callback 在候选准备阶段被拒绝', () => {
 })
 
 test('真实 CTA 绘制方法保留 PX 与颜色契约，依赖变化不执行结构', () => {
-    const source = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="drawing" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="drawing" /></Window></App></template><script>
 import { Layout } from '@canton/framework/foundation'
 import { M, MinSizeMeasurePolicy, Color } from '@canton/framework/ui'
 import { color } from './state'
@@ -237,8 +244,7 @@ const drawing = M.size(100.dp, 40.dp).drawWithContent((scope, drawContent) => {
 })
 </script>`
     const color = ref(0xff112233), native = recordingNative()
-    const app = createApp(evaluateCta(source, { './state': { color } }, '绘制单位.cta'))
-    app.mount(native.target)
+    const running = mountApplication(appBuilder(evaluateCta(source, { './state': { color } }, '绘制单位.cta')).build(), native.target)
     native.frame()
     const node = [...native.nodes.values()].find(node => node.inputs.has('modifier'))!
     const prepare = () => {
@@ -256,7 +262,7 @@ const drawing = M.size(100.dp, 40.dp).drawWithContent((scope, drawContent) => {
     native.frame()
     assert.equal(prepare()[0].color, color.value)
     assert.equal(getCantonExecutionStats().structureRuns, structures)
-    app.unmount()
+    running.unmount()
     assert.throws(() => compileCantonCta(source.replace('x: 2.px', 'x: 2.dp'), '绘制单位错误.cta'), /要求 PX.*实际为 DP/)
     assert.throws(() => compileCantonCta(source.replace('Color(0xff223344)', '0xff223344'), '绘制颜色错误.cta'), /要求 COLOR/)
 })

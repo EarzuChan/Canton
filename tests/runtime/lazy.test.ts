@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp, createLazyState, onMounted, onUnmounted, ref, nextTick } from '@canton/framework'
-import { LazyColumn, LazyVerticalGrid, Text } from '@canton/framework/foundation'
+import { appBuilder, createLazyState, onMounted, onUnmounted, ref, nextTick } from '@canton/framework'
+import { App, LazyColumn, LazyVerticalGrid, Text, Window } from '@canton/framework/foundation'
 import { spring, tween } from '@canton/framework/animation'
-import { defineArrangable } from '@canton/framework/internal'
+import { defineArrangable, mountApplication } from '@canton/framework/internal'
 import { GridItemSpan } from '../../packages/framework/src/values/primitives.ts'
 import type { Modifier } from '../../packages/framework/src/modifier/modifier.ts'
 import { recordingNative, type RecordedLayoutNode } from './recordingNative.ts'
@@ -27,12 +27,16 @@ test('Lazy 多次测量子组合延续单一候选，失败保留旧项且不提
         }
     })
     const values = ref(Array.from({ length: 1000 }, (_, index) => index))
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) }),
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const id = lazyNode(native.candidateNodes!).id
     native.materialize(id, [0, 1, 2])
@@ -73,12 +77,16 @@ test('Lazy 活动范围缩小不淘汰可见项，离屏逻辑缓存有限且恢
             return () => call(0, Text, { text: () => String(props.value) })
         }
     })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => Array.from({ length: 200 }, (_, index) => index), state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, { items: () => Array.from({ length: 200 }, (_, index) => index), state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) }),
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const id = lazyNode(native.candidateNodes!).id
     native.materialize(id, Array.from({ length: 80 }, (_, index) => index))
@@ -123,12 +131,16 @@ test('同一材料化候选移出再取回 key 重建原生身份，失败恢复
             return () => call(0, Text, { text: () => String(props.value) })
         }
     })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => [0, 1, 2], state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, { items: () => [0, 1, 2], state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) }),
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const id = lazyNode(native.candidateNodes!).id
     native.materialize(id, [0])
@@ -161,12 +173,16 @@ test('Lazy 数据重排在测量前迁移活动 key，保留原生身份且失�
             return () => call(0, Text, { text: () => `稳定:${props.value}` })
         }
     })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) }),
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const id = lazyNode(native.candidateNodes!).id
     native.materialize(id, [0, 1])
@@ -192,7 +208,6 @@ test('Lazy 数据重排在测量前迁移活动 key，保留原生身份且失�
     app.unmount()
 })
 
-
 test('Lazy 元数据优化保留索引回调、深层依赖与回调替换，缺省类型和 span 完整覆盖集合', async () => {
     const native = recordingNative(false)
     const values = ref([{ id: 1, type: 10 }, { id: 2, type: 20 }])
@@ -200,12 +215,16 @@ test('Lazy 元数据优化保留索引回调、深层依赖与回调替换，缺
     const type = ref<((item: { type: number }, index: number) => number) | undefined>((item, index) => item.type + index)
     const span = ref<((item: { id: number }, index: number) => ReturnType<typeof GridItemSpan>) | undefined>((_item, index) => GridItemSpan(index + 1))
     const Item = defineArrangable({ setup(_props, { call }) { return () => call(0, Text, { text: () => '项' }) } })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyVerticalGrid, { items: () => values.value, itemKey: () => key.value, contentType: () => type.value, span: () => span.value }, { default: () => call(0, Item, {}) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyVerticalGrid, { items: () => values.value, itemKey: () => key.value, contentType: () => type.value, span: () => span.value }, { default: () => call(0, Item, {}) }),
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     const metadata = () => {
         native.frame()
         const policy = lazyNode(native.candidateNodes!).inputs.get('measurePolicy') as { keys: string[], contentTypes: string[], spans: number[] }
@@ -230,15 +249,19 @@ test('Lazy 元数据优化保留索引回调、深层依赖与回调替换，缺
 
 test('Lazy 四件套都交付项 Handle，animateItem 给出三种动画规格且 null 关掉对应动画', () => {
     const native = recordingNative(false)
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => {
-                call(0, LazyColumn, { items: () => [1] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `列${item}`, modifier: () => lazyItemHandle.animateItem({ fadeInSpec: null, placementSpec: tween({ durationMillis: 120 }) }) }) })
-                call(1, LazyVerticalGrid, { items: () => [2] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `格${item}`, modifier: () => lazyItemHandle.animateItem() }) })
-            }
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => {
+                        call(0, LazyColumn, { items: () => [1] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `列${item}`, modifier: () => lazyItemHandle.animateItem({ fadeInSpec: null, placementSpec: tween({ durationMillis: 120 }) }) }) })
+                        call(1, LazyVerticalGrid, { items: () => [2] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `格${item}`, modifier: () => lazyItemHandle.animateItem() }) })
+                    },
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     for (const node of [...native.candidateNodes!.values()].filter(node => (node.inputs.get('measurePolicy') as { kind?: string } | undefined)?.kind === 'Lazy')) native.materialize(node.id, [0])
     native.finish()

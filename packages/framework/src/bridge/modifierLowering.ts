@@ -6,6 +6,7 @@ import { normalizeFontStyle } from '../draw/font.ts'
 import { defaultFontSize, type ArrangementProp } from '../native/protocol.ts'
 import { DrawInstance, type DrawDeclaration } from '../draw/draw.ts'
 import { EventAdapters } from './eventAdapters.ts'
+import { assertWindowModifierOwner } from '../modifier/window.ts'
 import type { ArrangableInstance } from '../runtime/internal.ts'
 
 export interface PxModifier {
@@ -20,7 +21,7 @@ export class ModifierLowering {
 
     private readonly events: EventAdapters
 
-    constructor(private readonly density: Density, private readonly owner?: ArrangableInstance) {
+    constructor(private readonly density: Density, private readonly owner?: ArrangableInstance, private readonly windowId?: number) {
         this.events = new EventAdapters(density)
     }
 
@@ -32,6 +33,7 @@ export class ModifierLowering {
         const matched = new Set<number>()
         let cursor = 0
         const elements = declaration.elements.map((element, index) => {
+            assertWindowModifierOwner(element, this.windowId)
             const input = element.value
             let match = -1
             if (element.key) match = previousModifier?.elements.findIndex((old, at) => !matched.has(at) && old.key === element.key && old.type === element.type) ?? -1

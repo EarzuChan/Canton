@@ -85,6 +85,19 @@ namespace canton::runtime {
             interactionPreparation_ = std::move(prepare);
         }
 
+        void setEventSlotValidator(std::function<bool(const canton::core::EventSlotId&)> validator) {
+            eventSlotValidator_ = std::move(validator);
+        }
+
+        // 多窗口宿主由 AppSession 自行提取窗口变更与按窗事务，禁止单视口管道在事件派发时吞取
+        void setExternalSurfaceHost(bool external) noexcept {
+            externalSurfaceHost_ = external;
+        }
+
+        [[nodiscard]] bool checkFontPreloadHold() {
+            return holdsFirstFrameForFonts();
+        }
+
         void requestFramePipelineRun() noexcept;
         [[nodiscard]] bool framePipelineRunRequested() const noexcept;
 
@@ -112,6 +125,12 @@ namespace canton::runtime {
         [[nodiscard]] bool hasPendingFrameWork() const noexcept;
 
         [[nodiscard]] RuntimeFramePumpResult pumpFrame(canton::core::NodeId root, canton::core::Constraints constraints, double nowMillis, const canton::core::FrameFinalizer& finalize = {});
+        [[nodiscard]] canton::core::NodeId effectiveRootNodeId(canton::core::NodeId fallback = 1) const noexcept {
+            return boundWindowId_ ? boundRootNodeId_ : fallback;
+        }
+        [[nodiscard]] std::optional<canton::core::WindowId> boundWindowId() const noexcept {
+            return boundWindowId_;
+        }
 
         [[nodiscard]] canton::core::NativeScene& scene() noexcept {
             return pipelineState_.scene();
@@ -196,6 +215,10 @@ namespace canton::runtime {
         FramePlanner frame_;
         std::deque<QueuedEvent> events_;
         std::function<void(canton::core::LayoutTree&)> interactionPreparation_;
+        std::function<bool(const canton::core::EventSlotId&)> eventSlotValidator_;
+        bool externalSurfaceHost_ = false;
+        std::optional<canton::core::WindowId> boundWindowId_;
+        canton::core::NodeId boundRootNodeId_ = 1;
     };
 
 }

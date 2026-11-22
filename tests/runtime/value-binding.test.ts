@@ -13,7 +13,7 @@ test('App 结构执行中自行卸载后读取 Ref 不重新注册退休订阅',
     const value = runtime.ref(0)
     const native = recordingNative()
     let triggers = 0
-    let app: runtime.CantonApp
+    let app!: runtime.CantonRunningApplication
     const Root = internal.defineArrangable({
         setup: () => {
             runtime.onRenderTriggered(() => { triggers++ })
@@ -23,8 +23,8 @@ test('App 结构执行中自行卸载后读取 Ref 不重新注册退休订阅',
             }
         }
     })
-    app = runtime.createApp(Root)
-    mountFrame(app, native.target)
+    app = internal.mountApplication(runtime.appBuilder(Root).build(), native.target)
+    native.frame()
     assert.equal(native.nodes.size, 0)
     value.value = 1
     advanceFrames()
@@ -34,15 +34,19 @@ test('App 结构执行中自行卸载后读取 Ref 不重新注册退休订阅',
 
 test('Arrangable setup 必须返回结构程序', () => {
     const invalid = internal.defineArrangable({ setup: (() => ({})) as never })
-    assert.throws(() => mountFrame(runtime.createApp(invalid), recordingNative().target), /结构执行函数/)
+    assert.throws(() => mountFrame(runtime.appBuilder(invalid).build(), recordingNative().target), /结构执行函数/)
 })
 
 test('内部 Arrangable 的参数边界要求 getter', () => {
     const Broken = internal.defineArrangable({
         props: { text: String },
-        setup: (props, { call }) => () => call(0, foundation.Text, { text: props.text as never }),
+        setup: (props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, foundation.Text, { text: props.text as never }),
+            }),
+        }),
     })
-    assert.throws(() => mountFrame(runtime.createApp(Broken), recordingNative().target), /必须提供求值函数/)
+    assert.throws(() => mountFrame(runtime.appBuilder(Broken).build(), recordingNative().target), /必须提供求值函数/)
 })
 
 test('默认参数、显式函数参数和 setup 局部状态参与统一生命周期', async () => {
@@ -63,8 +67,14 @@ test('默认参数、显式函数参数和 setup 局部状态参与统一生命�
             return () => call(0, foundation.Text, { text: () => String(value.value) })
         },
     })
-    const app = runtime.createApp(Counter, { onChange: (value: number) => events.push(value) })
-    mountFrame(app, native.target)
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Counter, { onChange: () => (value: number) => events.push(value) }),
+            }),
+        }),
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     assert.equal(native.textNodes()[0].text, '2')
     increment!()
     await flush()
@@ -77,14 +87,13 @@ test('默认参数、显式函数参数和 setup 局部状态参与统一生命�
 test('setup 中的 watch 随逻辑生命退休', async () => {
     const count = runtime.ref(0)
     const values: number[] = []
-    const App = internal.defineArrangable({
-        setup() {
+    const Root = internal.defineArrangable({
+        setup(_props, { call }) {
             runtime.watch(count, value => values.push(value))
-            return () => { }
+            return () => call(0, foundation.App, {})
         }
     })
-    const app = runtime.createApp(App)
-    mountFrame(app, recordingNative().target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), recordingNative().target)
     count.value = 1
     await flush()
     app.unmount()
@@ -102,10 +111,15 @@ test('style 和 class 只是用户显式声明的普通参数，跨层 computed 
             return () => call(0, foundation.Text, { text: () => label.value })
         },
     })
-    const App = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Styled, { style: () => style.value, class: () => '自定义分类' }) })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Styled, { style: () => style.value, class: () => '自定义分类' }),
+            }),
+        }),
+    })
     const native = recordingNative()
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const runs = internal.getCantonExecutionStats().structureRuns
     style.value = '更新'
     await flush()
@@ -116,20 +130,29 @@ test('style 和 class 只是用户显式声明的普通参数，跨层 computed 
 
 test('Modifier 未被内部使用时没有隐式受体，显式交付多个 Layout 时各自拥有实例', () => {
     const Wrapper = internal.defineArrangable({ props: { modifier: ui.Modifier }, setup: () => () => { } })
+    const EmptyRoot = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Wrapper, { modifier: () => ui.M.width(20, 0) }),
+            }),
+        }),
+    })
     const native = recordingNative()
-    const empty = runtime.createApp(Wrapper, { modifier: ui.M.width(20, 0) })
-    mountFrame(empty, native.target)
+    const empty = mountFrame(runtime.appBuilder(EmptyRoot).build(), native.target)
     assert.equal(native.nodes.size, 1)
     empty.unmount()
 
     const Shared = internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            call(0, foundation.Box, { modifier: () => ui.M.width(20, 0) })
-            call(1, foundation.Box, { modifier: () => ui.M.width(20, 0) })
-        }
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    call(0, foundation.Box, { modifier: () => ui.M.width(20, 0) })
+                    call(1, foundation.Box, { modifier: () => ui.M.width(20, 0) })
+                },
+            }),
+        }),
     })
-    const app = runtime.createApp(Shared)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Shared).build(), native.target)
     const nodes = [...native.nodes.values()].filter(node => node.type === 'LayoutNode')
     assert.equal(nodes.length, 2)
     assert.notEqual(nodes[0].modifiers[0].identity, nodes[1].modifiers[0].identity)
@@ -140,26 +163,37 @@ test('分支退出取消其待处理值任务，反复建立和退休不累积�
     const visible = runtime.ref(true)
     const value = runtime.ref(0)
     let reads = 0
-    const App = internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            if (visible.value) call(0, foundation.Text, {
-                text: () => {
-                    reads++
-                    return String(value.value)
-                }
-            })
-        }
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    if (visible.value) call(0, foundation.Text, {
+                        text: () => {
+                            reads++
+                            return String(value.value)
+                        }
+                    })
+                },
+            }),
+        }),
     })
     const before = internal.getCantonExecutionStats().activeValueBindings
     const native = recordingNative()
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
+    const steadyEmptyBindings = (() => {
+        visible.value = false
+        advanceFrames()
+        const count = internal.getCantonExecutionStats().activeValueBindings
+        visible.value = true
+        advanceFrames()
+        return count
+    })()
     for (let index = 0; index < 20; index++) {
         value.value++
         visible.value = false
         await flush()
         assert.equal(native.textNodes().length, 0)
-        assert.equal(internal.getCantonExecutionStats().activeValueBindings, before)
+        assert.equal(internal.getCantonExecutionStats().activeValueBindings, steadyEmptyBindings)
         const previous = reads
         value.value++
         await flush()
@@ -180,14 +214,17 @@ test('同一 Ref 同时驱动结构和值时保留 keyed 实例并交付最终�
             return () => call(0, foundation.Text, { text: () => String(props.value) })
         }
     })
-    const App = internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            if (value.value > 0) call(0, Child, { value: () => value.value }, {}, { key: '固定身份' })
-        }
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    if (value.value > 0) call(0, Child, { value: () => value.value }, {}, { key: '固定身份' })
+                },
+            }),
+        }),
     })
     const native = recordingNative()
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const id = native.textNodes()[0].id
     value.value = 2
     await flush()
@@ -209,9 +246,14 @@ test('显式函数参数作为值更新，调用次数完全由接收方决定',
             return () => { }
         }
     })
-    const App = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Receiver, { onConfirm: () => callback.value }) })
-    const app = runtime.createApp(App)
-    mountFrame(app, recordingNative().target)
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Receiver, { onConfirm: () => callback.value }),
+            }),
+        }),
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), recordingNative().target)
     const runs = internal.getCantonExecutionStats().structureRuns
     invoke!()
     callback.value = () => events.push('新回调')
@@ -225,10 +267,15 @@ test('显式函数参数作为值更新，调用次数完全由接收方决定',
 test('动态目标替换退休旧任务，参数经过目标声明校验', async () => {
     const selected = runtime.shallowRef<runtime.ArrangableDefinition>(foundation.Text)
     const params = runtime.shallowRef<Record<string, unknown>>({ text: '正文' })
-    const App = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, foundation.DynamicArrangable, { is: () => selected.value, props: () => params.value }) })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, foundation.DynamicArrangable, { is: () => selected.value, props: () => params.value }),
+            }),
+        }),
+    })
     const native = recordingNative()
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     selected.value = foundation.Spacer
     params.value = {}
     await flush()
@@ -240,18 +287,22 @@ test('动态目标替换退休旧任务，参数经过目标声明校验', async
 test('值求值异常保留已提交文本，后续依赖变化可重试', async () => {
     const value = runtime.ref(0)
     const errors: unknown[] = []
-    const App = internal.defineArrangable({
-        setup: (_props, { call }) => () => call(0, foundation.Text, {
-            text: () => {
-                if (value.value === 1) throw new Error('值求值失败')
-                return String(value.value)
-            }
-        })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, foundation.Text, {
+                    text: () => {
+                        if (value.value === 1) throw new Error('值求值失败')
+                        return String(value.value)
+                    }
+                }),
+            }),
+        }),
     })
     const native = recordingNative()
-    const app = runtime.createApp(App)
-    app.config.errorHandler = error => errors.push(error)
-    mountFrame(app, native.target)
+    const builder = runtime.appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountFrame(builder.build(), native.target)
     value.value = 1
     await flush()
     assert.equal(errors.length, 1)
@@ -265,9 +316,14 @@ test('值求值异常保留已提交文本，后续依赖变化可重试', async
 test('相等结果抑制原生写入且不重排', async () => {
     const value = runtime.ref(0)
     const native = recordingNative()
-    const App = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, foundation.Text, { text: () => String(value.value % 2) }) })
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, foundation.Text, { text: () => String(value.value % 2) }),
+            }),
+        }),
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const writes = native.writes
     const runs = internal.getCantonExecutionStats().structureRuns
     value.value = 2
@@ -280,13 +336,13 @@ test('相等结果抑制原生写入且不重排', async () => {
 test('递归 watcher 中止当前视觉帧而不无限占用 Owner', () => {
     const value = runtime.ref(0)
     const native = recordingNative()
-    const app = runtime.createApp(internal.defineArrangable({
-        setup() {
+    const Root = internal.defineArrangable({
+        setup(_props, { call }) {
             runtime.watch(value, () => { value.value++ })
-            return () => { }
+            return () => call(0, foundation.App, {})
         }
-    }))
-    mountFrame(app, native.target)
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     value.value++
     assert.throws(() => native.frame(), /超过帧内执行上限/)
     assert.ok(value.value < 200)
@@ -298,19 +354,23 @@ test('AnimatedVisibility 保留退出结构、禁用交互并在卸载时取消�
     const clock = { advanceBy: (delay: number) => native.frame(native.time + delay) }
     const visible = runtime.ref(true)
     const baseline = animation.animationStats.activeAnimations
-    const App = internal.defineArrangable({
-        setup: (_props, { call }) => () => call(0, animation.AnimatedVisibility, {
-            visible: () => visible.value,
-            animationSpec: () => animation.tween({ durationMillis: 100, easing: animation.linearEasing }),
-        }, { default: () => call(0, foundation.Text, { text: () => '退出内容' }) })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, animation.AnimatedVisibility, {
+                    visible: () => visible.value,
+                    animationSpec: () => animation.tween({ durationMillis: 100, easing: animation.linearEasing }),
+                }, { default: () => call(0, foundation.Text, { text: () => '退出内容' }) }),
+            }),
+        }),
     })
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     const count = native.nodes.size
+    const boxId = native.windowRoot(0).children[0]
     visible.value = false
     await flush()
     assert.equal(native.nodes.size, count)
-    assert.equal(native.nodes.get(2)!.inputs.get('enabled'), false)
+    assert.equal(native.nodes.get(boxId)!.inputs.get('enabled'), false)
     clock.advanceBy(40)
     await flush()
     assert.equal(native.nodes.size, count)
@@ -335,14 +395,17 @@ test('Crossfade 的每一层保留建立时的状态值，中断恢复旧页不�
     const native = recordingNative()
     const clock = { advanceBy: (delay: number) => native.frame(native.time + delay) }
     const selected = runtime.ref('A')
-    const App = internal.defineArrangable({
-        setup: (_props, { call }) => () => call(0, animation.Crossfade, {
-            targetState: () => selected.value,
-            animationSpec: () => animation.tween({ durationMillis: 100, easing: animation.linearEasing }),
-        }, { default: ({ state }) => call(0, foundation.Text, { text: () => state }) })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, animation.Crossfade, {
+                    targetState: () => selected.value,
+                    animationSpec: () => animation.tween({ durationMillis: 100, easing: animation.linearEasing }),
+                }, { default: ({ state }) => call(0, foundation.Text, { text: () => state }) }),
+            }),
+        }),
     })
-    const app = runtime.createApp(App)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     await flush()
     const first = native.textNodes()[0]
     selected.value = 'B'

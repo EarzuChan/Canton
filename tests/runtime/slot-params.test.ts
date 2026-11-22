@@ -24,18 +24,21 @@ test('零参、单参与多参槽位按值交付，同名、别名与解构都�
     const title = runtime.ref('标题')
     const Container = evaluateCta(container, { './state': { title, actions: { label: '刷新' }, appHandle: { name: '应用' } } })
     const Page = evaluateCta(`<template>
-    <Container &app-handle="outerApp">
-        <Template #header &title &actions="{ label }"><Text :text="title + label" /></Template>
-        <Text :text="outerApp.name + title" />
-        <Template #footer><Text text="页脚" /></Template>
-    </Container>
+    <App &app-handle>
+        <Window :onCloseRequest="appHandle.exitApplication">
+            <Container &app-handle="outerApp">
+                <Template #header &title &actions="{ label }"><Text :text="title + label" /></Template>
+                <Text :text="outerApp.name + title" />
+                <Template #footer><Text text="页脚" /></Template>
+            </Container>
+        </Window>
+    </App>
 </template>
 <script>
 import { Container } from './state'
 const title = '外层'
 </script>`, { './state': { Container } })
-    const native = recordingNative(), app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const native = recordingNative(), running = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const initial = native.textNodes()
     // 默认槽没有绑定 title，同名标识符取自 script
     assert.deepEqual(initial.map(node => node.text), ['标题刷新', '应用外层', '页脚'])
@@ -45,7 +48,7 @@ const title = '外层'
     advanceFrames()
     assert.deepEqual(native.textNodes(), [{ id: initial[0].id, text: '新标题刷新' }, initial[1], initial[2]])
     assert.equal(internal.getCantonExecutionStats().instancesCreated, created)
-    app.unmount()
+    running.unmount()
 })
 
 test('嵌套同一容器时外层起别名、内层用原名可同时访问；同一槽位的多个出口各有实参与内容作用域', () => {
@@ -57,16 +60,19 @@ defineSlots<{ default: { value: number } }>()
 </script>`, { './state': { first, second } })
     const runs: number[] = []
     const Page = evaluateCta(`<template>
-    <Pair &value="outer">
-        <Pair c-if="outer === 1" &value><Text :text="mark(outer * 10 + value)" /></Pair>
-        <Text c-else :text="mark(outer)" />
-    </Pair>
+    <App &app-handle>
+        <Window :onCloseRequest="appHandle.exitApplication">
+            <Pair &value="outer">
+                <Pair c-if="outer === 1" &value><Text :text="mark(outer * 10 + value)" /></Pair>
+                <Text c-else :text="mark(outer)" />
+            </Pair>
+        </Window>
+    </App>
 </template>
 <script>
 import { Pair, mark } from './state'
 </script>`, { './state': { Pair, mark: (value: number) => (runs.push(value), String(value)) } })
-    const native = recordingNative(), app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const native = recordingNative(), running = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const initial = native.textNodes()
     assert.deepEqual(initial.map(node => node.text), ['11', '12', '2'])
 
@@ -76,7 +82,7 @@ import { Pair, mark } from './state'
     // first 出口的外层内容没有读到 second，不重跑；其余文本节点保留身份
     assert.deepEqual(native.textNodes(), [{ id: initial[0].id, text: '11' }, { id: initial[1].id, text: '13' }, { id: initial[2].id, text: '3' }])
     assert.deepEqual(runs.sort(), [13, 3])
-    app.unmount()
+    running.unmount()
 })
 
 test('槽位参数绑定的位置与命名错误在编译期报出', () => {
@@ -142,21 +148,24 @@ import { M, type Modifier } from '@canton/framework/ui'
 defineProps<{ placement: Modifier }>()
 </script>`)
     const Page = evaluateCta(`<template>
-    <Row &row-handle>
-        <Text text="直接" :modifier="M.padding(8.dp).then(rowHandle.weight(2, { fill: false })).then(rowHandle.alignByBaseline())" />
-        <Box &box-handle><Item :placement="boxHandle.align(Alignment.Center).then(boxHandle.matchParentSize())" /></Box>
-    </Row>
+    <App &app-handle>
+        <Window :onCloseRequest="appHandle.exitApplication">
+            <Row &row-handle>
+                <Text text="直接" :modifier="M.padding(8.dp).then(rowHandle.weight(2, { fill: false })).then(rowHandle.alignByBaseline())" />
+                <Box &box-handle><Item :placement="boxHandle.align(Alignment.Center).then(boxHandle.matchParentSize())" /></Box>
+            </Row>
+        </Window>
+    </App>
 </template>
 <script>
 import { M, Alignment } from '@canton/framework/ui'
 import { Item } from './state'
 </script>`, { './state': { Item } })
-    const native = recordingNative(), app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const native = recordingNative(), running = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const chain = (text: string) => (native.nodes.get(native.textNodes().find(node => node.text === text)!.id)!.inputs.get('modifier') as Modifier).elements.map(element => [element.type, element.value])
     assert.deepEqual(chain('直接').slice(0, 3).map(([type]) => type), ['padding', 'weight', 'alignBy'])
     assert.deepEqual(chain('直接')[1][1], { weight: 2, fill: false })
     assert.deepEqual(chain('直接')[2][1], { line: 'FirstBaseline' })
     assert.deepEqual(chain('项').slice(0, 3), [['align', { alignment: 'Center' }], ['matchParentSize', {}], ['padding', { start: 4, top: 4, end: 4, bottom: 4 }]])
-    app.unmount()
+    running.unmount()
 })

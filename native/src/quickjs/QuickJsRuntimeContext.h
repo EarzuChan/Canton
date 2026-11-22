@@ -6,6 +6,7 @@
 #include <quickjs/QuickJsScriptHost.h>
 #include <core/Mutation.h>
 #include <core/MutationTransaction.h>
+#include <core/WindowTypes.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -30,11 +31,23 @@ namespace canton::quickjs {
         JSValue completeFrame = JS_UNDEFINED;
         JSValue disposeApp = JS_UNDEFINED;
         JSValue materializeLayout = JS_UNDEFINED;
+        JSValue onWindowCloseRequest = JS_UNDEFINED;
+        JSValue onWindowGeometryChanged = JS_UNDEFINED;
+        JSValue onWindowFocusChanged = JS_UNDEFINED;
+        JSValue onWindowDpiChanged = JS_UNDEFINED;
         bool materializingLayout = false;
         double frameTimeMillis = 0.0;
         static constexpr std::size_t maxJobsPerFrame = 10000;
         std::size_t remainingFrameJobs = maxJobsPerFrame;
         canton::core::MutationTransactionQueue* pendingTransactions = nullptr;
+        std::unordered_map<canton::core::WindowId, canton::core::MutationTransactionQueue> windowTransactions;
+        std::unordered_map<canton::core::NodeId, canton::core::WindowId> nodeWindows;
+        std::optional<canton::core::AppConfigSpec> pendingAppConfig;
+        bool appExitRequested = false;
+        std::vector<WindowMutation> windowMutations;
+        std::vector<WindowCommand> windowCommands;
+        std::vector<ScopedFocusCommand> scopedFocusCommands;
+        std::shared_ptr<canton::core::RearrangeSubmission> submittedRearrange;
         QuickJsEventRegistry events;
 
         struct PreparedDrawCallback {
@@ -95,6 +108,10 @@ namespace canton::quickjs {
         struct RearrangeCheckpoint {
             canton::core::NodeId root;
             std::optional<canton::core::MutationTransaction> pending;
+            std::unordered_map<canton::core::WindowId, std::optional<canton::core::MutationTransaction>> savedWindowPending;
+            std::optional<canton::core::AppConfigSpec> savedAppConfig;
+            std::vector<WindowMutation> savedWindowMutations;
+            decltype(nodeWindows) savedNodeWindows;
             decltype(bindings) savedBindings;
             decltype(publishedModifiers) savedPublishedModifiers;
             decltype(modifierInputs) savedModifierInputs;
@@ -114,8 +131,12 @@ namespace canton::quickjs {
         void abortRearrange();
         void commitRearrange();
 
+        canton::core::WindowId windowOfNode(canton::core::NodeId id) const noexcept;
         canton::core::MutationTransaction* currentTransaction() noexcept;
-        void push(canton::core::TreeMutation mutation);
+        canton::core::MutationTransaction* transactionForWindow(canton::core::WindowId windowId) noexcept;
+        canton::core::MutationTransaction* transactionForNode(canton::core::NodeId id) noexcept;
+        void stampRearrangeSubmission();
+        void push(canton::core::NodeId ownerNode, canton::core::TreeMutation mutation);
         canton::core::BindingHandle registerBinding(canton::core::BindingTarget target);
         void updateBinding(canton::core::BindingHandle handle, canton::core::SlotValue value);
         void retireBinding(canton::core::BindingHandle handle);
@@ -129,4 +150,3 @@ namespace canton::quickjs {
         void recordDiagnosticAction(QuickJsDiagnosticAction action);
     };
 }
-

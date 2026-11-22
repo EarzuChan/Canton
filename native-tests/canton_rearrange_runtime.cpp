@@ -75,7 +75,8 @@ namespace {
         const auto first = fixture.findText("A"), second = fixture.findText("B");
         command("reorder");
         check(fixture.findText("A") == first && fixture.findText("B") == second, "带 key 的重排替换了宿主节点");
-        const auto& children = fixture.scene().node(fixture.scene().node(1).children.front()).children;
+        const auto rootId = runtime.effectiveRootNodeId(1);
+        const auto& children = fixture.scene().node(fixture.scene().node(rootId).children.front()).children;
         check(std::find(children.begin(), children.end(), second) < std::find(children.begin(), children.end(), first), "片段锚点影响了原生次序");
         // 恢复的分支是新实例，值槽还没动态更新过，绑定比移除前少；反复移除与恢复要回到同一个数
         std::size_t restoredBindings = 0;
@@ -140,7 +141,7 @@ namespace {
         runtime.enqueueStringEvent(fixture.submit(), "bad-resource");
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
         while (!diagnostics.hasError() && std::chrono::steady_clock::now() < deadline) {
-            (void)driver.pumpFrame(runtime, session, diagnostics, 1, {}, {0, 0, 520, 1200}, true, canton::runtime::PackageSource::None, false, fixture.text(), fixture.advance(16));
+            (void)driver.pumpFrame(runtime, session, diagnostics, runtime.effectiveRootNodeId(1), {}, {0, 0, 520, 1200}, true, canton::runtime::PackageSource::None, false, fixture.text(), fixture.advance(16));
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
         check(diagnostics.hasError() && diagnostics.error()->summary.find("missing-image.png") != std::string::npos, "资源加载失败没有进错误屏或丢了资源名：" + (diagnostics.hasError() ? diagnostics.error()->summary : std::string("没有错误")));

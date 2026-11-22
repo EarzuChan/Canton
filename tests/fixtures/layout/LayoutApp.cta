@@ -1,30 +1,34 @@
 <template>
-    <Column>
-        <Row :modifier="M.height(IntrinsicSize.Min)">
-            <Spacer :modifier="M.size(20.dp, 10.dp)" />
-            <Spacer :modifier="M.size(30.dp, 40.dp)" />
-        </Row>
-        <FlowRow :modifier="M.width(70.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :verticalArrangement="Arrangement.spacedBy(7.dp)">
-            <Spacer c-for="index in indices" :key="index" :modifier="M.size(30.dp, 10.dp)" />
-        </FlowRow>
-        <FlowColumn :modifier="M.height(30.dp)" :verticalArrangement="Arrangement.spacedBy(5.dp)" :horizontalArrangement="Arrangement.spacedBy(7.dp)" :maxItemsInEachColumn="2">
-            <Spacer c-for="index in indices" :key="index" :modifier="M.size(30.dp, 10.dp)" />
-        </FlowColumn>
-        <FlowRow :modifier="M.width(95.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :maxItemsInEachRow="2" &flow-row-handle>
-            <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
-            <Spacer :modifier="flowRowHandle.weight(2).size(20.dp, 10.dp)" />
-            <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
-        </FlowRow>
-        <Box &box-handle>
-            <Spacer :modifier="M.size(20.dp, 10.dp)" />
-            <Spacer :modifier="boxHandle.matchParentSize().size(200.dp, 100.dp)" />
-        </Box>
-        <Box :modifier="M.animateContentSize(spec)">
-            <Spacer :modifier="M.size(extent.dp, 10.dp)" />
-        </Box>
-        <Text :text="`动画:${animated.toFixed(1)}`" />
-        <Input value="" :onSubmit="command" />
-    </Column>
+    <App &app-handle>
+        <Window title="Layout" :onCloseRequest="appHandle.exitApplication">
+            <Column>
+                <Row :modifier="M.height(IntrinsicSize.Min)">
+                    <Spacer :modifier="M.size(20.dp, 10.dp)" />
+                    <Spacer :modifier="M.size(30.dp, 40.dp)" />
+                </Row>
+                <FlowRow :modifier="M.width(70.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :verticalArrangement="Arrangement.spacedBy(7.dp)">
+                    <Spacer c-for="index in indices" :key="index" :modifier="M.size(30.dp, 10.dp)" />
+                </FlowRow>
+                <FlowColumn :modifier="M.height(30.dp)" :verticalArrangement="Arrangement.spacedBy(5.dp)" :horizontalArrangement="Arrangement.spacedBy(7.dp)" :maxItemsInEachColumn="2">
+                    <Spacer c-for="index in indices" :key="index" :modifier="M.size(30.dp, 10.dp)" />
+                </FlowColumn>
+                <FlowRow :modifier="M.width(95.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :maxItemsInEachRow="2" &flow-row-handle>
+                    <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
+                    <Spacer :modifier="flowRowHandle.weight(2).size(20.dp, 10.dp)" />
+                    <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
+                </FlowRow>
+                <Box &box-handle>
+                    <Spacer :modifier="M.size(20.dp, 10.dp)" />
+                    <Spacer :modifier="boxHandle.matchParentSize().size(200.dp, 100.dp)" />
+                </Box>
+                <Box :modifier="M.animateContentSize(spec)">
+                    <Spacer :modifier="M.size(extent.dp, 10.dp)" />
+                </Box>
+                <Text :text="`动画:${animated.toFixed(1)}`" />
+                <Input value="" :onSubmit="command" />
+            </Column>
+        </Window>
+    </App>
 </template>
 
 <script>

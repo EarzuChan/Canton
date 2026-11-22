@@ -403,6 +403,11 @@ namespace canton::runtime {
                 result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 运行时异常", executed.error, true};
                 return result;
             }
+            if (!scriptHost->hasMountedApp()) {
+                result.error = makeErrorScreenModel(ErrorSource::ScriptRuntime, "入口模块未启动应用：需要默认导出 appBuilder(Root).build() 的应用定义", {}, devServerUrl);
+                result.toast = RuntimeLoadToast{core::LogLevel::Error, "Live 入口无效", result.error->summary, true};
+                return result;
+            }
             result.initialTransaction = scriptHost->takePendingTransaction();
             result.scriptHost = std::move(scriptHost);
             result.ok = true;

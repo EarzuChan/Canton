@@ -200,6 +200,7 @@ export class RearrangeScope implements StructureScope {
             scope.lifetime.resume()
             if (scope.owner?.structure === scope) {
                 scope.owner.isDeactivated = false
+                scope.owner.surface?.activate()
                 scope.owner.node?.activate()
                 scope.owner.scope.resume()
             }
@@ -374,7 +375,7 @@ export class RearrangeSession implements InstanceSession {
 
     changed(scope: RearrangeScope): void {
         let owner = scope.owner
-        while (owner && !owner.node) owner = owner.parent
+        while (owner && !owner.node && !owner.surface) owner = owner.parent
         this.dirtyParents.add(owner)
     }
 
@@ -509,7 +510,9 @@ export class RearrangeSession implements InstanceSession {
                 continue
             }
             const scope = asRearrangeScope(owner.structure)
-            if (this.isActive(scope)) owner.node!.reconcileChildren(collectNodes(scope))
+            if (!this.isActive(scope)) continue
+            if (owner.surface) owner.surface.reconcileRoots(collectNodes(scope))
+            else owner.node!.reconcileChildren(collectNodes(scope))
         }
         this.dirtyParents.clear()
         for (const check of this.prepareChecks) check()
@@ -723,6 +726,7 @@ function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope
         instance.isUnmounted = true
         cantonExecutionStats.instancesRetired++
         const cleanupErrors: unknown[] = []
+        try { instance.surface?.retire() } catch (cleanup) { cleanupErrors.push(cleanup) }
         try { instance.node?.retire() } catch (cleanup) { cleanupErrors.push(cleanup) }
         try { instance.scope.stop() } catch (cleanup) { cleanupErrors.push(cleanup) }
         if (cleanupErrors.length) throw new AggregateError([error, ...cleanupErrors], 'Arrangable 初始化失败且清理发生错误')
@@ -789,6 +793,7 @@ class RetainedContents {
         const instances: ArrangableInstance[] = []
         visitScopes(entry.scope, scope => {
             if (scope.owner?.structure === scope) {
+                scope.owner.surface?.deactivate()
                 scope.owner.node?.deactivate()
                 instances.push(scope.owner)
             }
@@ -856,6 +861,7 @@ function collectNodes(scope: RearrangeScope): RearrangeNode[] {
     const pending = [...scope.rearrangeSession.entries(scope)].reverse()
     while (pending.length) {
         const entry = pending.pop()!
+        if (entry.kind === 'call' && entry.instance.surface) continue
         if (entry.kind === 'call' && entry.instance.node) nodes.push(entry.instance.node)
         else {
             const entries = scope.rearrangeSession.entries(entry.scope)
@@ -902,6 +908,7 @@ function retireEntries(entries: readonly Entry[], notify = true): void {
             pending.push(() => {
                 safely(() => props.stop())
                 safely(() => instance.scope.stop())
+                safely(() => instance.surface?.retire())
                 safely(() => instance.node?.retire())
                 if (notify) safely(() => runHooks(instance, LifecycleHooks.UNMOUNTED))
             })

@@ -57,7 +57,7 @@ namespace canton::core {
                     return names[static_cast<std::size_t>(input.kind)];
                 }
                 if constexpr (std::is_same_v<T, InputModifierSemantics>) {
-                    constexpr std::string_view names[]{"clickable", "hoverable", "focusable", "onContextClick", "pointerIcon", "onKeyEvent", "onWheel", "draggable", "pointerInput"};
+                    constexpr std::string_view names[]{"clickable", "hoverable", "focusable", "onContextClick", "pointerIcon", "onKeyEvent", "onWheel", "draggable", "pointerInput", "draggableArea", "nonDraggableArea", "captionButton"};
                     return names[static_cast<std::size_t>(input.kind)];
                 }
                 if constexpr (std::is_same_v<T, FocusModifier>) {
@@ -185,7 +185,7 @@ namespace canton::core {
                     if (const auto* field = std::get_if<TextFieldModifier>(&before)) {
                         const auto& next = std::get<TextFieldModifier>(after);
                         if (field->value != next.value || field->placeholder != next.placeholder) dirty |= kMeasure;
-                        if (field->enabled != next.enabled) dirty |= kHit | dirtyMask(DirtyFlag::Focus);
+                        if (field->enabled != next.enabled || field->readOnly != next.readOnly) dirty |= kHit | dirtyMask(DirtyFlag::Focus);
                         if (field->onValueChange != next.onValueChange || field->onSubmit != next.onSubmit || field->onChange != next.onChange || field->onBlur != next.onBlur) dirty |= dirtyMask(DirtyFlag::EventSlot);
                     }
                     return dirty;

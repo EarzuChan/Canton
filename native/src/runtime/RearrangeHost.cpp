@@ -24,12 +24,26 @@ namespace canton::runtime {
     }
 
     bool RearrangeHost::hasPendingVisualWork() const noexcept {
-        return scriptHost_ && (scriptHost_->hasPendingVisualWork() || scriptHost_->hasPendingFocusCommands());
+        return scriptHost_ && (scriptHost_->hasPendingVisualWork() || scriptHost_->hasPendingFocusCommands() || scriptHost_->hasPendingWindowWork());
     }
 
     std::optional<canton::core::MutationTransaction> RearrangeHost::takePendingTransaction() noexcept {
         if (!scriptHost_) return std::nullopt;
         return scriptHost_->takePendingTransaction();
+    }
+
+    std::optional<canton::core::MutationTransaction> RearrangeHost::takeWindowTransaction(canton::core::WindowId windowId) noexcept {
+        if (!scriptHost_) return std::nullopt;
+        return scriptHost_->takeWindowTransaction(windowId);
+    }
+
+    std::vector<canton::quickjs::WindowMutation> RearrangeHost::takeWindowMutations() {
+        if (!scriptHost_) return {};
+        return scriptHost_->takeWindowMutations();
+    }
+
+    std::shared_ptr<canton::core::RearrangeSubmission> RearrangeHost::pendingRearrangeSubmission() const noexcept {
+        return scriptHost_ ? scriptHost_->pendingRearrangeSubmission() : nullptr;
     }
 
     void RearrangeHost::setOwnerWake(std::function<void()> wake) {
@@ -114,6 +128,10 @@ namespace canton::runtime {
 
     void RearrangeHost::publishScene(const canton::core::NativeScene& scene) {
         if (scriptHost_) scriptHost_->publishScene(scene);
+    }
+
+    void RearrangeHost::publishWindowScene(canton::core::WindowId windowId, const canton::core::NativeScene& scene) {
+        if (scriptHost_) scriptHost_->publishWindowScene(windowId, scene);
     }
 
     std::vector<canton::quickjs::QuickJsToastRequest> RearrangeHost::takeDiagnosticToasts() {

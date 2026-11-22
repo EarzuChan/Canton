@@ -73,7 +73,7 @@ test('真实 Vite 快照保留空格、Unicode 与字面百分号模块身份', 
     await writeFile(join(root, 'src/百分比 100%.ts'), 'export const percentage = 100\n')
     await writeFile(join(root, 'src/literal%20.ts'), 'export const literal = 20\n')
     await writeFile(external, 'export const external = 3\n')
-    await writeFile(join(root, 'src/main.ts'), `import { createApp } from '@canton/framework'\nimport { percentage } from './百分比 100%.ts'\nimport { literal } from './literal%20.ts'\nimport { external } from ${JSON.stringify(external.replaceAll('\\', '/'))}\nexport { createApp }\nexport const result = percentage + literal + external\n`)
+    await writeFile(join(root, 'src/main.ts'), `import { appBuilder } from '@canton/framework'\nimport { percentage } from './百分比 100%.ts'\nimport { literal } from './literal%20.ts'\nimport { external } from ${JSON.stringify(external.replaceAll('\\', '/'))}\nexport { appBuilder }\nexport const result = percentage + literal + external\n`)
     const server = await createServer({ root, configFile: false, plugins: [canton()], optimizeDeps: { entries: [join(root, 'src/main.ts')] }, server: { middlewareMode: true, hmr: false, fs: { allow: [temporary, resolve('.')] } } })
     try {
         const snapshot = await createModuleSnapshot(server, 'src/main.ts')
@@ -98,7 +98,7 @@ test("vite plugin leaves ordinary ESM entry to Vite import analysis", async () =
     const transformed = await plugin.transform.call({
         warn() {
         }
-    }, 'import { createApp } from "@canton/framework";\n', "C:/fixture/src/main.ts")
+    }, 'import { appBuilder } from "@canton/framework";\n', "C:/fixture/src/main.ts")
     assert.equal(transformed, null)
 })
 

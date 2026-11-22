@@ -1,8 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApp, createLazyState, nextTick, shallowRef, ref, type LazyState } from '@canton/framework'
-import { KeepAlive, LazyColumn, Text } from '@canton/framework/foundation'
-import { defineArrangable } from '@canton/framework/internal'
+import { appBuilder, createLazyState, nextTick, shallowRef, ref, type LazyState } from '@canton/framework'
+import { App, KeepAlive, LazyColumn, Text, Window } from '@canton/framework/foundation'
+import { defineArrangable, mountApplication } from '@canton/framework/internal'
 import { Modifier } from '../../packages/framework/src/modifier/modifier.ts'
 import { lazyStateAppliedRequestVersion, lazyStateRequest } from '../../packages/framework/src/layout/lazy.ts'
 import { linearEasing, tween } from '../../packages/framework/src/animation/value.ts'
@@ -31,7 +31,11 @@ function feedback(node: RecordedLayoutNode, value: object): void {
 function rootFor(source: { value: LazyState | undefined }) {
     return defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => items, state: () => source.value }, { default: ({ item }) => call(0, Item, { index: () => item }) })
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, { items: () => items, state: () => source.value }, { default: ({ item }) => call(0, Item, { index: () => item }) }),
+                }),
+            })
         }
     })
 }
@@ -42,9 +46,9 @@ test('Lazy 动态 state 在成功回执交接，失败恢复旧 owner 并结束�
     const b = createLazyState({ firstVisibleItemIndex: 5, firstVisibleItemScrollOffsetPx: 7 })
     const source = shallowRef<LazyState | undefined>(a)
     const errors: unknown[] = []
-    const app = createApp(rootFor(source))
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    const builder = appBuilder(rootFor(source))
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     assert.equal(policy(lazyNodes(native.candidateNodes!)[0]).requestedIndex, 1)
     native.finish()
@@ -108,16 +112,21 @@ test('Lazy 两个活跃 Layout 可在同一候选交换 state，重复连接仍�
     const a = createLazyState({ firstVisibleItemIndex: 2 }), b = createLazyState({ firstVisibleItemIndex: 8 })
     const first = shallowRef(a), second = shallowRef(b)
     const errors: unknown[] = []
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => {
-                call(0, LazyColumn, { items: () => items, state: () => first.value }, { default: () => call(0, Item, {}) })
-                call(1, LazyColumn, { items: () => items, state: () => second.value }, { default: () => call(0, Item, {}) })
-            }
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => {
+                        call(0, LazyColumn, { items: () => items, state: () => first.value }, { default: () => call(0, Item, {}) })
+                        call(1, LazyColumn, { items: () => items, state: () => second.value }, { default: () => call(0, Item, {}) })
+                    },
+                }),
+            })
         }
-    }))
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    })
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     native.finish()
     first.value = b
@@ -143,14 +152,13 @@ test('Lazy 缺省 state 是稳定实例，显式 state 移除后恢复其位置�
     const native = recordingNative(false)
     const source = shallowRef<LazyState | undefined>(undefined)
     const b = createLazyState({ firstVisibleItemIndex: 12 })
-    const app = createApp(rootFor(source))
-    app.mount(native.target)
+    const app = mountApplication(appBuilder(rootFor(source)).build(), native.target)
     native.frame()
     native.finish()
     const first = lazyNodes(native.nodes)[0]
     const scroll = (first.inputs.get('modifier') as Modifier).elements.find(element => element.type === 'verticalScroll')!
-    const feedback = scroll.value.onScroll as (value: object) => void
-    feedback({ value: 64, firstVisibleItemIndex: 3, firstVisibleItemScrollOffset: 4 })
+    const onScroll = scroll.value.onScroll as (value: object) => void
+    onScroll({ value: 64, firstVisibleItemIndex: 3, firstVisibleItemScrollOffset: 4 })
     source.value = b
     await nextTick()
     native.frame()
@@ -169,21 +177,26 @@ test('同一材料化候选 A→B→A 只保留最终 state owner，失败也恢
     const a = createLazyState({ firstVisibleItemIndex: 2 }), b = createLazyState({ firstVisibleItemIndex: 8 })
     const source = shallowRef<LazyState | undefined>(a)
     let switchDuringMaterialize = false
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, {
-                items: () => items, state: () => source.value,
-            }, {
-                default: ({ item }) => {
-                    if (switchDuringMaterialize) source.value = item === 1 ? b : a
-                    call(0, Item, { index: () => item })
-                },
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, LazyColumn, {
+                        items: () => items, state: () => source.value,
+                    }, {
+                        default: ({ item }) => {
+                            if (switchDuringMaterialize) source.value = item === 1 ? b : a
+                            call(0, Item, { index: () => item })
+                        },
+                    }),
+                }),
             })
         }
-    }))
+    })
     const errors: unknown[] = []
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     const id = lazyNodes(native.candidateNodes!)[0].id
     native.materialize(id, [0])
@@ -218,19 +231,24 @@ test('KeepAlive 成功停用才结束 Lazy 动画，恢复失败保留旧 owner�
             return () => call(0, LazyColumn, { items: () => items, state: () => source.value }, { default: () => call(0, Item, {}) })
         }
     })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, KeepAlive, { cacheKey: () => page.value }, {
-                default: () => {
-                    if (page.value === 'lazy') call(0, Page, {})
-                    else call(1, Text, { text: () => '空页' })
-                }
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, KeepAlive, { cacheKey: () => page.value }, {
+                        default: () => {
+                            if (page.value === 'lazy') call(0, Page, {})
+                            else call(1, Text, { text: () => '空页' })
+                        }
+                    }),
+                }),
             })
         }
-    }))
+    })
     const errors: unknown[] = []
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     native.finish()
     let done = false
@@ -290,20 +308,25 @@ for (const keepAlive of [false, true]) test(`${keepAlive ? 'KeepAlive' : '条件
             return () => call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, state: () => state }, { default: () => call(0, Item, {}) })
         }
     })
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
             const content = () => {
                 if (shown.value) call(0, Page, {})
                 else call(1, Text, { text: () => '空页' })
             }
-            return () => {
-                if (keepAlive) call(0, KeepAlive, { cacheKey: () => shown.value ? 'lazy' : 'empty' }, { default: content })
-                else content()
-            }
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => {
+                        if (keepAlive) call(0, KeepAlive, { cacheKey: () => shown.value ? 'lazy' : 'empty' }, { default: content })
+                        else content()
+                    },
+                }),
+            })
         }
-    }))
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    })
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     native.finish()
     feedback(lazyNodes(native.nodes)[0], { value: 1985, firstVisibleItemIndex: 40, firstVisibleItemScrollOffset: 7, totalItemsCount: 100, visibleItemsInfo: [{ index: 40, offset: -7, size: 55, span: 1 }] })
@@ -358,14 +381,18 @@ test('Lazy 恢复首项 key 被删除时回退到已发布索引，重试仍保�
     const state = createLazyState()
     const shown = ref(true)
     const data = shallowRef(items)
-    const app = createApp(defineArrangable({
+    const Root = defineArrangable({
         setup(_props, { call }) {
-            return () => {
-                if (shown.value) call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, state: () => state }, { default: () => call(0, Item, {}) })
-            }
+            return () => call(0, App, {}, {
+                default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => {
+                        if (shown.value) call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, state: () => state }, { default: () => call(0, Item, {}) })
+                    },
+                }),
+            })
         }
-    }))
-    app.mount(native.target)
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     native.finish()
     feedback(lazyNodes(native.nodes)[0], { value: 1985, firstVisibleItemIndex: 40, firstVisibleItemScrollOffset: 7, totalItemsCount: 100, visibleItemsInfo: [{ index: 40, offset: -7, size: 55, span: 1 }] })
@@ -386,8 +413,7 @@ test('Lazy 候选准备后追加 PX 定位，旧帧反馈不能消费或覆盖�
     const native = recordingNative(false)
     const state = createLazyState({ firstVisibleItemIndex: 20 })
     const source = shallowRef<LazyState | undefined>(state)
-    const app = createApp(rootFor(source))
-    app.mount(native.target)
+    const app = mountApplication(appBuilder(rootFor(source)).build(), native.target)
     native.frame()
     state.scrollTo(555)
     native.finish()

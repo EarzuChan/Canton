@@ -41,8 +41,8 @@ namespace {
     }
 
     // 夹具的页面底色与卡片白底
-    bool hasInitialVisuals(const canton::core::LayoutTree& tree) {
-        return treeContainsBackgroundColor(tree, 1, 0xfff2f2f7u) && treeContainsBackgroundColor(tree, 1, 0xffffffffu);
+    bool hasInitialVisuals(const canton::core::LayoutTree& tree, canton::core::NodeId root) {
+        return treeContainsBackgroundColor(tree, root, 0xfff2f2f7u) && treeContainsBackgroundColor(tree, root, 0xffffffffu);
     }
 
     // 卡片可点击，页面可滚动
@@ -178,7 +178,14 @@ int main(int argc, char** argv) {
         std::cerr << prepared.error << '\n';
         return 8;
     }
-    auto initialTransaction = host.takePendingTransaction();
+    const auto windowMutations = host.takeWindowMutations();
+    if (windowMutations.empty() || windowMutations.front().kind != canton::quickjs::WindowMutationKind::Create) {
+        std::cerr << "app-smoke 未通过 <App> + <Window> 创建初始窗口\n";
+        return 4;
+    }
+    const auto windowId = windowMutations.front().windowId;
+    const auto rootNodeId = windowMutations.front().rootNodeId;
+    auto initialTransaction = host.takeWindowTransaction(windowId);
     if (!initialTransaction || !initialTransaction->hasTreeMutations()) return 4;
     const auto initialEventSlotUpdates = std::count_if(initialTransaction->operations.begin(), initialTransaction->operations.end(), [](const auto& op) { return std::holds_alternative<canton::core::RegisterEventSlot>(op); });
     if (initialEventSlotUpdates == 0 || static_cast<std::size_t>(initialEventSlotUpdates) != host.eventSlotCount()) {
@@ -195,7 +202,7 @@ int main(int argc, char** argv) {
         [&](canton::core::NodeId id, const std::vector<int>& indices) {
             const auto materialized = host.materializeLayout(id, indices);
             if (!materialized.ok) throw std::runtime_error(materialized.error);
-            auto transaction = host.takePendingTransaction();
+            auto transaction = host.takeWindowTransaction(windowId);
             if (!transaction) throw std::runtime_error("Layout 材料化未提交原生候选");
             return std::move(*transaction);
         },
@@ -204,7 +211,7 @@ int main(int argc, char** argv) {
             if (!prepared.ok) throw std::runtime_error(prepared.error);
         },
     };
-    const auto frame = pipeline.run(scene, 1, {0.0f, 520.0f, 0.0f, 300.0f}, &*initialTransaction, true, published, {}, 0, preparation);
+    const auto frame = pipeline.run(scene, rootNodeId, {0.0f, 520.0f, 0.0f, 300.0f}, &*initialTransaction, true, published, {}, 0, preparation);
     if (frame.error) {
         (void)host.completeRearrange(frame.rearrange, *frame.error);
         (void)host.completeVisualFrame(false);
@@ -212,12 +219,12 @@ int main(int argc, char** argv) {
         return 7;
     }
     auto& tree = scene.tree();
-    if (!tree.contains(1) || !hasInitialVisuals(tree) || !hasInitialEventSlots(tree)) {
-        std::cerr << "app-smoke 初始树不符：根节点=" << tree.contains(1) << " 首页颜色=" << hasInitialVisuals(tree) << " 事件槽=" << hasInitialEventSlots(tree) << '\n';
+    if (!tree.contains(rootNodeId) || !hasInitialVisuals(tree, rootNodeId) || !hasInitialEventSlots(tree)) {
+        std::cerr << "app-smoke 初始树不符：根节点=" << tree.contains(rootNodeId) << " 首页颜色=" << hasInitialVisuals(tree, rootNodeId) << " 事件槽=" << hasInitialEventSlots(tree) << '\n';
         return 7;
     }
 
-    host.publishScene(scene);
+    host.publishWindowScene(windowId, scene);
     if (const auto result = host.completeRearrange(initialTransaction->rearrange); !result.ok) throw std::runtime_error(result.error);
 
     if (const auto completed = host.completeVisualFrame(true); !completed.ok) throw std::runtime_error(completed.error);

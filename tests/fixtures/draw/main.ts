@@ -1,4 +1,4 @@
-import { createApp } from '@canton/framework'
+import { appBuilder } from '@canton/framework'
 import DrawApp from './DrawApp.cta'
 
-createApp(DrawApp).mount()
+export default appBuilder(DrawApp).build()

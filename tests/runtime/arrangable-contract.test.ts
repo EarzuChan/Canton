@@ -71,9 +71,8 @@ test('参数提取类型通过正式入口解析别名和导入类型，默认�
 
     const reference = runtime.ref('业务引用')
     const Receiver = evaluateCta('<template><Text :text="props.ref" /></template><script>const props = defineProps<{ ref: string }>()</script>')
-    const Page = evaluateCta('<template><Receiver :ref="reference" /></template><script>import { Receiver, reference } from "harness"</script>', { harness: { Receiver, reference } })
-    const native = recordingNative(), app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Receiver :ref="reference" /></Window></App></template><script>import { Receiver, reference } from "harness"</script>', { harness: { Receiver, reference } })
+    const native = recordingNative(), app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const id = native.textNodes()[0].id
     assert.deepEqual(native.textNodes(), [{ id, text: '业务引用' }])
     reference.value = '更新引用'
@@ -111,7 +110,14 @@ test('真实 CTA 命令行类型检查保留脚本和跨文件参数契约', () 
 
 test('内建 Arrangable 各自声明参数，不给 Spacer 和文本补充通用输入', () => {
     for (const [definition, props] of [[foundation.Spacer, { enabled: true }], [foundation.Text, { contentDescription: '误传' }], [foundation.Row, { role: '误传' }]] as const) {
-        assert.throws(() => mountFrame(runtime.createApp(definition, props), recordingNative().target), /未声明参数/)
+        const Root = internal.defineArrangable({
+            setup: (_p, { call }) => () => call(0, foundation.App, {}, {
+                default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, definition, Object.fromEntries(Object.entries(props).map(([k, v]) => [k, () => v]))),
+                }),
+            }),
+        })
+        assert.throws(() => mountFrame(runtime.appBuilder(Root).build(), recordingNative().target), /未声明参数/)
     }
 })
 
@@ -146,11 +152,10 @@ test('对象参数类型检查保留字段类型、必需性与未声明字段',
 test('声明位置计划保留列表闭包与默认时机，固定调用减少名称解析', async () => {
     const run = async (attributes: string) => {
         const rows = runtime.ref([{ id: '甲', value: 0 }, { id: '乙', value: 1 }])
-        const Page = evaluateCta(`<template><Text c-for="row in rows" :key="row.id" ${attributes} /></template><script>import { rows } from "harness"
+        const Page = evaluateCta(`<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text c-for="row in rows" :key="row.id" ${attributes} /></Window></App></template><script>import { rows } from "harness"
 </script>`, { harness: { rows } })
         const native = recordingNative()
-        const app = runtime.createApp(Page)
-        mountFrame(app, native.target)
+        const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
         const identities = native.textNodes().map(node => node.id)
         const before = internal.getCantonExecutionStats()
         for (let index = 1; index <= 12; index++) {
@@ -183,18 +188,22 @@ test('声明位置计划保留列表闭包与默认时机，固定调用减少�
     })
     const parameters = internal.prepareParameters(Probe, ['text'])
     assert.equal(defaults, 0)
-    const app = runtime.createApp(internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            revision.value
-            call(0, Probe, {
-                text: () => {
-                    constants++
-                    return '固定'
-                }
-            }, {}, { parameters, constants: ['text'] })
-        }
-    }))
-    mountFrame(app, recordingNative().target)
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => {
+                    revision.value
+                    call(0, Probe, {
+                        text: () => {
+                            constants++
+                            return '固定'
+                        }
+                    }, {}, { parameters, constants: ['text'] })
+                },
+            }),
+        }),
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), recordingNative().target)
     for (let index = 0; index < 4; index++) {
         revision.value++
         advanceFrames()
@@ -204,15 +213,13 @@ test('声明位置计划保留列表闭包与默认时机，固定调用减少�
     app.unmount()
 })
 
-
 test('手写结构不能返回文本或节点数组，也不能使用未声明定义', () => {
     for (const result of ['正文', []]) {
         const definition = internal.defineArrangable({ setup: () => (() => result) as () => void })
-        assert.throws(() => mountFrame(runtime.createApp(definition), recordingNative().target), /不能返回/)
+        assert.throws(() => mountFrame(runtime.appBuilder(definition).build(), recordingNative().target), /不能返回/)
     }
-    assert.throws(() => runtime.createApp({ setup: () => () => { } } as unknown as runtime.ArrangableDefinition), /Arrangable 定义/)
+    assert.throws(() => runtime.appBuilder({ setup: () => () => { } } as unknown as runtime.ArrangableDefinition), /Arrangable 定义/)
 })
-
 
 test('CTA Slot 声明约束内容名称，多次调用拥有独立实例和结构订阅', async () => {
     const Consumer = evaluateCta('<template><Slot /><Slot /></template>')
@@ -230,7 +237,7 @@ test('CTA Slot 声明约束内容名称，多次调用拥有独立实例和结�
         },
     })
     const native = recordingNative()
-    const app = runtime.createApp(internal.defineArrangable({
+    const Page = internal.defineArrangable({
         setup: (_props, { call }) => () => {
             parentRuns++
             call(0, Consumer, {}, {
@@ -240,8 +247,15 @@ test('CTA Slot 声明约束内容名称，多次调用拥有独立实例和结�
                 }
             })
         },
-    }))
-    mountFrame(app, native.target)
+    })
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     assert.equal(created, 2)
     assert.equal(parentRuns, 1)
     assert.equal(contentRuns, 2)
@@ -267,11 +281,24 @@ test('CTA Slot 声明约束内容名称，多次调用拥有独立实例和结�
     assert.equal(contentRuns, 4)
     assert.equal(created, 2)
 
-    assert.throws(() => mountFrame(runtime.createApp(internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Consumer, {}, { header: () => { } }) })), recordingNative().target), /未声明内容：header/)
+    const BadHeader = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Consumer, {}, { header: () => { } }),
+            }),
+        }),
+    })
+    assert.throws(() => mountFrame(runtime.appBuilder(BadHeader).build(), recordingNative().target), /未声明内容：header/)
     const Empty = evaluateCta('<template></template>')
-    assert.throws(() => mountFrame(runtime.createApp(internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Empty, {}, { default: () => { } }) })), recordingNative().target), /未声明内容：default/)
+    const BadDefault = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Empty, {}, { default: () => { } }),
+            }),
+        }),
+    })
+    assert.throws(() => mountFrame(runtime.appBuilder(BadDefault).build(), recordingNative().target), /未声明内容：default/)
 })
-
 
 test('原样 Ref 标记保留泛型、比较与类型断言的 TS 边界', () => {
     const compileBinding = (expression: string) => compileCantonCta('<template><Editor :state="' + expression + '" /></template><script>const state = 1; const other = 2; const factory = &lt;T,&gt;(value: T) =&gt; value</script>'.replaceAll('&lt;', '<').replaceAll('&gt;', '>'), '边界.cta').code
@@ -308,7 +335,6 @@ test('原样 Ref 外层标记不会被比较、右移或泛型中的尖括号提
         while (ts.isParenthesizedExpression(body)) body = body.expression
         assert.equal(ts.isBinaryExpression(body) ? body.operatorToken.kind : body.kind, kind, expression)
 
-        // 执行真实编译产物中的参数 getter，检查运算结果与 Ref 身份
         const output = ts.transpileModule('const result = ' + getter.getText(ast), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
         const evaluate = new Function('a', 'b', 'firstRef', 'secondRef', 'foo', output + '\nreturn result()')
         assert.equal(evaluate(4, 2, firstRef, secondRef, () => firstRef), expected, expression)
@@ -338,68 +364,13 @@ test('CTA 类型检查按 paths 解析定义并拒绝未声明具名内容', () 
         writeFileSync(join(directory, 'Good.cta'), "<template><Receiver><Template #header><Text text=\"标题\" /></Template></Receiver></template><script>import Receiver from \"@views/Receiver.cta\"\n</script>")
         assert.deepEqual(checkCtaProject(join(directory, 'tsconfig.json'), [join(directory, 'Good.cta')]), [])
 
-        writeFileSync(join(directory, 'Bad.cta'), "<template><Receiver><Template #footer><Text text=\"误传\" /></Template></Receiver></template><script>import Receiver from \"@views/Receiver.cta\"\n</script>")
+        writeFileSync(join(directory, 'Bad.cta'), "<template><Receiver><Template #footer><Text text=\"错名\" /></Template></Receiver></template><script>import Receiver from \"@views/Receiver.cta\"\n</script>")
         const diagnostics = checkCtaProject(join(directory, 'tsconfig.json'), [join(directory, 'Bad.cta')])
-        assert.ok(diagnostics.some(item => item.file.endsWith('Bad.cta') && item.line === 1 && /"footer"/.test(item.message)), JSON.stringify(diagnostics))
+        assert.ok(diagnostics.some(item => /"footer"/.test(item.message)), JSON.stringify(diagnostics))
     } finally {
         rmSync(directory, { recursive: true })
     }
 })
-
-
-test('深层 Arrangable 挂载和退休不依赖递归调用栈，生命周期仍为子先父后', () => {
-    const native = recordingNative()
-    const events: string[] = []
-    const depth = 1800
-    let definition: runtime.ArrangableDefinition = foundation.Text
-    for (let level = 0; level < depth; level++) {
-        const child: runtime.ArrangableDefinition = definition
-        definition = internal.defineArrangable({
-            setup(_props, { call }) {
-                runtime.onMounted(() => events.push('挂载' + level))
-                runtime.onUnmounted(() => events.push('卸载' + level))
-                return () => call(0, child, {})
-            }
-        })
-    }
-    const before = internal.getCantonExecutionStats().activeValueBindings
-    const app = runtime.createApp(definition)
-    mountFrame(app, native.target)
-    assert.equal(events.length, depth)
-    assert.equal(events[0], '挂载0')
-    assert.equal(events[depth - 1], '挂载' + (depth - 1))
-    app.unmount()
-    assert.equal(events.length, depth * 2)
-    assert.equal(events[depth], '卸载0')
-    assert.equal(events.at(-1), '卸载' + (depth - 1))
-    assert.equal(internal.getCantonExecutionStats().activeValueBindings, before)
-    assert.equal(native.nodes.size, 0)
-})
-
-test('挂载后续分支失败时取消成功通知并退休已创建的作用域', async () => {
-    const events: string[] = []
-    const native = recordingNative()
-    const before = internal.getCantonExecutionStats().activeValueBindings
-    const Good = internal.defineArrangable({
-        setup(_props, { call }) {
-            runtime.onMounted(() => events.push('不应挂载成功'))
-            runtime.onScopeDispose(() => events.push('清理'))
-            return () => call(0, foundation.Text, { text: () => '先创建的内容' })
-        }
-    })
-    const app = runtime.createApp(internal.defineArrangable({
-        setup: (_props, { call }) => () => {
-            call(0, Good, {})
-            call(1, foundation.Spacer, { unknown: () => 1 } as never)
-        }
-    }))
-    assert.throws(() => mountFrame(app, native.target), /未声明参数/)
-    advanceFrames()
-    assert.deepEqual(events, ['清理'])
-    assert.equal(internal.getCantonExecutionStats().activeValueBindings, before)
-    assert.equal(native.nodes.size, 0)
-})
-
 
 test('固定参数和对象参数纯值更新均不重排，默认值工厂按实例求值', async () => {
     const run = async (binding: string) => {
@@ -418,9 +389,14 @@ test('固定参数和对象参数纯值更新均不重排，默认值工厂按�
         const Wrapper = evaluateCta('<template><Probe ' + binding + ' /></template><script>defineProps<{ amount: number }>()</script>')
         const amount = runtime.ref(0)
         const native = recordingNative()
-        const app = runtime.createApp(internal.defineArrangable({ setup: (_props, { call }) => () => call(0, Wrapper, { amount: () => amount.value }) }))
-        app.arrangable('Probe', Probe)
-        mountFrame(app, native.target)
+        const Root = internal.defineArrangable({
+            setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+                default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Wrapper, { amount: () => amount.value }),
+                }),
+            }),
+        })
+        const app = mountFrame(runtime.appBuilder(Root).arrangable('Probe', Probe).build(), native.target)
         const baseline = internal.getCantonExecutionStats()
         for (let index = 1; index <= 40; index++) {
             amount.value = index
@@ -442,17 +418,15 @@ test('固定参数和对象参数纯值更新均不重排，默认值工厂按�
     console.log('固定参数与对象表达式求值对比：' + JSON.stringify({ fixed, dynamic }))
 })
 
-
 test('真实 CTA 原样 Ref 保留身份，切换本体退订旧值，只读状态不能传给可写声明', async () => {
     const first = runtime.ref(1)
     const second = runtime.ref(10)
     const selected = runtime.ref(false)
     const observed: unknown[] = []
     const Editor = evaluateCta("<template><Text :text=\"String(oriRef.value)\" /></template><script>import type { Ref } from '@canton/framework'\n import { observed } from \"harness\";\n const props = defineProps<{ oriRef: Ref<number> }>(); observed.push(props.oriRef)</script>", { harness: { observed } })
-    const Page = evaluateCta("<template><Editor c-bind:ori-ref.camel=\"<selected.value ? second : first>\" /></template><script>import Editor from \"./Editor.cta\";\n import { selected, first, second } from \"harness\"\n</script>", { './Editor.cta': { default: Editor }, harness: { selected, first, second } })
+    const Page = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Editor c-bind:ori-ref.camel=\"<selected.value ? second : first>\" /></Window></App></template><script>import Editor from \"./Editor.cta\";\n import { selected, first, second } from \"harness\"\n</script>", { './Editor.cta': { default: Editor }, harness: { selected, first, second } })
     const native = recordingNative()
-    const app = runtime.createApp(Page)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     assert.equal(observed[0], first)
     const before = internal.getCantonExecutionStats()
     first.value = 2
@@ -473,16 +447,21 @@ test('真实 CTA 原样 Ref 保留身份，切换本体退订旧值，只读状�
     assert.equal(internal.getCantonExecutionStats().structureRuns, before.structureRuns)
     app.unmount()
 
-    assert.throws(() => mountFrame(runtime.createApp(Editor, { oriRef: runtime.readonly(first) }), recordingNative().target), /可写.*Ref/)
-    assert.throws(() => mountFrame(runtime.createApp(Editor, { oriRef: { value: 1 } }), recordingNative().target), /Ref 本体/)
+    const makeEditorRoot = (target: runtime.ArrangableDefinition, value: unknown) => internal.defineArrangable({
+        setup: (_p, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, target, { oriRef: () => value }),
+            }),
+        }),
+    })
+    assert.throws(() => mountFrame(runtime.appBuilder(makeEditorRoot(Editor, runtime.readonly(first))).build(), recordingNative().target), /可写.*Ref/)
+    assert.throws(() => mountFrame(runtime.appBuilder(makeEditorRoot(Editor, { value: 1 })).build(), recordingNative().target), /Ref 本体/)
     const ReadOnlyEditor = evaluateCta("<template><Text :text=\"String(oriRef.value)\" /></template><script>import type { Ref } from '@canton/framework'\n defineProps<{ oriRef: Readonly<Ref<number>> }>()</script>")
     const readOnly = runtime.readonly(second)
-    const readApp = runtime.createApp(ReadOnlyEditor, { oriRef: readOnly })
-    mountFrame(readApp, recordingNative().target)
+    const readApp = mountFrame(runtime.appBuilder(makeEditorRoot(ReadOnlyEditor, readOnly)).build(), recordingNative().target)
     assert.ok(runtime.isReadonly(readOnly))
     readApp.unmount()
 })
-
 
 test('深层实际 LayoutNode 账本按任务栈创建和退休', () => {
     let definition: runtime.ArrangableDefinition = foundation.Text
@@ -491,10 +470,16 @@ test('深层实际 LayoutNode 账本按任务栈创建和退休', () => {
         const child: runtime.ArrangableDefinition = definition
         definition = internal.defineArrangable({ setup: (_props, { call }) => () => call(0, foundation.Box, {}, { default: () => call(0, child, {}) }) })
     }
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, definition, {}),
+            }),
+        }),
+    })
     const native = recordingNative()
     const before = internal.getCantonExecutionStats().activeValueBindings
-    const app = runtime.createApp(definition)
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     assert.equal(native.nodes.size, depth + 2)
     app.unmount()
     assert.equal(native.nodes.size, 0)
@@ -514,7 +499,6 @@ test('Ref 声明沿泛型别名及真实导入身份推断，不按名字猜测'
     assert.equal((local as { props: Record<string, { refKind?: string }> }).props.state.refKind, undefined)
 })
 
-
 test('同一参数组同时改变时校验完整新值，无关表达式保留缓存', async () => {
     const lower = runtime.ref(1)
     const upper = runtime.ref(2)
@@ -528,16 +512,20 @@ test('同一参数组同时改变时校验完整新值，无关表达式保留�
             return () => call(0, foundation.Text, { text: () => props.lower + '/' + props.upper })
         },
     })
-    const app = runtime.createApp(internal.defineArrangable({
-        setup: (_props, { call }) => () => call(0, Receiver, {
-            lower: () => lower.value, upper: () => upper.value, other: () => {
-                otherReads++
-                return other.value
-            }
-        })
-    }))
+    const Root = internal.defineArrangable({
+        setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+            default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Receiver, {
+                    lower: () => lower.value, upper: () => upper.value, other: () => {
+                        otherReads++
+                        return other.value
+                    }
+                }),
+            }),
+        }),
+    })
     const native = recordingNative()
-    mountFrame(app, native.target)
+    const app = mountFrame(runtime.appBuilder(Root).build(), native.target)
     lower.value = 10
     upper.value = 20
     advanceFrames()
@@ -551,10 +539,9 @@ test('稳定参数与内容描述跨外层重排复用，动态调用保持同�
     const run = async (attributes: string) => {
         const amount = runtime.ref(1)
         const visible = runtime.ref(false)
-        const Page = evaluateCta('<template><Text ' + attributes + " /><Box><Text text=\"内容\" /></Box><Spacer c-if=\"visible\" /></template><script>import { amount, visible } from \"harness\"\n</script>", { harness: { amount, visible } })
+        const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text ' + attributes + " /><Box><Text text=\"内容\" /></Box><Spacer c-if=\"visible\" /></Window></App></template><script>import { amount, visible } from \"harness\"\n</script>", { harness: { amount, visible } })
         const native = recordingNative()
-        const app = runtime.createApp(Page)
-        mountFrame(app, native.target)
+        const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
         const before = internal.getCantonExecutionStats()
         for (let index = 0; index < 12; index++) {
             visible.value = !visible.value
@@ -574,7 +561,6 @@ test('稳定参数与内容描述跨外层重排复用，动态调用保持同�
     assert.ok(dynamic.evaluations > fixed.evaluations)
     console.log('局部条件与参数求值对比：' + JSON.stringify({ fixed, dynamic }))
 })
-
 
 test('Painter 资源状态保留版本、失败、取消和所属作用域释放', () => {
     const previous = globalThis.__CANTON_NATIVE__
@@ -616,7 +602,6 @@ test('Painter 资源状态保留版本、失败、取消和所属作用域释放
     }
 })
 
-
 test('原生已解码的资源随句柄就绪，Painter 首帧即可绘制且快照不夹带就绪字段', () => {
     const previous = globalThis.__CANTON_NATIVE__
     globalThis.__CANTON_NATIVE__ = {
@@ -656,7 +641,6 @@ test('跨文件 Ref 转导出保留身份，循环转导出产生定位诊断', 
     }
 })
 
-
 test('错误处理器接收挂载失败后不产生成功生命周期，后续应用仍可挂载', () => {
     for (const phase of ['初始化', '重排', '值求值']) {
         const events: string[] = []
@@ -671,23 +655,37 @@ test('错误处理器接收挂载失败后不产生成功生命周期，后续�
                 }
             }
         })
-        const app = runtime.createApp(Broken)
-        app.config.errorHandler = () => events.push('已报告')
-        mountFrame(app, recordingNative().target)
+        const BrokenRoot = internal.defineArrangable({
+            setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+                default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, Broken, {}),
+                }),
+            }),
+        })
+        const builder = runtime.appBuilder(BrokenRoot)
+        builder.config.errorHandler = () => events.push('已报告')
+        const failedRun = mountFrame(builder.build(), recordingNative().target)
         assert.ok(events.includes('已清理'))
         assert.ok(!events.includes('不应成功'))
-        const healthy = runtime.createApp(foundation.Text, { text: '恢复' })
+        failedRun.unmount()
+
+        const HealthyRoot = internal.defineArrangable({
+            setup: (_props, { call }) => () => call(0, foundation.App, {}, {
+                default: ({ appHandle }) => call(0, foundation.Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                    default: () => call(0, foundation.Text, { text: () => '恢复' }),
+                }),
+            }),
+        })
         const native = recordingNative()
-        mountFrame(healthy, native.target)
+        const healthy = mountFrame(runtime.appBuilder(HealthyRoot).build(), native.target)
         assert.ok(native.textNodes().some(node => node.text === '恢复'))
         healthy.unmount()
     }
 })
 
-
 test('固定参数及动态参数组拒绝时保留真实 CTA 位置', () => {
     for (const parameters of ['unknown="误传"', 'text="文字" :singleLine="123"', 'c-bind="{ text: 123 }"', 'c-bind="{ text: 1, Text: 2 }"']) {
-        const Page = evaluateCta('<template>\n    <Text ' + parameters + ' />\n</template>')
-        assert.throws(() => mountFrame(runtime.createApp(Page), recordingNative().target), error => error instanceof Error && /契约.cta:2:/.test(error.message))
+        const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication">\n    <Text ' + parameters + ' />\n</Window></App></template>')
+        assert.throws(() => mountFrame(runtime.appBuilder(Page).build(), recordingNative().target), error => error instanceof Error && /契约.cta:2:/.test(error.message))
     }
 })

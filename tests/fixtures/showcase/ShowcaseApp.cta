@@ -1,17 +1,20 @@
 <template>
-    <Box :modifier="M.fillMaxSize().background(palette.canvas)">
-        <LayoutPage c-if="page === 'layout'" />
-        <TextPage c-else-if="page === 'text'" />
-        <ImagePage c-else-if="page === 'image'" />
-        <ScrollPage c-else-if="page === 'scroll'" :offset="argument" />
-        <LazyPage c-else-if="page === 'lazy'" :step="argument" />
-        <AnimationPage c-else-if="page === 'animation'" :step="argument" />
-        <ItemAnimationPage c-else-if="page === 'items'" :step="argument" />
-        <CanvasPage c-else-if="page === 'canvas'" />
-        <Text c-else :text="`unknown page ${page}`" :style="body" />
-        <!-- 没有输入的这一期，分步操作由测试程序或开发者经这个提交槽发指令 -->
-        <Input value="" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
-    </Box>
+    <App &app-handle>
+        <Window title="Canton Showcase" :onCloseRequest="appHandle.exitApplication">
+            <Box :modifier="M.fillMaxSize().background(palette.canvas)">
+                <LayoutPage c-if="page === 'layout'" />
+                <TextPage c-else-if="page === 'text'" />
+                <ImagePage c-else-if="page === 'image'" />
+                <ScrollPage c-else-if="page === 'scroll'" :offset="argument" />
+                <LazyPage c-else-if="page === 'lazy'" :step="argument" />
+                <AnimationPage c-else-if="page === 'animation'" :step="argument" />
+                <ItemAnimationPage c-else-if="page === 'items'" :step="argument" />
+                <CanvasPage c-else-if="page === 'canvas'" />
+                <Text c-else :text="`unknown page ${page}`" :style="body" />
+                <Input value="" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
+            </Box>
+        </Window>
+    </App>
 </template>
 
 <script>

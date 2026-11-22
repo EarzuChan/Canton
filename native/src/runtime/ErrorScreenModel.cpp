@@ -73,25 +73,26 @@ namespace canton::runtime {
         return model;
     }
 
-    std::vector<core::DrawOp> buildErrorScreenOps(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed) {
+    std::vector<core::DrawOp> buildErrorScreenOps(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed, float dpiScale) {
+        const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
         std::vector<core::DrawOp> ops;
-        core::Rect area{editorBounds.x + 20, editorBounds.y + 20, std::max(0.0f, editorBounds.width - 40), std::max(0.0f, editorBounds.height - 40)};
-        ops.push_back(errorFill(area, detailed ? 0xff2a1014u : 0xff111827u, 10.0f));
+        core::Rect area{editorBounds.x + 20.0f * s, editorBounds.y + 20.0f * s, std::max(0.0f, editorBounds.width - 40.0f * s), std::max(0.0f, editorBounds.height - 40.0f * s)};
+        ops.push_back(errorFill(area, detailed ? 0xff2a1014u : 0xff111827u, 10.0f * s));
         if (detailed) {
-            const core::Rect titleArea{area.x, area.y, area.width, 34.0f};
-            ops.push_back(errorText(titleArea, error.title.empty() ? "Canton Error" : error.title, 0xffff6b6bu, 15.0f));
-            area.y += 34.0f;
-            area.height = std::max(0.0f, area.height - 34.0f);
+            const core::Rect titleArea{area.x, area.y, area.width, 34.0f * s};
+            ops.push_back(errorText(titleArea, error.title.empty() ? "Canton Error" : error.title, 0xffff6b6bu, 15.0f * s));
+            area.y += 34.0f * s;
+            area.height = std::max(0.0f, area.height - 34.0f * s);
             auto body = error.diagnosticText();
             if (error.retryAvailable) body += "\nClick anywhere to retry.";
-            ops.push_back(errorText(area, std::move(body), 0xe0ffffffu, 11.0f, 8));
+            ops.push_back(errorText(area, std::move(body), 0xe0ffffffu, 11.0f * s, 8));
             return ops;
         }
-        const core::Rect titleArea{area.x, area.y, area.width, 32.0f};
-        ops.push_back(errorText(titleArea, "Canton error screen hidden", 0xfff59e0bu, 14.5f));
-        area.y += 32.0f;
-        area.height = std::max(0.0f, area.height - 32.0f);
-        ops.push_back(errorText(area, error.summary + "\nError details are still available in logs and diagnostics.", 0xc7ffffffu, 11.0f, 4));
+        const core::Rect titleArea{area.x, area.y, area.width, 32.0f * s};
+        ops.push_back(errorText(titleArea, "Canton error screen hidden", 0xfff59e0bu, 14.5f * s));
+        area.y += 32.0f * s;
+        area.height = std::max(0.0f, area.height - 32.0f * s);
+        ops.push_back(errorText(area, error.summary + "\nError details are still available in logs and diagnostics.", 0xc7ffffffu, 11.0f * s, 4));
         return ops;
     }
 }

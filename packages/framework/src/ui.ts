@@ -1,5 +1,6 @@
 export * from './modifier/modifier.ts'
 export type { BoxHandle, RowHandle, ColumnHandle, FlowRowHandle, FlowColumnHandle, LazyItemHandle, LazyGridItemHandle, AnimateItemOptions, WeightOptions } from './modifier/layoutHandle.ts'
+export type { AppHandle, WindowHandle, WindowSize, CaptionButtonKind, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole } from './modifier/window.ts'
 export * from './values/primitives.ts'
 
 export { createDensity, DensityKey } from './layout/density.ts'

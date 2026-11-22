@@ -192,7 +192,9 @@ namespace canton::quickjs {
             installHotTransport(state.context);
             auto* module = loadLive(state.context, snapshot.entry.c_str(), state.live.get());
             if (!module) return false;
-            ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, JS_MKPTR(JS_TAG_MODULE, module))));
+            const auto moduleVal = JS_MKPTR(JS_TAG_MODULE, module);
+            if (JS_ResolveModule(state.context, moduleVal) < 0) return false;
+            ScopedValue result(state.context, JS_EvalFunction(state.context, JS_DupValue(state.context, moduleVal)));
             return !JS_IsException(result.get());
         });
     }

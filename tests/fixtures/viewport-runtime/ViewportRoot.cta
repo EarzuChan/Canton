@@ -1,0 +1,11 @@
+<template>
+    <App &app-handle>
+        <Window title="Viewport" :onCloseRequest="appHandle.exitApplication">
+            <ViewportApp />
+        </Window>
+    </App>
+</template>
+
+<script>
+import ViewportApp from './ViewportApp.cta'
+</script>

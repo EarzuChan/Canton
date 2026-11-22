@@ -80,6 +80,15 @@ export interface RearrangeNode {
     retire(): void
 }
 
+// 独立画区根（如 <Window>），对祖先布局透明，只管理自身子树的布局根节点
+export interface RearrangeSurface {
+    readonly owner: ArrangableInstance
+    reconcileRoots(roots: readonly RearrangeNode[]): void
+    deactivate(): void
+    activate(): void
+    retire(): void
+}
+
 // 应用原生候选并交付回执；RearrangeSession 负责前端实例和结构账本
 export interface RearrangeHost {
     currentTime(): number
@@ -134,6 +143,7 @@ export class ArrangableInstance {
     props!: Readonly<Data>
     structure!: StructureScope
     node: RearrangeNode | null = null
+    surface: RearrangeSurface | null = null
     contents: Contents = Object.freeze({})
     setupContext!: SetupContext
     isMounted = false

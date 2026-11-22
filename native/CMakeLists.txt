@@ -73,6 +73,7 @@ target_link_libraries(canton_ui_bytecode PRIVATE qjs)
 
 add_library(canton_runtime STATIC
   src/runtime/AppResolver.cpp
+  src/runtime/AppSession.cpp
   src/runtime/CantonRuntime.cpp
   src/runtime/Digest.cpp
   src/runtime/DiagnosticsModel.cpp
@@ -152,11 +153,12 @@ target_link_libraries(canton_runtime_live PUBLIC Canton::runtime PRIVATE winhttp
 add_library(canton_win32 STATIC
   src/win32/ConsoleLog.cpp
   src/win32/Window.cpp
+  src/win32/WindowManager.cpp
   src/win32/WindowsPrecisionWheelSource.cpp
 )
 add_library(Canton::win32 ALIAS canton_win32)
 target_compile_definitions(canton_win32 PRIVATE NOMINMAX)
-target_link_libraries(canton_win32 PUBLIC Canton::core PRIVATE comctl32 ole32 user32 uuid)
+target_link_libraries(canton_win32 PUBLIC Canton::core PRIVATE comctl32 dwmapi gdi32 imm32 ole32 shell32 user32 uuid)
 
 # 内置着色器在构建期编译成 DXBC 并嵌进渲染库，运行期不依赖 d3dcompiler_47.dll
 find_program(CANTON_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}x64" "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkDir}bin/$ENV{WindowsSDKVersion}x64" REQUIRED)

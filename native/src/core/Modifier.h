@@ -9,6 +9,7 @@
 #include "DrawEnums.h"
 #include "Painter.h"
 #include "TextLayoutService.h"
+#include "WindowTypes.h"
 
 #include <cstdint>
 #include <memory>
@@ -135,7 +136,7 @@ namespace canton::core {
         bool operator==(const ClipModifier&) const = default;
     };
 
-    enum class InputModifierKind { Clickable, Hoverable, Focusable, ContextClick, PointerIcon, KeyEvent, Wheel, Draggable, PointerInput };
+    enum class InputModifierKind { Clickable, Hoverable, Focusable, ContextClick, PointerIcon, KeyEvent, Wheel, Draggable, PointerInput, DraggableArea, NonDraggableArea, CaptionButton };
 
     enum class PointerIcon : std::uint8_t { Default, Hand, Text, Crosshair, ResizeHorizontal, ResizeVertical, Grab, Grabbing, None };
 
@@ -155,6 +156,7 @@ namespace canton::core {
         EventSlotId interaction;
         PointerIcon icon = PointerIcon::Default;
         DragAxis axis = DragAxis::Both;
+        CaptionButtonKind captionButton = CaptionButtonKind::Minimize;
         bool startImmediately = false;
         bool pointerLock = false;
         bool operator==(const InputModifierSemantics&) const = default;
@@ -289,6 +291,7 @@ namespace canton::core {
         std::string value;
         std::string placeholder;
         bool enabled = true;
+        bool readOnly = false;
         bool selectAllOnFocus = false;
         EventSlotId onValueChange;
         EventSlotId onSubmit;

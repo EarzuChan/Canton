@@ -5,7 +5,7 @@
 #endif
 
 namespace canton::host {
-    // Dist 宿主：只读随包 Dist，不认任何开发期开关，也不链接 Live、HMR 和诊断浮层
+    // Dist 宿主：只读随包 Dist，不认任何开发期开关，也不链接 Live、HMR、DiagnosticsHud 和 DiagnosticsOverlay
     HostAssembly assembleHost(const std::filesystem::path& bundleRoot) {
         HostAssembly assembly;
         assembly.source.policy = runtime::LoadPolicy::OnlyDist;

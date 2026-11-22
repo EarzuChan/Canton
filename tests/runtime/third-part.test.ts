@@ -4,10 +4,10 @@ import ts from 'typescript'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { resolve, join } from 'node:path'
 import { checkCtaProject } from '../../packages/compiler/src/typecheck.ts'
-import { createApp, ref, provide, nextTick, onMounted, onScopeDispose, watch, watchPostEffect } from '@canton/framework'
-import { Layout, Text, Input, DynamicArrangable, KeepAlive } from '@canton/framework/foundation'
+import { appBuilder, ref, provide, nextTick, onMounted, onScopeDispose, watch, watchPostEffect, type ArrangableDefinition } from '@canton/framework'
+import { App, Layout, Text, Input, DynamicArrangable, KeepAlive, Window } from '@canton/framework/foundation'
 import { M, createDensity, DensityKey, MinSizeMeasurePolicy, rounded } from '@canton/framework/ui'
-import { defineArrangable, slotParams } from '@canton/framework/internal'
+import { defineArrangable, mountApplication, slotParams } from '@canton/framework/internal'
 import { animatedNumberAsRef, linearEasing, tween } from '@canton/framework/animation'
 import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { recordingNative } from './recordingNative.ts'
@@ -17,13 +17,20 @@ import { evaluateCta, requireCtaModule } from './ctaModules.ts'
 test('首次挂载与后续视觉失效都只由宿主帧授权，挂载通知写状态进入下一帧', async () => {
     const count = ref(0)
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
             onMounted(() => { count.value = 1 })
             return () => call(0, Text, { text: () => String(count.value) })
         }
-    }))
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     await nextTick()
     assert.equal(native.nodes.size, 0)
     native.frame()
@@ -40,20 +47,30 @@ test('共享声明按各 Layout 的 Density 转换，DP、SP 独立且 PX 不订
     const a = createDensity(2, 3)
     const b = createDensity(4, 5)
     const declaration = M.width(8, 0).width(114, 514).clip(rounded(2, 0)).text('单位', { style: { fontSize: 10, lineHeight: 12 } }).graphicsLayer({ translationX: 7 })
-    const Page = defineArrangable({
+    const SubPage = defineArrangable({
         setup(_props, { call }) {
             provide(DensityKey, b)
             return () => call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => declaration })
         }
     })
-    const native = recordingNative()
-    const app = createApp(defineArrangable({
-        setup: (_props, { call }) => () => {
-            call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => declaration })
-            call(1, Page, {})
+    const OuterPage = defineArrangable({
+        setup(_props, { call }) {
+            provide(DensityKey, a)
+            return () => {
+                call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => declaration })
+                call(1, SubPage, {})
+            }
         }
-    })).provide(DensityKey, a)
-    app.mount(native.target)
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, OuterPage, {}),
+            }),
+        }),
+    })
+    const native = recordingNative()
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const chains = () => [...native.nodes.values()].filter(node => node.inputs.has('modifier')).map(node => (node.inputs.get('modifier') as typeof declaration).elements)
     assert.deepEqual(chains().map(chain => chain[0].value.value), [16, 32])
@@ -130,7 +147,7 @@ const width = ref(8.dp)
     assert.match(scalarRef.code, /width\.value, 0/)
 
     let reads = 0
-    const exports: { default?: Parameters<typeof createApp>[0] } = {}
+    const exports: { default?: ArrangableDefinition } = {}
     const js = ts.transpileModule(result.code, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
     new Function('require', 'exports', js)((name: string) => name === './state' ? {
         read: () => {
@@ -140,8 +157,20 @@ const width = ref(8.dp)
     } : requireCtaModule(name), exports)
     assert.equal(reads, 0)
     const native = recordingNative()
-    const app = createApp(exports.default!).provide(DensityKey, createDensity(2))
-    app.mount(native.target)
+    const DensityScope = defineArrangable({
+        setup(_props, { call }) {
+            provide(DensityKey, createDensity(2))
+            return () => call(0, exports.default!, {})
+        }
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, DensityScope, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     assert.equal(reads, 1)
     const chain = [...native.nodes.values()].find(node => node.inputs.has('modifier'))!.inputs.get('modifier') as typeof M
@@ -194,8 +223,20 @@ test('Input 未绑定的编辑值与 Density 最新配置跨停用保留', () =>
     const key = ref(0)
     const density = createDensity(2, 3)
     const native = recordingNative()
-    const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, KeepAlive, { cacheKey: () => key.value }, { default: () => call(0, Input, { modifier: () => M.width(20, 0) }) }) })).provide(DensityKey, density)
-    app.mount(native.target)
+    const Page = defineArrangable({
+        setup(_props, { call }) {
+            provide(DensityKey, density)
+            return () => call(0, KeepAlive, { cacheKey: () => key.value }, { default: () => call(0, Input, { modifier: () => M.width(20, 0) }) })
+        }
+    })
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     const input = () => [...native.nodes.values()].map(node => node.inputs.get('modifier') as typeof M | undefined).find(chain => chain?.elements.some(element => element.type === 'textField'))!
     const field = () => input().elements.find(element => element.type === 'textField')!.value;
@@ -217,23 +258,32 @@ test('Density 解析失败保留旧帧，恢复有效倍率后只更新真实消
     let conversions = 0
     const post: number[] = []
     const native = recordingNative()
-    const app = createApp(defineArrangable({
+    const Page = defineArrangable({
         setup(_props, { call }) {
+            provide(DensityKey, {
+                ...createDensity(), dpToPx(value: number) {
+                    conversions++
+                    if (scale.value < 0) throw new Error('测试转换失败')
+                    return value * scale.value
+                }
+            })
             watch(scale, value => post.push(value), { flush: 'post' })
             return () => {
                 call(0, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => M.width(10, 0) })
                 call(1, Layout, { measurePolicy: () => MinSizeMeasurePolicy, modifier: () => M.graphicsLayer({ translationX: 5 }) })
             }
         }
-    })).provide(DensityKey, {
-        ...createDensity(), dpToPx(value: number) {
-            conversions++
-            if (scale.value < 0) throw new Error('测试转换失败')
-            return value * scale.value
-        }
     })
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Page, {}),
+            }),
+        }),
+    })
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     const writes = native.writes
     const count = conversions
@@ -256,9 +306,16 @@ test('动态调用转交具名内容并按选中目标校验，失败保留旧�
     const Page = defineArrangable({ slots: { header: slotParams() }, setup: (_props, { slot }) => slot('header') })
     const Empty = defineArrangable({ setup: () => () => { } })
     const native = recordingNative()
-    const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, DynamicArrangable, { is: () => selected.value ? Empty : Page }, { header: () => call(0, Text, { text: () => '标题' }) }) }))
-    app.config.errorHandler = error => errors.push(error)
-    app.mount(native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, DynamicArrangable, { is: () => selected.value ? Empty : Page }, { header: () => call(0, Text, { text: () => '标题' }) }),
+            }),
+        }),
+    })
+    const builder = appBuilder(Root)
+    builder.config.errorHandler = error => errors.push(error)
+    const app = mountApplication(builder.build(), native.target)
     native.frame()
     assert.equal(native.textNodes()[0].text, '标题')
     selected.value = true
@@ -281,8 +338,14 @@ test('KeepAlive 的有限缓存逐出整份内容，停用观察恢复时只消�
         }
     })
     const native = recordingNative()
-    const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, KeepAlive, { cacheKey: () => key.value, max: () => 2 }, { default: () => call(0, Child, {}) }) }))
-    app.mount(native.target)
+    const Root = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, KeepAlive, { cacheKey: () => key.value, max: () => 2 }, { default: () => call(0, Child, {}) }),
+            }),
+        }),
+    })
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame()
     key.value = 1
     native.frame()
@@ -358,12 +421,11 @@ test('动态定义的 props 与具名内容在真实 CTA 类型检查中按所�
     }
 })
 
-
 test('正式函数重导出与局部别名、readonly映射和联合字段契约保留运行语义', () => {
     const directory = mkdtempSync(resolve('tmp-refs/cta-contract-fields-'))
     try {
         writeFileSync(join(directory, 'contracts.ts'), "export { rounded as curve } from '@canton/framework/ui'")
-        const source = `<template><Text :modifier="chain" /></template><script>
+        const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :modifier="chain" /></Window></App></template><script>
 import { curve as corner } from './contracts'
 import { M, Color, Arrangement, type TextStyleProp, type GraphicsLayerOptions, type ArrangementProp } from '@canton/framework/ui'
 import { observe } from './observe'
@@ -378,9 +440,9 @@ const chain = M.graphicsLayer(graphics).text('正式契约', { style }).clip(sha
 observe({ shape, spacing, style, graphics, shadow: shadow(value => value + 1) })
 </script>`
         let observed: { shape: unknown; spacing: unknown; style: unknown; graphics: unknown; shadow: number } | undefined
-        const app = createApp(evaluateCta(source, { './contracts': { curve: rounded }, './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }, join(directory, 'App.cta')))
+        const Root = evaluateCta(source, { './contracts': { curve: rounded }, './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }, join(directory, 'App.cta'))
         const native = recordingNative()
-        app.mount(native.target)
+        const app = mountApplication(appBuilder(Root).build(), native.target)
         native.frame()
         assert.deepEqual(observed, { shape: { type: 'rounded', topStartDp: 8, topStartPx: 3, topEndDp: 8, topEndPx: 3, bottomEndDp: 8, bottomEndPx: 3, bottomStartDp: 8, bottomStartPx: 3 }, spacing: { kind: 'spacedBy', spaceDp: 4, spacePx: 2, alignment: undefined }, style: { fontSize: 12, lineHeight: 16, color: 0xff123456 }, graphics: { translationX: 7 }, shadow: 10 })
         const chain = [...native.nodes.values()].map(node => node.inputs.get('modifier') as typeof M | undefined).find(chain => chain?.elements.some(element => element.type === 'text'))!
@@ -392,7 +454,7 @@ observe({ shape, spacing, style, graphics, shadow: shadow(value => value + 1) })
 })
 
 test('真实CTA有限和无限过渡的别名方法按值与对象回调契约运行', () => {
-    const source = `<template><Text :text="String(width)" :modifier="M.width(distance)" /></template><script>
+    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="String(width)" :modifier="M.width(distance)" /></Window></App></template><script>
 import { createTransition, createInfiniteTransition, animatedNumberAsRef, animatedDpAsRef, tween, linearEasing } from '@canton/framework/animation'
 import { M, Color } from '@canton/framework/ui'
 import { ref } from '@canton/framework'
@@ -418,9 +480,9 @@ observe({ state, finite, infinite, width, color, offset, size, rect, repeat, rep
     type Scalar = { readonly value: number }
     type Dimensions = { readonly value: Readonly<Record<string, number>> }
     let observed: { state: { value: boolean }; finite: { isRunning: { readonly value: boolean } }; infinite: { stop(): void }; width: Scalar; color: Scalar; offset: Dimensions; size: Dimensions; rect: Dimensions; repeat: Scalar; repeatColor: Scalar; raw: Scalar; distance: Scalar } | undefined
-    const app = createApp(evaluateCta(source, { './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } }))
+    const Root = evaluateCta(source, { './observe': { observe: (value: NonNullable<typeof observed>) => { observed = value } } })
     const native = recordingNative()
-    app.mount(native.target)
+    const app = mountApplication(appBuilder(Root).build(), native.target)
     native.frame(16)
     assert.ok(observed)
     assert.equal(observed.width.value, 4)

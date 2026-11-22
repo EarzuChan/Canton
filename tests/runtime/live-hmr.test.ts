@@ -4,7 +4,9 @@ import ts from 'typescript'
 import { HotRuntime, type HotMessage } from '../../packages/framework/src/app/hotRuntime.ts'
 import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { applyArrangableHmr } from '../../packages/framework/src/runtime/arrangableHmr.ts'
-import { createApp, type ArrangableDefinition } from '../../packages/framework/src/index.ts'
+import { appBuilder, type ArrangableDefinition } from '../../packages/framework/src/index.ts'
+import { App, Window } from '../../packages/framework/src/foundation.ts'
+import { defineArrangable } from '../../packages/framework/src/internal.ts'
 import { requireCtaModule } from './ctaModules.ts'
 import { recordingNative, mountFrame, advanceFrames } from './recordingNative.ts'
 import { createFakeNative } from '../helpers/fakeNative.ts'
@@ -102,15 +104,14 @@ test('子组件兼容热更新后，新挂载的父级按新导入定义预备�
     evaluate(child('旧'), childId)
     const next = evaluate(child('新'), childId)
     applyArrangableHmr(childId, next)
-    const { code } = compileCantonCta(`<script>import Child from './Child.cta'</script><template><Child label="甲" /></template>`, 'hmr-plan-parent.cta', true)
+    const { code } = compileCantonCta(`<script>import Child from './Child.cta'</script><template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Child label="甲" /></Window></App></template>`, 'hmr-plan-parent.cta', true)
     assert.match(code, /prepareParameters/)
     const output = ts.transpileModule(code.replaceAll('import.meta.hot', 'undefined'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
     const exports: { default?: ArrangableDefinition } = {}
     const childModule = Object.defineProperty({ default: next }, '__esModule', { value: true })
     new Function('require', 'exports', output)((name: string) => name === './Child.cta' ? childModule : requireCtaModule(name), exports)
     const native = recordingNative()
-    const app = createApp(exports.default!)
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(exports.default!).build(), native.target)
     assert.deepEqual(native.textNodes().map(node => node.text), ['甲新'])
     app.unmount()
 })
@@ -119,7 +120,7 @@ test('CTA 不增加对 console API 的额外编译期拦截', () => {
     assert.doesNotThrow(() => compileCantonCta('<script>console.log("未定义 API 会在运行时自然失败")</script>', 'console.cta'))
 })
 
-test('CTA 模板更新保留 ref、setup 生命周期与 native 节点，新增模板引用可读取既有局部变量', () => {
+test('CTA 模板更新保留 <Window> 身份、WindowState、ref、setup 生命周期与 native 节点', () => {
     const id = 'hmr-template.cta'
     let count: any
     let setups = 0
@@ -129,18 +130,20 @@ test('CTA 模板更新保留 ref、setup 生命周期与 native 节点，新增�
             setups++
         }
     }
-    const script = `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\nconst extra = ref('!')\ncapture(count)</script>`
-    const root = evaluate(script + '<template><Text :text="String(count)" /></template>', id, state)
+    const script = `<script>import {ref, createWindowState} from '@canton/framework'\nimport {capture} from './state'\nconst winState = createWindowState({ size: { width: 800.dp, height: 500.dp } })\nconst count = ref(1)\nconst extra = ref('!')\ncapture(count)</script>`
+    const root = evaluate(script + '<template><App &app-handle><Window :state="winState" :onCloseRequest="appHandle.exitApplication"><Text :text="String(count)" /></Window></App></template>', id, state)
     assert.equal(root.__hmrId, id)
     const native = recordingNative()
-    const app = createApp(root)
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(root).build(), native.target)
+    const initialWindowId = [...native.windows.keys()][0]
     count.value = 9
     advanceFrames()
     const initial = native.textNodes()[0]
-    const next = evaluate(script + '<template><Text :text="String(count) + extra" /></template>', id, state)
+    const next = evaluate(script + '<template><App &app-handle><Window :state="winState" title="HMR 标题" :onCloseRequest="appHandle.exitApplication"><Text :text="String(count) + extra" /></Window></App></template>', id, state)
     applyArrangableHmr(id, next)
     advanceFrames()
+    assert.deepEqual([...native.windows.keys()], [initialWindowId], '热更新不能销毁重建已有窗口')
+    assert.equal(native.windows.get(initialWindowId)!.config.title, 'HMR 标题')
     assert.deepEqual(native.textNodes(), [{ id: initial.id, text: '9!' }])
     assert.equal(setups, 1)
     app.unmount()
@@ -148,11 +151,11 @@ test('CTA 模板更新保留 ref、setup 生命周期与 native 节点，新增�
 
 test('CTA 模板更新会刷新静态参数且复用 native 节点', () => {
     const id = 'hmr-static-prop.cta'
-    const app = createApp(evaluate('<template><Text text="旧文案" /></template>', id))
+    const Page = evaluate('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="旧文案" /></Window></App></template>', id)
     const native = recordingNative()
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(Page).build(), native.target)
     const initial = native.textNodes()[0]
-    applyArrangableHmr(id, evaluate('<template><Text text="新文案" /></template>', id))
+    applyArrangableHmr(id, evaluate('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="新文案" /></Window></App></template>', id))
     advanceFrames()
     assert.deepEqual(native.textNodes(), [{ id: initial.id, text: '新文案' }])
     app.unmount()
@@ -160,10 +163,9 @@ test('CTA 模板更新会刷新静态参数且复用 native 节点', () => {
 
 test('CTA 接受依赖模块更新时重建 setup，模板更新仍复用原 setup', () => {
     const id = 'hmr-dependency.cta'
-    const source = `<script>import { read } from './state'\nconst text = read()</script><template><Text :text="text" /></template>`
-    const app = createApp(evaluate(source, id, { read: () => '旧依赖' }))
+    const source = `<script>import { read } from './state'\nconst text = read()</script><template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="text" /></Window></App></template>`
     const native = recordingNative()
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(evaluate(source, id, { read: () => '旧依赖' })).build(), native.target)
     const node = native.textNodes()[0].id
     applyArrangableHmr(id, evaluate(source, id, { read: () => '新依赖' }))
     advanceFrames()
@@ -177,9 +179,16 @@ test('CTA 脚本更新迁移显式 ref，重建 computed 与 setup 清理，不�
     let disposed = 0
     const state = { capture: (value: any) => { count = value }, dispose: () => { disposed++ } }
     const source = (factor: number, props = '') => `<script>import {ref, computed, onScopeDispose} from '@canton/framework'\nimport {capture, dispose} from './state'\n${props}\nconst count = ref(1)\nconst display = computed(() => count.value * ${factor})\ncapture(count)\nonScopeDispose(dispose)</script><template><Text :text="String(display)" /></template>`
-    const app = createApp(evaluate(source(2), id, state))
+    const Leaf = evaluate(source(2), id, state)
+    const Shell = defineArrangable({
+        setup: (_props, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => call(0, Window, { onCloseRequest: () => appHandle.exitApplication }, {
+                default: () => call(0, Leaf, {}),
+            }),
+        }),
+    })
     const native = recordingNative()
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(Shell).build(), native.target)
     count.value = 9
     advanceFrames()
     const previous = count
@@ -203,11 +212,11 @@ for (const failure of ['setup', 'native'] as const) test(`CTA ${failure} 失败�
     let count: any
     const errors: unknown[] = []
     const state = { capture: (value: any) => { count = value } }
-    const source = (bonus?: number, broken = false) => `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\n${bonus === undefined ? '' : `const bonus = ref(${bonus})`}\n${broken ? "throw new Error('候选 setup 失败')" : ''}</script><template><Text :text="String(count${bonus === undefined ? '' : ' + bonus'})" /></template>`
-    const app = createApp(evaluate(source(), id, state))
-    app.config.errorHandler = error => { errors.push(error) }
+    const source = (bonus?: number, broken = false) => `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\n${bonus === undefined ? '' : `const bonus = ref(${bonus})`}\n${broken ? "throw new Error('候选 setup 失败')" : ''}</script><template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="String(count${bonus === undefined ? '' : ' + bonus'})" /></Window></App></template>`
+    const builder = appBuilder(evaluate(source(), id, state))
+    builder.config.errorHandler = error => { errors.push(error) }
     const native = recordingNative(false)
-    mountFrame(app, native.target)
+    const app = mountFrame(builder.build(), native.target)
     native.finish()
     const previous = count
     const initial = native.textNodes()[0]
@@ -228,7 +237,6 @@ test('CTA 模板热更新增删槽位参数绑定与出口实参，保留 ref、
     const providerId = 'hmr-slot-provider.cta', consumerId = 'hmr-slot-consumer.cta'
     let count: any
     let setups = 0
-    // 依赖模块对象不变，脚本才不会因依赖更新而重建 setup
     const providerState = {
         capture: (value: any) => {
             count = value
@@ -236,11 +244,10 @@ test('CTA 模板热更新增删槽位参数绑定与出口实参，保留 ref、
         }
     }
     const provider = (outlet: string) => `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\ndefineSlots<{ default: { value: number; unit?: string } }>()</script><template>${outlet}</template>`
-    const consumer = (content: string) => `<script>import {Provider} from './state'\nconst value = '外层'</script><template><Text :text="value" />${content}</template>`
+    const consumer = (content: string) => `<script>import {Provider} from './state'\nconst value = '外层'</script><template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="value" />${content}</Window></App></template>`
     const Provider = evaluate(provider('<Slot :value="count" />'), providerId, providerState)
-    const app = createApp(evaluate(consumer('<Provider &value><Text :text="String(value)" /></Provider>'), consumerId, { Provider }))
     const native = recordingNative()
-    mountFrame(app, native.target)
+    const app = mountFrame(appBuilder(evaluate(consumer('<Provider &value><Text :text="String(value)" /></Provider>'), consumerId, { Provider })).build(), native.target)
     count.value = 5
     advanceFrames()
     const initial = native.textNodes()
