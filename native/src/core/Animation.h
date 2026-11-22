@@ -54,36 +54,43 @@ namespace canton::core {
         return curve((low + high) / 2, bezier[1], bezier[3]);
     }
 
-    struct SizeAnimation {
-        bool initialized = false;
+    // 多轴动画：各轴共用一份规格与起始时刻，弹簧按轴各自求解，任一轴未停稳就继续
+    template <std::size_t N>
+    struct VectorAnimation {
+        using Value = std::array<float, N>;
         bool running = false;
-        Size current, from, target, velocity, initialVelocity;
+        Value current{}, from{}, target{}, velocity{}, initialVelocity{};
         double startMillis = 0;
         AnimationSpec spec;
 
-        Size update(Size next, const AnimationSpec& nextSpec, double now) {
-            if (!initialized) {
-                initialized = true;
-                current = target = next;
-                spec = nextSpec;
-                return current;
-            }
-            if (target != next || spec != nextSpec) {
-                from = current;
-                target = next;
-                initialVelocity = velocity;
-                startMillis = now;
-                spec = nextSpec;
-                running = current != target || velocity != Size{};
-            }
+        void snapTo(const Value& value) {
+            current = from = target = value;
+            velocity = initialVelocity = {};
+            running = false;
+        }
+
+        // 从当前值和速度出发，奔向新目标
+        void animateTo(const Value& next, const AnimationSpec& nextSpec, double now) {
+            from = current;
+            target = next;
+            initialVelocity = velocity;
+            startMillis = now;
+            spec = nextSpec;
+            running = current != target || velocity != Value{};
+        }
+
+        const Value& sample(double now) {
             if (!running) return current;
             const auto elapsed = std::max(0.0, now - startMillis);
             if (spec.kind == AnimationKind::Spring) {
-                const auto w = sampleSpring(from.width - target.width, initialVelocity.width, elapsed / 1000, spec);
-                const auto h = sampleSpring(from.height - target.height, initialVelocity.height, elapsed / 1000, spec);
-                current = {std::max(0.0f, target.width + w.first), std::max(0.0f, target.height + h.first)};
-                velocity = {w.second, h.second};
-                running = std::abs(w.first) > spec.threshold || std::abs(h.first) > spec.threshold || std::abs(w.second) > spec.threshold * 10 || std::abs(h.second) > spec.threshold * 10;
+                bool moving = false;
+                for (std::size_t axis = 0; axis < N; ++axis) {
+                    const auto [delta, speed] = sampleSpring(from[axis] - target[axis], initialVelocity[axis], elapsed / 1000, spec);
+                    current[axis] = target[axis] + delta;
+                    velocity[axis] = speed;
+                    moving = moving || std::abs(delta) > spec.threshold || std::abs(speed) > spec.threshold * 10;
+                }
+                running = moving;
             } else {
                 const auto duration = spec.kind == AnimationKind::Snap ? 0.0 : static_cast<double>(spec.durationMillis);
                 const auto cycleDuration = spec.delayMillis + duration;
@@ -93,7 +100,7 @@ namespace canton::core {
                 const auto fraction = local < spec.delayMillis ? 0.0f : duration == 0 ? 1.0f : std::min(1.0f, static_cast<float>((local - spec.delayMillis) / duration));
                 const auto eased = sampleEasing(fraction, spec.bezier);
                 const auto progress = spec.reverse && cycle % 2 == 1 ? 1 - eased : eased;
-                current = {std::max(0.0f, from.width + (target.width - from.width) * progress), std::max(0.0f, from.height + (target.height - from.height) * progress)};
+                for (std::size_t axis = 0; axis < N; ++axis) current[axis] = from[axis] + (target[axis] - from[axis]) * progress;
                 velocity = {};
                 running = !finished;
             }
@@ -102,6 +109,36 @@ namespace canton::core {
                 velocity = {};
             }
             return current;
+        }
+    };
+
+    struct SizeAnimation {
+        bool initialized = false;
+        VectorAnimation<2> axes;
+
+        bool running() const noexcept {
+            return axes.running;
+        }
+
+        Size target() const noexcept {
+            return {axes.target[0], axes.target[1]};
+        }
+
+        const AnimationSpec& spec() const noexcept {
+            return axes.spec;
+        }
+
+        Size update(Size next, const AnimationSpec& nextSpec, double now) {
+            const VectorAnimation<2>::Value value{next.width, next.height};
+            if (!initialized) {
+                initialized = true;
+                axes.snapTo(value);
+                axes.spec = nextSpec;
+            } else if (axes.target != value || axes.spec != nextSpec)
+                axes.animateTo(value, nextSpec, now);
+            axes.sample(now);
+            for (auto& axis : axes.current) axis = std::max(0.0f, axis);
+            return {axes.current[0], axes.current[1]};
         }
     };
 }

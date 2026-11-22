@@ -1,7 +1,8 @@
-import { painter, Alignment, AlignmentLine, Arrangement, ContentScale, M, type BoxHandle, type ColumnHandle, type FlowColumnHandle, type FlowRowHandle, type LazyItemHandle, type RowHandle } from '@canton/framework/ui'
+import { painter, Alignment, AlignmentLine, Arrangement, ContentScale, M, type BoxHandle, type ColumnHandle, type FlowColumnHandle, type FlowRowHandle, type LazyGridItemHandle, type LazyItemHandle, type RowHandle } from '@canton/framework/ui'
 import { Column, Image, Input, Text, type BoxProps, type ColumnProps, type ImageProps, type InputProps, type RowProps, type TextProps } from '@canton/framework/foundation'
 import { createScrollState, ref, type PropType, type ArrangableProps } from '@canton/framework'
 import { defineArrangable, callArrangable } from '@canton/framework/internal'
+import { spring, tween } from '@canton/framework/animation'
 
 const text = ref('原生输入')
 const inputProps = { value: '初始内容', onSubmit: (value: string) => { text.value = value } } satisfies InputProps
@@ -42,6 +43,11 @@ column.weight(1).then(column.align(Alignment.End))
 flowRow.fillMaxRowHeight(0.5).then(flowRow.alignByBaseline())
 flowColumn.fillMaxColumnWidth().then(flowColumn.weight(1))
 lazyItem.fillParentMaxSize().then(lazyItem.fillParentMaxWidth(0.5)).then(lazyItem.fillParentMaxHeight())
+declare const gridItem: LazyGridItemHandle
+lazyItem.animateItem().then(lazyItem.animateItem({ fadeInSpec: null, placementSpec: tween({ durationMillis: 200 }) }))
+gridItem.animateItem({ fadeOutSpec: spring() })
+// @ts-expect-error 网格项没有按视口填充（对齐 Compose 的 LazyGridItemScope）
+gridItem.fillParentMaxSize()
 // @ts-expect-error Box 的 Handle 要求二维对齐
 box.align(Alignment.Top)
 // @ts-expect-error Box 不分配权重

@@ -257,7 +257,7 @@ namespace canton::core {
         if (node.baseline >= 0) node.baseline += instance.childOffset.y;
         if (node.lastBaseline >= 0) node.lastBaseline += instance.childOffset.y;
         if (const auto* animation = std::get_if<AnimateContentSizeModifier>(&instance.descriptor.value)) {
-            if (instance.sizeAnimation.initialized && (instance.sizeAnimation.running || instance.sizeAnimation.target != measured || instance.sizeAnimation.spec != animation->animationSpec)) ++counters_.animationSamples;
+            if (instance.sizeAnimation.initialized && (instance.sizeAnimation.running() || instance.sizeAnimation.target() != measured || instance.sizeAnimation.spec() != animation->animationSpec)) ++counters_.animationSamples;
             measured = instance.sizeAnimation.update(measured, animation->animationSpec, tree.frameTimeMillis());
             measured.width = clamp(measured.width, constraints.minWidth, constraints.maxWidth);
             measured.height = clamp(measured.height, constraints.minHeight, constraints.maxHeight);

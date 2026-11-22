@@ -72,6 +72,49 @@ namespace canton::quickjs {
         return value.get();
     }
 
+    bool QuickJsModifierReader::readAnimationSpec(JSValueConst spec, canton::core::AnimationSpec& input) {
+        const auto kind = requiredStringField(spec, "kind", "animationSpec");
+        const auto fields = kind == "tween" ? std::initializer_list<std::string_view>{"kind", "durationMillis", "delayMillis", "x1", "y1", "x2", "y2", "iterations", "repeatMode"} : kind == "spring" ? std::initializer_list<std::string_view>{"kind", "stiffness", "dampingRatio", "visibilityThreshold"} : std::initializer_list<std::string_view>{"kind", "delayMillis", "iterations", "repeatMode"};
+        if (!fieldsMatch(context_, spec, fields, "animationSpec")) {
+            failed_ = true;
+            return false;
+        }
+        if (kind == "tween")
+            input.kind = canton::core::AnimationKind::Tween;
+        else if (kind == "spring")
+            input.kind = canton::core::AnimationKind::Spring;
+        else if (kind == "snap")
+            input.kind = canton::core::AnimationKind::Snap;
+        else {
+            (void)throwTypeError("动画规格类型未定义");
+            return false;
+        }
+        input.durationMillis = numberField(spec, "durationMillis", 300);
+        input.delayMillis = numberField(spec, "delayMillis", 0);
+        input.stiffness = numberField(spec, "stiffness", 400);
+        input.dampingRatio = numberField(spec, "dampingRatio", 1);
+        input.threshold = numberField(spec, "visibilityThreshold", 0.01f);
+        input.bezier = {numberField(spec, "x1", 0.4f), numberField(spec, "y1", 0), numberField(spec, "x2", 0.2f), numberField(spec, "y2", 1)};
+        double iterations = 1;
+        ScopedValue iterationValue(context_, JS_GetPropertyStr(context_, spec, "iterations"));
+        if (!JS_IsUndefined(iterationValue.get()) && (!JS_IsNumber(iterationValue.get()) || JS_ToFloat64(context_, &iterations, iterationValue.get()) < 0)) {
+            (void)throwTypeError("动画重复次数必须是数字");
+            return false;
+        }
+        if (!std::isfinite(iterations) || iterations < 1 || iterations > 2147483647.0 || std::floor(iterations) != iterations) {
+            (void)throwTypeError("动画重复次数必须是正整数");
+            return false;
+        }
+        input.iterations = static_cast<int>(iterations);
+        const auto repeatMode = reader_.stringField(spec, "repeatMode", "restart");
+        if (repeatMode != "restart" && repeatMode != "reverse") {
+            (void)throwTypeError("动画重复模式未定义");
+            return false;
+        }
+        input.reverse = repeatMode == "reverse";
+        return true;
+    }
+
     float QuickJsModifierReader::numberField(JSValueConst object, const char* key, float fallback) const {
         ScopedValue value(context_, JS_GetPropertyStr(context_, object, key));
         if (JS_IsUndefined(value.get())) return fallback;
@@ -374,47 +417,23 @@ namespace canton::quickjs {
                     (void)throwTypeError("animateContentSize 需要 animationSpec 对象");
                     return {};
                 }
-                const auto kind = requiredStringField(spec.get(), "kind", "animationSpec");
-                const auto fields = kind == "tween" ? std::initializer_list<std::string_view>{"kind", "durationMillis", "delayMillis", "x1", "y1", "x2", "y2", "iterations", "repeatMode"} : kind == "spring" ? std::initializer_list<std::string_view>{"kind", "stiffness", "dampingRatio", "visibilityThreshold"} : std::initializer_list<std::string_view>{"kind", "delayMillis", "iterations", "repeatMode"};
-                if (!fieldsMatch(context_, spec.get(), fields, "animationSpec")) {
-                    failed_ = true;
-                    return {};
-                }
-                if (kind == "tween")
-                    item.animationSpec.kind = canton::core::AnimationKind::Tween;
-                else if (kind == "spring")
-                    item.animationSpec.kind = canton::core::AnimationKind::Spring;
-                else if (kind == "snap")
-                    item.animationSpec.kind = canton::core::AnimationKind::Snap;
-                else {
-                    (void)throwTypeError("动画规格类型未定义");
-                    return {};
-                }
-                auto& input = item.animationSpec;
-                input.durationMillis = numberField(spec.get(), "durationMillis", 300);
-                input.delayMillis = numberField(spec.get(), "delayMillis", 0);
-                input.stiffness = numberField(spec.get(), "stiffness", 400);
-                input.dampingRatio = numberField(spec.get(), "dampingRatio", 1);
-                input.threshold = numberField(spec.get(), "visibilityThreshold", 0.01f);
-                input.bezier = {numberField(spec.get(), "x1", 0.4f), numberField(spec.get(), "y1", 0), numberField(spec.get(), "x2", 0.2f), numberField(spec.get(), "y2", 1)};
-                double iterations = 1;
-                ScopedValue iterationValue(context_, JS_GetPropertyStr(context_, spec.get(), "iterations"));
-                if (!JS_IsUndefined(iterationValue.get()) && (!JS_IsNumber(iterationValue.get()) || JS_ToFloat64(context_, &iterations, iterationValue.get()) < 0)) {
-                    (void)throwTypeError("动画重复次数必须是数字");
-                    return {};
-                }
-                if (!std::isfinite(iterations) || iterations < 1 || iterations > 2147483647.0 || std::floor(iterations) != iterations) {
-                    (void)throwTypeError("动画重复次数必须是正整数");
-                    return {};
-                }
-                input.iterations = static_cast<int>(iterations);
-                const auto repeatMode = reader_.stringField(spec.get(), "repeatMode", "restart");
-                if (repeatMode != "restart" && repeatMode != "reverse") {
-                    (void)throwTypeError("动画重复模式未定义");
-                    return {};
-                }
-                input.reverse = repeatMode == "reverse";
+                if (!readAnimationSpec(spec.get(), item.animationSpec)) return {};
                 item.clip = boolField(payload, "clip", true);
+                result.push_back({item, key});
+            } else if (type == "animateItem") {
+                // 三种动画各自可关：对应字段给 null 就不做
+                canton::core::AnimateItemModifier item;
+                const std::pair<const char*, std::optional<canton::core::AnimationSpec>*> specs[]{{"fadeInSpec", &item.fadeIn}, {"placementSpec", &item.placement}, {"fadeOutSpec", &item.fadeOut}};
+                for (const auto& [name, target] : specs) {
+                    ScopedValue spec(context_, JS_GetPropertyStr(context_, payload, name));
+                    if (JS_IsNull(spec.get())) continue;
+                    if (!JS_IsObject(spec.get()) || JS_IsArray(spec.get())) {
+                        (void)throwTypeError("animateItem 的动画规格需要对象或 null");
+                        return {};
+                    }
+                    target->emplace();
+                    if (!readAnimationSpec(spec.get(), **target)) return {};
+                }
                 result.push_back({item, key});
             } else if (type == "text" || type == "textField") {
                 canton::core::TextModifier text;
@@ -780,4 +799,3 @@ namespace canton::quickjs {
         return result;
     }
 }
-

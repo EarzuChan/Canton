@@ -5,6 +5,7 @@ import { nativeDependencyManifest } from "../../CliMetadata.ts"
 import { sourceSpecSchema } from "./SourceSpec.ts"
 
 const pinnedSourceSchema = sourceSpecSchema.required({ commit: true })
+// 清单里只取源码的 miniz、lunasvg 没有在这里声明，由 scripts/native-source-cache.ts 直接读清单取用；CLI 属 M8 重造，届时一并收进来
 const manifestSchema = z.object({ schema: z.literal(1), quickjs_ng: pinnedSourceSchema })
 export type NativeDependencies = z.infer<typeof manifestSchema>
 

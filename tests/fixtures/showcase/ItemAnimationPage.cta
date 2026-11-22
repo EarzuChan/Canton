@@ -1,0 +1,38 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+        <Text :text="`Lazy items ${items.map(item => item.id).join(' ')}`" :style="title" />
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <!-- 删一项、插一项、挪一项：被删的原地淡出，新来的淡入，其余滑到新位置 -->
+            <LazyColumn :items="items" :itemKey="keyOf" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazy-item-handle>
+                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(34.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(4.dp))" &box-handle>
+                    <Text :text="`item ${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
+                </Box>
+            </LazyColumn>
+            <!-- 网格项的 Handle 同样能做项动画 -->
+            <LazyVerticalGrid :items="items" :itemKey="keyOf" :cells="GridCells.Fixed(3)" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazy-item-handle>
+                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(56.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &box-handle>
+                    <Text :text="`${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
+                </Box>
+            </LazyVerticalGrid>
+        </Row>
+    </Column>
+</template>
+
+<script>
+import { computed } from '@canton/framework'
+import { M, Alignment, Arrangement, GridCells, rounded, Color } from '@canton/framework/ui'
+import { linearEasing, tween } from '@canton/framework/animation'
+import { body, title } from './theme.ts'
+
+const palette = { panel: Color(0xff1e293b), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24), green: Color(0xff34d399), violet: Color(0xffa78bfa) }
+
+const props = defineProps<{ step: number }>()
+type Item = { id: number }
+const colors = [palette.sky, palette.pink, palette.amber, palette.green, palette.violet]
+const keyOf = (item: Item) => item.id
+// 三种动画都用 400 毫秒线性，测试程序在固定时刻取帧
+const linear = tween({ durationMillis: 400, easing: linearEasing })
+const specs = { fadeInSpec: linear, placementSpec: linear, fadeOutSpec: linear }
+// 指令数值为 0 时是初始顺序；大于 0 时删掉 2、在第三位插入 9、把 7 挪到 4 前面
+const items = computed<Item[]>(() => (props.step > 0 ? [1, 3, 9, 7, 4, 5, 6, 8] : [1, 2, 3, 4, 5, 6, 7, 8]).map(id => ({ id })))
+</script>

@@ -34,6 +34,7 @@ inline constexpr std::string_view fillCrossAxisFields[]{"fraction"};
 inline constexpr std::string_view fillParentMaxWidthFields[]{"fraction"};
 inline constexpr std::string_view fillParentMaxHeightFields[]{"fraction"};
 inline constexpr std::string_view fillParentMaxSizeFields[]{"fraction"};
+inline constexpr std::string_view animateItemFields[]{"fadeInSpec", "placementSpec", "fadeOutSpec"};
 inline constexpr std::string_view offsetFields[]{"x", "y"};
 inline constexpr std::string_view absoluteOffsetFields[]{"x", "y"};
 inline constexpr std::string_view graphicsLayerFields[]{"translationX", "translationY", "scaleX", "scaleY", "rotationZ", "transformOrigin", "alpha", "clip"};
@@ -105,6 +106,7 @@ inline constexpr ModifierProtocolEntry modifierProtocolEntries[]{
     {"fillParentMaxWidth", fillParentMaxWidthFields, {}},
     {"fillParentMaxHeight", fillParentMaxHeightFields, {}},
     {"fillParentMaxSize", fillParentMaxSizeFields, {}},
+    {"animateItem", animateItemFields, {}},
     {"offset", offsetFields, {}},
     {"absoluteOffset", absoluteOffsetFields, {}},
     {"graphicsLayer", graphicsLayerFields, {}},

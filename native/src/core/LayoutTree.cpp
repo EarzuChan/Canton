@@ -1,4 +1,5 @@
 #include <core/LayoutTree.h>
+#include <core/LazyLayout.h>
 
 #include <core/PropSchema.h>
 #include <core/SlotUpdate.h>
@@ -264,15 +265,19 @@ namespace canton::core {
         std::size_t count = 0;
         for (const auto& [_, node] : nodes_)
             for (const auto& instance : node.modifier.elements())
-                if (std::holds_alternative<AnimateContentSizeModifier>(instance.descriptor.value) && instance.sizeAnimation.running) ++count;
+                if (std::holds_alternative<AnimateContentSizeModifier>(instance.descriptor.value) && instance.sizeAnimation.running()) ++count;
+        for (const auto& [_, node] : nodes_)
+            if (node.lazy) count += node.lazy->runningItemAnimations();
         return count;
     }
 
     void LayoutTree::advanceAnimations(double timeMillis) {
         frameTimeMillis_ = timeMillis;
         for (const auto& [id, node] : nodes_) {
+            // Lazy 项动画在绘制片段这一层，只需重建容器的片段
+            if (node.lazy && node.lazy->runningItemAnimations()) invalidateNode(id, DirtyFlag::Paint);
             for (const auto& instance : node.modifier.elements()) {
-                if (std::holds_alternative<AnimateContentSizeModifier>(instance.descriptor.value) && instance.sizeAnimation.running) {
+                if (std::holds_alternative<AnimateContentSizeModifier>(instance.descriptor.value) && instance.sizeAnimation.running()) {
                     invalidateNode(id, DirtyFlag::Layout);
                     break;
                 }

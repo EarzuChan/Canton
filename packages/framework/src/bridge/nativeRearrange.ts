@@ -437,6 +437,7 @@ const descriptorFields: Readonly<Record<string, readonly string[]>> = {
     background: ['brush', 'shape'], border: ['brush', 'shape'], clip: ['shape'], graphicsLayer: ['transformOrigin'],
     text: ['style'], textField: ['textStyle'], paint: ['painter', 'colorFilter'],
     animateContentSize: ['animationSpec'],
+    animateItem: ['fadeInSpec', 'placementSpec', 'fadeOutSpec'],
 }
 
 function sameModifierElement(left: ModifierElement, right: ModifierElement): boolean {

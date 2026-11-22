@@ -26,6 +26,8 @@ namespace canton::quickjs {
         [[nodiscard]] JSValueConst payloadFor(JSValueConst element, ScopedValue& value, std::string_view type);
         [[nodiscard]] float numberField(JSValueConst object, const char* key, float fallback = 0.0f) const;
         [[nodiscard]] bool boolField(JSValueConst object, const char* key, bool fallback) const;
+        // 读 tween、spring、snap 三种动画规格；失败时已抛出 JS 异常
+        [[nodiscard]] bool readAnimationSpec(JSValueConst spec, canton::core::AnimationSpec& input);
         [[nodiscard]] float requiredNumberField(JSValueConst object, const char* key, std::string_view owner);
         [[nodiscard]] std::string requiredStringField(JSValueConst object, const char* key, std::string_view owner);
 
@@ -58,4 +60,3 @@ namespace canton::quickjs {
         bool failed_ = false;
     };
 }
-

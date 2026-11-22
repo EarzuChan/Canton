@@ -6,7 +6,7 @@ import { locateTool } from "../cli/src/feature/platform/ToolLocator.ts"
 import { windowsObjectPathMax } from "../cli/src/CliMetadata.ts"
 import { repoRoot } from "./common.ts"
 import { NativeBuildTree } from "../cli/src/feature/cmake/NativeBuildTree.ts"
-import { cachedNativeDefinitions } from "./native-source-cache.ts"
+import { cachedNativeDefinitions, sourceOnlyDependencies } from "./native-source-cache.ts"
 import { BuildReferences } from "../cli/src/feature/source/BuildReferences.ts"
 import { claimNativeVerification, nativeSessionRun, currentNativeSession } from "./native-session.ts"
 
@@ -54,7 +54,7 @@ export async function configureNativeBuild(source: string, build: string, flavor
     await claimNativeVerification(build)
     const args = ["-S", resolve(source), "-B", resolve(build), "-G", "Ninja", `-DCMAKE_MAKE_PROGRAM=${tools.ninja}`, `-DCMAKE_BUILD_TYPE=${flavor}`, `-DCMAKE_CXX_COMPILER=${compiler}`, `-DCMAKE_C_COMPILER=${compiler}`, `-DCMAKE_OBJECT_PATH_MAX=${windowsObjectPathMax}`]
     const requested: Record<string, string> = {}
-    for (const key of ["CANTON_QUICKJS_NG_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_QUICKJS_NG"]) if (process.env[key]) requested[key] = process.env[key]
+    for (const key of ["CANTON_QUICKJS_NG_SOURCE_DIR", "FETCHCONTENT_SOURCE_DIR_QUICKJS_NG", ...sourceOnlyDependencies.map(name => `FETCHCONTENT_SOURCE_DIR_${name.toUpperCase()}`)]) if (process.env[key]) requested[key] = process.env[key]
     for (const definition of definitions) {
         const match = definition.match(/^-D([^=]+)=(.*)$/s)
         if (!match) throw new Error(`不支持的原生验收定义：${definition}`)

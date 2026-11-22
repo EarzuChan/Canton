@@ -1,0 +1,51 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+        <Text text="Images" :style="title" />
+        <!-- 位图：固有尺寸、三种内容缩放、圆形裁剪 -->
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+            <Image :painter="photo" />
+            <Image :painter="photo" contentScale="Fit" :modifier="M.size(80.dp, 80.dp).background(palette.panel)" />
+            <Image :painter="photo" contentScale="Crop" :modifier="M.size(80.dp, 80.dp)" />
+            <Image :painter="photo" contentScale="FillBounds" :modifier="M.size(80.dp, 80.dp)" />
+            <Image :painter="photo" contentScale="Crop" :modifier="M.size(64.dp, 64.dp).clip(CircleShape)" />
+        </Row>
+        <!-- SVG：放大不糊；Icon 着色；半透明 -->
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <Image :painter="logo" :modifier="M.size(32.dp, 32.dp)" />
+            <Image :painter="logo" :modifier="M.size(64.dp, 64.dp)" />
+            <Image :painter="logo" :modifier="M.size(112.dp, 112.dp)" />
+            <Icon :painter="logo" :tint="palette.amber" :modifier="M.size(48.dp, 48.dp)" />
+            <Image :painter="logo" :alpha="0.4" :modifier="M.size(48.dp, 48.dp)" />
+            <Image :painter="logo" :modifier="M.size(48.dp, 48.dp).graphicsLayer({ rotationZ: 30 })" />
+        </Row>
+        <!-- filmstrip 选帧、九宫格与平铺（经 Canvas 的 drawPainter） -->
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+            <Image c-for="frame in [0, 1, 2, 3]" :key="frame" :painter="frames[frame]!" :modifier="M.size(40.dp, 40.dp)" />
+            <Canvas :modifier="M.size(160.dp, 60.dp)" :onDraw="drawPanel" />
+            <Canvas :modifier="M.size(120.dp, 60.dp)" :onDraw="drawTiles" />
+        </Row>
+        <Text text="missing resources draw nothing" :style="caption" />
+    </Column>
+</template>
+
+<script>
+import { M, Arrangement, CircleShape, filmstrip, painter, Color } from '@canton/framework/ui'
+import type { DrawScope } from '@canton/framework/ui'
+import { caption, title } from './theme.ts'
+
+const palette = { panel: Color(0xff1e293b), amber: Color(0xfffbbf24) }
+
+const photo = painter('/images/photo.png')
+const logo = painter('/images/logo.svg')
+const panel = painter('/images/panel.png')
+const strip = filmstrip(painter('/images/frames.png'), { frames: 4, orientation: 'horizontal' })
+const frames = [0, 1, 2, 3].map(frame => strip.frame(frame))
+
+function drawPanel(scope: DrawScope) {
+    scope.drawPainter(panel, { ninePatch: { left: 12, top: 12, right: 12, bottom: 12 } })
+}
+
+function drawTiles(scope: DrawScope) {
+    scope.drawPainter(panel, { tile: true })
+}
+</script>

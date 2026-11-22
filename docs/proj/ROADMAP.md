@@ -4,8 +4,8 @@
 > - 每个里程碑聚焦单一专项、按严格前后置依赖依次推进。
 > - 正式示例工程到 M8 才建立，自始由 Canton CLI 托管：主示例 `demo/center`（Canton Center，启用 `native/` 的全能力 Gallery / Playground），以及极简纯 TS 工程 `demo/hello`（专门守住并验收“零 C++/CMake/MSVC 环境”的默认体验）。应用怎么摆放宿主、按什么配置启动和加载归 CLI 管，在 CLI 就绪前不为示例另开专用的启动通道。
 > - M3–M7 各期用 `tests/fixtures/` 下的验收夹具验证。夹具是测试资产，不算真·Demo级“完整”工程，宿主里不得出现只为夹具存在的分支或参数。同一份夹具有两种跑法：
->   - **开窗把玩**：仓库脚本按正式加载规矩（`CANTON_DEV_*`）拉起宿主，弹出真窗口，可上手操作、改 `.cta` 热更新。主人的验收以此为准，不需要截图。
->   - **无头回归**：测试程序在 WARP 下离屏渲染，做像素比对并可输出截图，供自动化与 AI 验收使用。
+>   - **无头回归**：测试程序离屏渲染，做像素比对并输出截图。无头只是不开窗，显卡照常可用：基线用 WARP 出（各机器结果一致），同一批用例再在硬件显卡上复跑。M3 没有输入，主人的验收看截图和自动化结果。
+>   - **开窗把玩**：仓库脚本按正式加载规矩（`CANTON_DEV_*`）拉起宿主，弹出真窗口，改 `.cta` 热更新。M3 的窗口只显示、不可交互；M4 接上输入后可上手操作，此后主人的验收以把玩为准。
 > - 与验收无关的随手试验放在不进 Git 的临时目录。
 
 ## M0：设定冻结与架构蓝图（已完成）
@@ -55,23 +55,23 @@
 
 ---
 
-## M3：D3D11 + DirectWrite 基础渲染与首屏闭环（ADR B1：6 基础）
+## M3：D3D11 + DirectWrite 基础渲染与首屏闭环（ADR B1：6 基础）：已完成
 
-目标：建成纯 D3D11 2D 渲染管线与 DirectWrite 文字字形图集，配合最小 Win32 承载窗打通从 `.cta` 编辑到原生像素上屏与 Live HMR 的完整可视化闭环。
+目标：建成纯 D3D11 2D 渲染管线与 DirectWrite 文字字形图集，配合最小 Win32 承载窗打通从 `.cta` 编辑到原生像素上屏与 Live HMR 的完整可视化闭环。施工清单见 [m3.md](m3.md)。
 
 范围：
 - **`native/src/d3d11/` 基础渲染**：纯 D3D11 2D 批渲染（矩形、分角圆角、椭圆、边框、渐变、内外阴影、图片/九宫格/像素缓冲、任意矢量 `Path` 覆盖率/三角化与裁剪、Canvas 指令流回放）；DXGI Flip Model + DirectComposition 呈现；预乘 Alpha sRGB（`B8G8R8A8_UNORM`）。
 - **文本引擎**：DirectWrite 排版接入 `TextLayoutService` 与 GPU 字形图集（Atlas），支持字体加载与预加载屏障。
 - **稳健性**：Feature Level 11_0 + WARP 透明回退与 `DEVICE_REMOVED`/`DEVICE_RESET` 自动重建。
-- **宿主条件编译与运行时实装**：补齐 `native/src/runtime/` 的 Windows 原生工具替换（`UiPackage` ZIP/JSON/`BCrypt`、Live WinSock/WinHTTP 客户端、WIC/SVG 图像解码）；跑通 `CANTON_ENABLE_DEV` 条件编译、`CANTON_DEV_*` 加载规矩（`lfd`/`live`/`dist`）与最小 Win32 承载窗 + Vite Live HMR。
-- **夹具的两种跑法**：开窗把玩的启动脚本（起 Vite、注入 `CANTON_DEV_*`、拉起宿主）；无头回归的测试程序直接链接渲染库，在 WARP 下离屏渲染、读回像素做比对并可存成截图，不经宿主参数。
+- **宿主条件编译与运行时实装**：补齐 `native/src/runtime/` 的 Windows 原生工具替换（`UiPackage` ZIP/JSON/`BCrypt`、Live WinSock/WinHTTP 客户端、WIC/SVG 图像解码）；跑通 `CANTON_ENABLE_DEV` 条件编译、`CANTON_DEV_*` 加载规矩（`lfd`/`live`/`dist`）与最小 Win32 承载窗 + Vite Live HMR。本期窗口只显示、可缩放和关闭，不接输入；密度固定 1 倍，DPI 整体留给 M4。
+- **夹具的两种跑法**：无头回归的测试程序直接链接渲染库，离屏渲染、读回像素做比对并存成截图，不经宿主参数，WARP 出基线、硬件显卡复跑；开窗的启动脚本（起 Vite、注入 `CANTON_DEV_*`、拉起宿主）。
 - **承接 M2**：从 `.cta` 夹具经 QuickJS 进 core 场景树，断言布局结果与错误父级报错的贯通用例；首屏点亮后补 Lazy 项的 `animateItem`（位移动画、淡入淡出），网格项的 Handle 随之交付。
 
 验收夹具：
 - **首屏点亮**：夹具跑起基础布局、文本与字体、图片、滚动/Lazy、动画、Canvas 各场景，支持改 `.cta` 热更新、错误屏与恢复。
 
 验收：
-- 在真实 Win11 桌面与无头 WARP 回归环境中稳定渲染上述图元与文字，改 `.cta` 可秒级热更，设备重置可自动恢复。
+- 在真实 Win11 桌面与无头回归环境（WARP 与硬件显卡）中稳定渲染上述图元与文字，改 `.cta` 可秒级热更，设备重置可自动恢复。
 
 ---
 
@@ -81,14 +81,15 @@
 
 范围：
 - **多窗口与入口模型**：落地 `appBuilder(App).build()`、`<App>` 与 `<Window>` 生命周期、画区作用域自然分界、每窗独立 `NativeScene`/`SceneFramePipeline`/`Density`/`FocusManager`、`WindowState` 与 `WindowHandle`、私有 `WeakMap` → `WindowId` → `HWND` 映射、Win32 `owner` 与非阻塞模态（`EnableWindow` + 模态锁计数 + 防焦点跌落顺序）。
-- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic）与 `cornerPreference` 静默回退、Per-Monitor V2 DPI 与 `WM_DPICHANGED`、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与防复古按钮闪现、`AUMID` 与三层任务栏身份。
-- **原生输入完善**：Win32 TSF/IMM 中文与组合输入法接入 `InputTextSession`；扶正并实测 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
+- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic）与 `cornerPreference` 静默回退、Per-Monitor V2 DPI 与 `WM_DPICHANGED`（含把窗口缩放比交给脚本侧 `Density` 的通道，M3 固定 1 倍）、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与防复古按钮闪现、`AUMID` 与三层任务栏身份。
+- **原生输入**：鼠标、滚轮、键盘、光标形状、`Input` 的文本输入与剪贴板接入宿主窗口（M3 的窗口不接输入）；Win32 TSF/IMM 中文与组合输入法接入 `InputTextSession`；扶正并实测 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
+- **M3 移交**：依赖按键的调试动作（手动重载、帧率徽标与诊断叠层的快捷键）；恢复 M1 删掉的 `canton_focus_input`、`canton_scroll_input`，以及 `canton_frame_submission`、Lazy 端到端里依赖输入的部分（Input 焦点、拖选、IME 在数据重排中保持）。
 
 验收夹具：
 - 「窗口与模态」夹具：**自绘标题栏 + Mica 背景** 的桌面壳，多窗共享响应式状态、同帧切窗不误退、嵌套模态锁、无框浮窗、跨不同 DPI 显示器拖拽与中文 IME 验收。
 
 验收：
-- 多窗口创建/销毁/同帧切换、`onCloseRequest` 拦截、嵌套模态、Win11 Snap Layout 悬停最大化键、跨屏 DPI 切换与 IME 实机通过。
+- 多窗口创建/销毁/同帧切换、`onCloseRequest` 拦截、嵌套模态、Win11 Snap Layout 悬停最大化键、鼠标/滚轮/键盘基础输入、跨屏 DPI 切换与 IME 实机通过。
 
 ---
 
@@ -99,6 +100,7 @@
 范围：
 - **`RuntimeEffect` & `RuntimeShader`**：100% 标准 HLSL SM 5.0 像素着色器 + `D3DReflect` 自动解析 `cbuffer` 与纹理槽；Dev 期 `d3dcompiler_47.dll` 编译与 Vite `.hlsl` 热更新（报错保留上一版）；Dist 期静态 `.hlsl` 预编译 DXBC 与动态源码兜底。
 - **双落点与离屏原语**：`Brush.shaderBrush`、`RenderEffect`（GPU 两 Pass `blur`、`colorFilter`、`shader`、`chain` + 离屏 RT 池）、`RenderLayer`（`createRenderLayer` / `recordLayer` / `drawLayer`）、`BlendMode` 与 `onGloballyPositioned`。
+- **M3 移交**：用户着色器的运行期编译（M3 的内置着色器在构建期编译嵌入）；组透明度（M3 的 `alpha` 与 `animateItem` 淡入淡出按元素分别乘透明度）。
 
 验收夹具：
 - 「着色器与视觉特效」夹具，并以独立旁包形态跑通**液态玻璃 / 折射模糊**实景演示，验收热更与帧率表现。
@@ -131,6 +133,7 @@
 范围：
 - **2×2 宿主扩展端就位**：完善 `CANTON_ENABLE_NATIVE_EXT=1` 的 `ext` 宿主与 C ABI 导出函数表（`canton_abi.h`），保证 `mini` 版（`EXT=0`）物理不含扩展加载路径且 4 份宿主共享同一 `QuickJsBuildIdentity`。
 - **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`（回调形式的 `alignBy` 随它一起定）、同步 `ctx.assets()`、`ctx.paths()` 与 `canton::fs`。
+- **M3 移交**：`drawNative` 的后端实现（M3 的渲染器遇到它不绘制，记诊断日志）；`EXT=1` 的两份宿主。
 - **防劫持安全加载**：清单声明扩展 DLL 相对路径与 SHA-256，Dist 加载前校验哈希并限定 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`，握手校验 ABI 版本与结构体尺寸。
 
 验收夹具：
@@ -147,6 +150,7 @@
 
 范围：
 - **项目模型与按需环境**：新 `canton.project.yaml` / `canton.local.yaml` 与受管区（去音频插件、去 macOS、去 `adopt`）；纯 TS 工程零 VS/MSVC/CMake/Git 门槛，启用 `native/` 后由 `canton sync` 按需校验工具链并同步精简 `native/CMakeLists.txt`。
+- **M3 移交**：`cli/src/feature/source/NativeDependencies.ts` 的清单类型收进只取源码的 `miniz`、`lunasvg`（目前由 `scripts/native-source-cache.ts` 直接读清单）。
 - **预构建制品分发与缓存**：按框架版本同步缓存 2×2 预编译宿主、`canton_ui_bytecode.exe` 与 `canton-sdk`，校验 SHA-256、协议号与 `QuickJsBuildIdentity`；无 `native/` 时直接用预构建工具编译 `.cbc` 字节码。
 - **`dev` / `build` / `pack` 闭环**：
   - `dev` 落实 `--flavor debug|release` × `--source lfd|live|dist` 规矩、注入 `CANTON_DEV_*` 与重定位目录，纯 TS 零编译秒启，有 `native/` 时仅快编用户扩展 DLL；
@@ -163,6 +167,7 @@ Demo 建立与总验收：
 - **桌面交互补齐**：系统原生文件对话框（`IFileOpenDialog` / `IFileSaveDialog`）、剪贴板与富文本/图片读写、文件和内容的拖入脱出（`DragAndDrop`）。
 - **Inspector / DevTools 与 Profiler**：基于多窗口能力构建独立窗口 Inspector（节点树、布局边界、脏区原因、着色器/离屏层检视）。
 - **稳定化与压测**：长稳 HMR 重载、QuickJS 内存回收、大树布局与 Lazy 压测、文档补齐。
+- **按脏区局部呈现**（M3 每帧整幅重绘）；SVG 里的 `<text>` 接 Canton 的绘字管线（M3 的 lunasvg 不出字）；`animateItem` 的命中区域跟随动画。
 - **编辑器支持**：VSCode 等主流编辑器的 `.cta` 语法高亮与语言服务插件。
 
 ---

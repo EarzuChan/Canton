@@ -5,7 +5,7 @@ string(JSON _canton_dependency_schema GET "${_canton_dependencies}" schema)
 if(NOT _canton_dependency_schema EQUAL 1)
     message(FATAL_ERROR "Unsupported Canton native dependency manifest schema")
 endif()
-foreach(_canton_dependency IN ITEMS quickjs_ng)
+foreach(_canton_dependency IN ITEMS quickjs_ng miniz lunasvg)
     string(TOUPPER "${_canton_dependency}" _canton_dependency_name)
     string(JSON _canton_repository GET "${_canton_dependencies}" "${_canton_dependency}" repository)
     string(JSON _canton_ref GET "${_canton_dependencies}" "${_canton_dependency}" ref)
@@ -38,6 +38,23 @@ function(canton_reject_unclean_dependency_path path label)
   if(_canton_dep_abs MATCHES "/_deps(/|$)")
     message(FATAL_ERROR "Refusing ${label}='${_canton_dep_abs}'. Use a clean checkout or Canton-owned FetchContent, not another project's CMake _deps cache.")
   endif()
+endfunction()
+
+# 只取源码：不执行依赖自己的构建脚本，由 Canton 挑选要编译的文件
+function(canton_fetch_source name)
+  string(TOUPPER "${name}" _canton_upper)
+  canton_reject_unclean_dependency_path("${FETCHCONTENT_SOURCE_DIR_${_canton_upper}}" "FETCHCONTENT_SOURCE_DIR_${_canton_upper}")
+  if(NOT FETCHCONTENT_SOURCE_DIR_${_canton_upper})
+    message(STATUS "Fetching ${name} ${CANTON_${_canton_upper}_GIT_TAG} from ${CANTON_${_canton_upper}_GIT_REPOSITORY}")
+  endif()
+  FetchContent_Declare(${name}
+    GIT_REPOSITORY "${CANTON_${_canton_upper}_GIT_REPOSITORY}"
+    GIT_TAG "${CANTON_${_canton_upper}_GIT_TAG}"
+    SOURCE_SUBDIR canton-source-only
+  )
+  FetchContent_MakeAvailable(${name})
+  canton_validate_dependency(${_canton_upper} "${${name}_SOURCE_DIR}")
+  set(CANTON_${_canton_upper}_SOURCE_DIR "${${name}_SOURCE_DIR}" CACHE INTERNAL "Pinned ${name} source")
 endfunction()
 
 function(canton_fetch_quickjs_ng)

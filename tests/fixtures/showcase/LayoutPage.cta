@@ -1,0 +1,45 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+        <Text text="Layout" :style="title" />
+        <!-- Row：权重分配与交叉轴对齐 -->
+        <Row :modifier="M.fillMaxWidth().height(56.dp).background(palette.panel, rounded(8.dp)).padding(6.dp)" :horizontalArrangement="Arrangement.spacedBy(6.dp)" &row-handle>
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(palette.sky, rounded(4.dp))" />
+            <Box :modifier="rowHandle.weight(2).height(24.dp).then(rowHandle.align(Alignment.CenterVertically)).background(palette.pink, rounded(4.dp))" />
+            <Box :modifier="M.size(40.dp, 16.dp).then(rowHandle.align(Alignment.Bottom)).background(palette.amber, rounded(4.dp))" />
+        </Row>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <!-- Column：间距排列 -->
+            <Column :modifier="rowHandle.weight(1).height(120.dp).background(palette.panel, rounded(8.dp)).padding(8.dp)" :verticalArrangement="Arrangement.SpaceBetween">
+                <Box c-for="width in [90, 60, 120]" :key="width" :modifier="M.size(width.dp, 20.dp).background(palette.green, rounded(4.dp))" />
+            </Column>
+            <!-- Box：九个对齐位置 -->
+            <Box :modifier="rowHandle.weight(1).height(120.dp).background(palette.panel, rounded(8.dp))" &box-handle>
+                <Box c-for="spot in spots" :key="spot" :modifier="boxHandle.align(Alignment[spot]).padding(6.dp).size(18.dp, 18.dp).background(palette.violet, CircleShape)" />
+            </Box>
+            <!-- FlowRow：自动折行 -->
+            <FlowRow :modifier="rowHandle.weight(1).height(120.dp).background(palette.panel, rounded(8.dp)).padding(8.dp)" :horizontalArrangement="Arrangement.spacedBy(6.dp)" :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                <Box c-for="chip in chips" :key="chip" :modifier="M.size(chip.dp, 18.dp).background(palette.sky, rounded(9.dp))" />
+            </FlowRow>
+        </Row>
+        <!-- 内边距、边框、偏移与层叠次序 -->
+        <Row :modifier="M.fillMaxWidth().height(70.dp)" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().border(2.dp, palette.line, rounded(8.dp)).padding(10.dp).background(palette.pink, rounded(4.dp))" />
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(palette.panel, rounded(8.dp))">
+                <Box :modifier="M.offset({ x: 12.dp, y: 10.dp }).size(50.dp, 36.dp).zIndex(1).background(palette.amber, rounded(6.dp))" />
+                <Box :modifier="M.offset({ x: 40.dp, y: 24.dp }).size(50.dp, 36.dp).background(palette.sky, rounded(6.dp))" />
+            </Box>
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(horizontalGradient([palette.violet, palette.pink]), rounded(8.dp))" />
+        </Row>
+        <Text :text="`viewport fills on resize`" :style="caption" />
+    </Column>
+</template>
+
+<script>
+import { M, Alignment, Arrangement, CircleShape, horizontalGradient, rounded, Color } from '@canton/framework/ui'
+import { caption, title } from './theme.ts'
+
+const palette = { panel: Color(0xff1e293b), line: Color(0xff334155), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24), green: Color(0xff34d399), violet: Color(0xffa78bfa) }
+
+const spots = ['TopStart', 'TopCenter', 'TopEnd', 'CenterStart', 'Center', 'CenterEnd', 'BottomStart', 'BottomCenter', 'BottomEnd'] as const
+const chips = [44, 60, 36, 52, 70, 40, 56, 34]
+</script>

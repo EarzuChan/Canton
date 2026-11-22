@@ -1,0 +1,67 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+        <Text text="Canvas" :style="title" />
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+            <Canvas :modifier="M.size(220.dp, 160.dp).background(palette.panel, rounded(8.dp))" :onDraw="drawChart" />
+            <Canvas :modifier="M.size(220.dp, 160.dp).background(palette.panel, rounded(8.dp))" :onDraw="drawShapes" />
+        </Row>
+        <!-- drawWithContent：内容前后各画一层 -->
+        <Text text="content between two layers" :style="body" :modifier="M.drawWithContent(drawAround).padding(10.dp)" />
+    </Column>
+</template>
+
+<script>
+import { M, Arrangement, Color, Path, linearGradient, rounded, sweepGradient } from '@canton/framework/ui'
+import type { DrawScope } from '@canton/framework/ui'
+import { body, fontFamily, title } from './theme.ts'
+
+const palette = { canvas: Color(0xff0f172a), panel: Color(0xff1e293b), line: Color(0xff334155), muted: Color(0xff94a3b8), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24), green: Color(0xff34d399), violet: Color(0xffa78bfa) }
+
+const samples = [0.2, 0.55, 0.35, 0.8, 0.6, 0.9, 0.45]
+
+function drawChart(scope: DrawScope) {
+    const { width, height } = scope.size
+    const left = 28, bottom = height - 24, top = 16, right = width - 12
+    // 网格线与刻度文字
+    for (let i = 0; i <= 4; i++) {
+        const y = bottom - (bottom - top) * i / 4
+        scope.drawLine({ color: palette.line, startX: left.px, startY: y.px, endX: right.px, endY: y.px, strokeWidth: 1.px })
+        scope.drawText({ text: `${i * 25}`, x: 4.px, y: (y - 6).px, color: palette.muted, fontSize: 9.px, fontFamily })
+    }
+    // 折线下方的渐变面积，再描折线和数据点
+    const step = (right - left) / (samples.length - 1)
+    const area = new Path().moveTo(left, bottom)
+    const line = new Path()
+    samples.forEach((value, index) => {
+        const x = left + step * index, y = bottom - (bottom - top) * value
+        area.lineTo(x, y)
+        if (index === 0) line.moveTo(x, y)
+        else line.lineTo(x, y)
+    })
+    area.lineTo(right, bottom).close()
+    scope.drawPath(area, { brush: linearGradient([0x8038bdf8, 0x0038bdf8], { start: { x: 0, y: 0 }, end: { x: 0, y: 1 } }) })
+    scope.drawPath(line, { color: palette.sky, strokeWidth: 2.px, join: 'round', cap: 'round' })
+    samples.forEach((value, index) => scope.drawCircle({ color: palette.amber, centerX: (left + step * index).px, centerY: (bottom - (bottom - top) * value).px, radius: 3.px }))
+}
+
+function drawShapes(scope: DrawScope) {
+    scope.drawRoundRect({ x: 12.px, y: 12.px, width: 80.px, height: 50.px, radius: 10.px, color: palette.pink })
+    scope.drawOval({ x: 110.px, y: 12.px, width: 90.px, height: 50.px, brush: sweepGradient([palette.sky, palette.violet, palette.pink, palette.sky]) })
+    scope.drawRect({ x: 12.px, y: 76.px, width: 80.px, height: 30.px, color: palette.green, strokeWidth: 3.px })
+    // 裁剪与变换：圆角裁剪里旋转的条纹
+    scope.clipRoundRect({ x: 110.px, y: 76.px, width: 90.px, height: 60.px, radius: 14.px }, () => {
+        scope.drawRect({ x: 110.px, y: 76.px, width: 90.px, height: 60.px, color: palette.canvas })
+        scope.withTransform({ rotationZ: 30, originX: 0.5, originY: 0.5 }, () => {
+            for (let i = 0; i < 12; i++) scope.drawRect({ x: (60 + i * 16).px, y: 30.px, width: 8.px, height: 160.px, color: i % 2 ? palette.amber : palette.violet })
+        })
+    })
+    const heart = new Path().moveTo(52, 150).cubicTo(20, 128, 30, 104, 52, 122).cubicTo(74, 104, 84, 128, 52, 150).close()
+    scope.withTransform({ translationX: 0.px, translationY: (-8).px }, () => scope.drawPath(heart, { color: Color(0xffef4444) }))
+}
+
+function drawAround(scope: DrawScope, drawContent: () => void) {
+    scope.drawRoundRect({ radius: 8.px, brush: linearGradient([palette.violet, palette.pink]) })
+    drawContent()
+    scope.drawLine({ color: palette.amber, startX: 10.px, startY: (scope.size.height - 5).px, endX: (scope.size.width - 10).px, endY: (scope.size.height - 5).px, strokeWidth: 2.px })
+}
+</script>

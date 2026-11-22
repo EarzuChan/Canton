@@ -4,5 +4,15 @@
         "repository": "https://github.com/quickjs-ng/quickjs.git",
         "ref": "v0.14.0",
         "commit": "3c051980ab7e783dfbfb1c70c014ce5e05ecf24c"
+    },
+    "miniz": {
+        "repository": "https://github.com/richgel999/miniz.git",
+        "ref": "3.1.0",
+        "commit": "174573d60290f447c13a2b1b3405de2b96e27d6c"
+    },
+    "lunasvg": {
+        "repository": "https://github.com/sammycage/lunasvg.git",
+        "ref": "v3.5.0",
+        "commit": "83c58df8103dc7dca423dfd824992af94d49bed6"
     }
 }

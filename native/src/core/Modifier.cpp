@@ -34,6 +34,7 @@ namespace canton::core {
             if (std::holds_alternative<TextFieldModifier>(value)) return kMeasure | dirtyMask(DirtyFlag::EventSlot) | dirtyMask(DirtyFlag::Focus);
             if (std::holds_alternative<PaintModifier>(value)) return kMeasure | dirtyMask(DirtyFlag::Resource);
             if (std::holds_alternative<OffsetModifier>(value)) return kPlace;
+            if (std::holds_alternative<AnimateItemModifier>(value)) return kPaint;
             if (std::holds_alternative<PaintStyleSemantics>(value) || std::holds_alternative<EffectModifier>(value)) return kPaint;
             if (std::holds_alternative<DrawModifier>(value)) return kPaint | dirtyMask(DirtyFlag::EventSlot);
             if (std::holds_alternative<InputModifierSemantics>(value)) return kHit | dirtyMask(DirtyFlag::EventSlot) | dirtyMask(DirtyFlag::Focus);
@@ -76,6 +77,7 @@ namespace canton::core {
                 if constexpr (std::is_same_v<T, ZIndexModifier>) return "zIndex";
                 if constexpr (std::is_same_v<T, AnimateContentSizeModifier>) return "animateContentSize";
                 if constexpr (std::is_same_v<T, SemanticsModifier>) return "semantics";
+                if constexpr (std::is_same_v<T, AnimateItemModifier>) return "animateItem";
                 if constexpr (std::is_same_v<T, EffectModifier>) {
                     constexpr std::string_view names[]{"dropShadow", "innerShadow"};
                     return names[static_cast<std::size_t>(input.kind)];
@@ -101,8 +103,17 @@ namespace canton::core {
     }
 
     void validateModifierValue(const ModifierValue& value) {
+        const auto validateSpec = [](const AnimationSpec& spec) {
+            const auto finite = [](float number) {
+                if (!std::isfinite(number)) throw std::invalid_argument("动画规格的数值必须有限");
+            };
+            for (auto value : {spec.durationMillis, spec.delayMillis, spec.stiffness, spec.dampingRatio, spec.threshold}) finite(value);
+            for (auto value : spec.bezier) finite(value);
+            if (spec.durationMillis < 0 || spec.delayMillis < 0 || spec.stiffness <= 0 || spec.dampingRatio <= 0 || spec.threshold <= 0 || spec.bezier[0] < 0 || spec.bezier[0] > 1 || spec.bezier[2] < 0 || spec.bezier[2] > 1) throw std::invalid_argument("Canton invalid content-size animation spec");
+            if (spec.iterations < 1 || spec.kind == AnimationKind::Spring && (spec.iterations != 1 || spec.reverse)) throw std::invalid_argument("有限重复动画需要正次数及 tween 或 snap");
+        };
         std::visit(
-            [](const auto& input) {
+            [&](const auto& input) {
                 using T = std::decay_t<decltype(input)>;
                 if constexpr (std::is_same_v<T, LayoutModifierSemantics>) {
                     for (auto number : {input.padding.start, input.padding.top, input.padding.end, input.padding.bottom, input.value, input.width, input.height, input.fraction, input.minWidth, input.maxWidth, input.minHeight, input.maxHeight, input.scrollValue}) finite(number);
@@ -115,11 +126,10 @@ namespace canton::core {
                     for (auto number : {input.strokeWidth, corners.topStart, corners.topEnd, corners.bottomEnd, corners.bottomStart, input.alpha}) finite(number);
                     if (input.strokeWidth < 0 || corners.topStart < 0 || corners.topEnd < 0 || corners.bottomEnd < 0 || corners.bottomStart < 0 || input.alpha < 0 || input.alpha > 1) throw std::invalid_argument("Canton invalid paint Modifier input");
                 } else if constexpr (std::is_same_v<T, AnimateContentSizeModifier>) {
-                    const auto& spec = input.animationSpec;
-                    for (auto value : {spec.durationMillis, spec.delayMillis, spec.stiffness, spec.dampingRatio, spec.threshold}) finite(value);
-                    for (auto value : spec.bezier) finite(value);
-                    if (spec.durationMillis < 0 || spec.delayMillis < 0 || spec.stiffness <= 0 || spec.dampingRatio <= 0 || spec.threshold <= 0 || spec.bezier[0] < 0 || spec.bezier[0] > 1 || spec.bezier[2] < 0 || spec.bezier[2] > 1) throw std::invalid_argument("Canton invalid content-size animation spec");
-                    if (spec.iterations < 1 || spec.kind == AnimationKind::Spring && (spec.iterations != 1 || spec.reverse)) throw std::invalid_argument("有限重复动画需要正次数及 tween 或 snap");
+                    validateSpec(input.animationSpec);
+                } else if constexpr (std::is_same_v<T, AnimateItemModifier>) {
+                    for (const auto* spec : {&input.fadeIn, &input.placement, &input.fadeOut})
+                        if (*spec) validateSpec(**spec);
                 } else if constexpr (std::is_same_v<T, PaintModifier>) {
                     finite(input.alpha);
                     if (input.alpha < 0 || input.alpha > 1) throw std::invalid_argument("paint alpha 必须在 0..1 之间");

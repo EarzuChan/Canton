@@ -248,6 +248,14 @@ namespace canton::core {
         bool operator==(const AnimateContentSizeModifier&) const = default;
     };
 
+    // Lazy 项的进出场与位移动画，对齐 Compose 的 LazyItemScope.animateItem；某一项为空表示不做这种动画
+    struct AnimateItemModifier {
+        std::optional<AnimationSpec> fadeIn;
+        std::optional<AnimationSpec> placement;
+        std::optional<AnimationSpec> fadeOut;
+        bool operator==(const AnimateItemModifier&) const = default;
+    };
+
     struct PaintModifier {
         PainterSnapshot painter;
         ContentScale contentScale = ContentScale::Fit;
@@ -313,7 +321,7 @@ namespace canton::core {
         bool operator==(const SemanticsModifier&) const = default;
     };
 
-    using ModifierValue = std::variant<LayoutModifierSemantics, PaintStyleSemantics, ClipModifier, InputModifierSemantics, TransformModifierSemantics, OffsetModifier, ParentDataModifierSemantics, ZIndexModifier, AnimateContentSizeModifier, PaintModifier, TextModifier, TextFieldModifier, FocusModifier, DrawModifier, SemanticsModifier, EffectModifier>;
+    using ModifierValue = std::variant<LayoutModifierSemantics, PaintStyleSemantics, ClipModifier, InputModifierSemantics, TransformModifierSemantics, OffsetModifier, ParentDataModifierSemantics, ZIndexModifier, AnimateContentSizeModifier, PaintModifier, TextModifier, TextFieldModifier, FocusModifier, DrawModifier, SemanticsModifier, EffectModifier, AnimateItemModifier>;
 
     struct ModifierDescriptor {
         ModifierValue value;

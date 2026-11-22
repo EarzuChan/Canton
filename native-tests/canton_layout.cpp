@@ -216,7 +216,9 @@ namespace {
         tree.setModifierChain(4, {size(10, 10)});
         LayoutEngine layout;
         layout.layout(tree, 1, {0, 300, 0, 300});
-        const auto line = [&](NodeId id, bool last = false) { return tree.node(id).bounds.y + (last ? tree.node(id).lastBaseline : tree.node(id).baseline); };
+        const auto line = [&](NodeId id, bool last = false) {
+            return tree.node(id).bounds.y + (last ? tree.node(id).lastBaseline : tree.node(id).baseline);
+        };
         check(tree.node(3).lastBaseline > tree.node(3).baseline && tree.node(2).lastBaseline == tree.node(2).baseline, "文本没有给出首行与末行基线");
         check(tree.node(2).bounds.y > 0 && near(line(2), line(3)) && tree.node(4).bounds.y == 0, "Row 没有只让按线对齐的子项共用首行基线");
         check(near(tree.node(1).bounds.height, tree.node(3).bounds.height), "Row 高度没有容纳对齐后的子项");
@@ -296,11 +298,11 @@ namespace {
         check(near(animation.update({10, 20}, spec, 70).width, 5), "repeatable 首周期错误");
         check(near(animation.update({10, 20}, spec, 130).width, 10), "reverse delay 没有保持周期端点");
         check(near(animation.update({10, 20}, spec, 190).width, 5), "reverse 次周期错误");
-        check(animation.update({10, 20}, spec, 1000) == Size{10, 20} && !animation.running, "reverse 偶数终点未抵达逻辑目标");
+        check(animation.update({10, 20}, spec, 1000) == Size{10, 20} && !animation.running(), "reverse 偶数终点未抵达逻辑目标");
         spec.reverse = false;
         spec.iterations = 3;
         animation.update({30, 60}, spec, 1000);
-        check(animation.update({30, 60}, spec, 2000) == Size{30, 60} && !animation.running, "restart 跳帧终点错误");
+        check(animation.update({30, 60}, spec, 2000) == Size{30, 60} && !animation.running(), "restart 跳帧终点错误");
     }
 }
 

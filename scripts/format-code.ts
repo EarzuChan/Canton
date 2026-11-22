@@ -1,5 +1,5 @@
 import ts from 'typescript'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 
@@ -8,7 +8,9 @@ type Edit = { start: number, end: number, text: string }
 const root = resolve(import.meta.dirname, '..')
 const write = process.argv.includes('--write')
 const requested = process.argv.slice(2).filter(argument => argument !== '--write')
-const files = requested.length ? requested : execFileSync('rg', ['--files', 'packages', 'cli', 'scripts', 'tests', 'types', '-g', '*.ts', '-g', '*.mts', '-g', '*.cts', '-g', '*.js', '-g', '*.cta'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/)
+// 受版本管理与未被忽略的新文件；已删除但还在索引里的跳过
+const extensions = ['.ts', '.mts', '.cts', '.js', '.cta']
+const files = requested.length ? requested : execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '--', 'packages', 'cli', 'scripts', 'tests', 'types'], { cwd: root, encoding: 'utf8' }).trim().split(/\r?\n/).filter(file => extensions.some(extension => file.endsWith(extension)) && existsSync(resolve(root, file)))
 
 function parse(source: string, filename: string) {
     return ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, filename.endsWith('.js') ? ts.ScriptKind.JS : ts.ScriptKind.TS)

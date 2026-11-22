@@ -25,6 +25,19 @@ namespace canton::core {
         std::vector<std::uint32_t> pixels;
     };
 
+    // 已解码的位图：预乘 Alpha，每像素 0xAARRGGBB，行优先
+    struct BitmapContent final : PainterContent {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint32_t> pixels;
+    };
+
+    // 矢量图：绘制时按落到屏幕上的像素尺寸栅格化，放大不糊
+    struct VectorContent : PainterContent {
+        // 把固有坐标里的 source 区域画成 width × height 的预乘位图（0xAARRGGBB）
+        [[nodiscard]] virtual std::vector<std::uint32_t> rasterize(Rect source, int width, int height) const = 0;
+    };
+
     // filmstrip 视图：同一张图按帧数等分，frame 选其中一帧；frames 为 1 即整图
     struct PainterSnapshot {
         std::uint64_t identity = 0;

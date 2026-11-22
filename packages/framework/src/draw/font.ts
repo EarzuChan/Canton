@@ -125,8 +125,8 @@ export function defineFontFamily(name: string, options: FontFamilyOptions): Font
             else publish()
             settle()
         }
-        const { ready, ...handle } = native.acquirePainter(location, complete)
-        ;(face as { handle: NativeBindingHandle }).handle = handle
+        const { ready, ...handle } = native.acquirePainter(location, complete);
+        (face as { handle: NativeBindingHandle }).handle = handle
         if (ready) complete(ready)
     }
 

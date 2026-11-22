@@ -290,7 +290,11 @@ namespace canton::core {
         }
         if (changed && !oldAnchor.empty()) {
             const auto found = state.keyToIndex.find(oldAnchor);
-            if (found != state.keyToIndex.end()) offset = lineStart(state, state.itemLines[found->second], policy.beforePadding) + oldAnchorOffset + offset - oldOffset;
+            if (found != state.keyToIndex.end()) {
+                const auto anchored = lineStart(state, state.itemLines[found->second], policy.beforePadding) + oldAnchorOffset + offset - oldOffset;
+                state.placementCompensation += anchored - offset;
+                offset = anchored;
+            }
         }
         const auto requested = state.requestVersion != policy.requestVersion;
         state.requestVersion = policy.requestVersion;
@@ -361,7 +365,11 @@ namespace canton::core {
                 materialize(measured);
                 pending = true;
             }
-            if (!state.lines.empty()) offset += lineStart(state, anchorLine, policy.beforePadding) - previousStart;
+            if (!state.lines.empty()) {
+                const auto shift = lineStart(state, anchorLine, policy.beforePadding) - previousStart;
+                state.placementCompensation += shift;
+                offset += shift;
+            }
             state.contentSize = totalSize(state, policy);
             offset = std::clamp(offset, 0.0f, std::max(0.0f, state.contentSize - viewport));
             if (limited) break;

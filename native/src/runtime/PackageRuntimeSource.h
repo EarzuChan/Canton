@@ -1,8 +1,8 @@
 #pragma once
 
 #include <runtime/AppResolver.h>
-#include <runtime/RuntimePackageLoader.h>
 #include <runtime/LiveModuleClient.h>
+#include <runtime/RuntimePackageLoader.h>
 
 #include <filesystem>
 #include <memory>
@@ -29,7 +29,6 @@ namespace canton::runtime {
 
         bool loaded = false;
         bool pending = false;
-        bool serverUnavailable = false;
         IntentKind intentKind = IntentKind::PackageLoad;
         PackageSource activeSource = PackageSource::None;
         std::filesystem::path packageDir;
@@ -40,25 +39,27 @@ namespace canton::runtime {
         std::unique_ptr<canton::quickjs::QuickJsScriptHost> scriptHost;
     };
 
+    // 按加载策略决定应用从哪里来。Live 客户端由宿主装配时提供，没有它就只有 dist 一种策略可用
     class PackageRuntimeSource final {
        public:
         using LiveClientFactory = std::function<std::unique_ptr<LiveModuleClient>()>;
 
-        PackageRuntimeSource(AppResolver resolver, RuntimePackageLoader loader, LiveClientFactory liveClient)
-            : resolver_(std::move(resolver)), runtimeLoader_(std::move(loader)), liveClient_(std::move(liveClient)) {}
+        PackageRuntimeSource(AppResolver resolver, RuntimePackageLoader loader, LiveClientFactory liveClient = {}) : resolver_(std::move(resolver)), runtimeLoader_(std::move(loader)), liveClient_(std::move(liveClient)) {}
+
         ~PackageRuntimeSource();
 
-        PackageLoadOutcome configure(PackageRuntimeConfig config);
+        PackageLoadOutcome configure(AppSourceConfig config);
         PackageLoadOutcome reload();
-        PackageLoadOutcome reloadFromDevServer();
-        PackageLoadOutcome manualReload(bool toggleLive);
 
-        bool wantsReloadPolling() const;
+        [[nodiscard]] bool usesLive() const noexcept {
+            return static_cast<bool>(devServerClient_);
+        }
+
         std::vector<LiveModulePacket> takeLivePackets();
         PackageLoadOutcome completeLiveLoad(LiveModulePacket packet);
         void sendHotMessages(std::vector<quickjs::HotMessage> messages);
 
-        const PackageRuntimeConfig& config() const noexcept {
+        const AppSourceConfig& config() const noexcept {
             return config_;
         }
 
@@ -66,33 +67,22 @@ namespace canton::runtime {
             return activeSource_;
         }
 
-        bool liveRuntimeEnabled() const noexcept {
-            return liveRuntimeEnabled_;
-        }
-
-        bool lastLiveUnavailable() const noexcept {
-            return lastLiveUnavailable_;
+        // Live 策略下最近一次连接 DevServer 失败或已断开
+        bool liveUnavailable() const noexcept {
+            return liveUnavailable_;
         }
 
        private:
-        PackageLoadOutcome loadConfiguredPackage();
-        PackageLoadOutcome loadLivePackage();
         PackageLoadOutcome loadDistPackage();
-        PackageLoadOutcome noSourceOutcome() const;
-        PackageLoadOutcome disabledLiveWithoutDistOutcome() const;
-
-        void startDevServerClientIfNeeded();
         void stopDevServerClient();
-        void prependToasts(PackageLoadOutcome& outcome, std::vector<RuntimeLoadToast> toasts) const;
 
-        PackageRuntimeConfig config_;
+        AppSourceConfig config_;
         AppResolver resolver_;
         RuntimePackageLoader runtimeLoader_;
         LiveClientFactory liveClient_;
         std::unique_ptr<LiveModuleClient> devServerClient_;
         PackageSource activeSource_ = PackageSource::None;
-        bool liveRuntimeEnabled_ = false;
-        bool lastLiveUnavailable_ = false;
+        bool liveUnavailable_ = false;
     };
 
 }

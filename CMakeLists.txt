@@ -17,7 +17,15 @@ else()
   set(CANTON_IS_TOP_LEVEL OFF)
 endif()
 
+# 宿主以 /MT 交付；qjs 与 Canton 各库同用静态 CRT，字节码工具和宿主才共享同一份引擎产物
+if(CANTON_IS_TOP_LEVEL AND MSVC)
+  set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 canton_fetch_quickjs_ng()
+canton_fetch_source(miniz)
+canton_fetch_source(lunasvg)
 
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 

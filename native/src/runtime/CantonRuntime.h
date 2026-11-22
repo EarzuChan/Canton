@@ -105,6 +105,8 @@ namespace canton::runtime {
         [[nodiscard]] bool hasPendingEvents() const noexcept;
 
         [[nodiscard]] bool hasPendingVisualWork() const noexcept;
+        // 还没发布过帧，且有声明预加载的字体没到齐
+        [[nodiscard]] bool awaitingFontPreload() const noexcept;
         [[nodiscard]] bool hasPendingFrameWork() const noexcept;
 
         [[nodiscard]] RuntimeFramePumpResult pumpFrame(canton::core::NodeId root, canton::core::Constraints constraints, double nowMillis, const canton::core::FrameFinalizer& finalize = {});
@@ -136,6 +138,7 @@ namespace canton::runtime {
         bool publishRetained(const canton::core::FrameFinalizer& finalize) {
             return pipelineState_.publishRetained(finalize);
         }
+
         [[nodiscard]] std::vector<canton::quickjs::QuickJsToastRequest> takeDiagnosticToasts();
         [[nodiscard]] std::vector<canton::quickjs::QuickJsDiagnosticAction> takeDiagnosticActions();
 

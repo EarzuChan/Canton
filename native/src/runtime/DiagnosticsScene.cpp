@@ -1,6 +1,5 @@
 #include <runtime/DiagnosticsScene.h>
 
-
 #include <core/TextLayoutService.h>
 #include <algorithm>
 #include <cmath>
@@ -121,6 +120,7 @@ namespace canton::runtime {
         op.rect = rect;
         op.color = color;
         op.strokeWidth = width;
+        op.strokeInside = true;
         op.shape = radius > 0.0f ? canton::core::DrawShapeType::Rounded : canton::core::DrawShapeType::Rectangle;
         op.corners = canton::core::CornerRadii::uniform(radius);
         return op;
@@ -139,4 +139,3 @@ namespace canton::runtime {
         return op;
     }
 }
-

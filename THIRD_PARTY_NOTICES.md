@@ -2,4 +2,4 @@
 
 只是草稿，勿动。
 
-使用了 Vue.js、QuickJS-NG 等玩意儿的代码，回头贴出各自协议。
+使用了来自 Vue.js、QuickJS-NG、miniz、lunasvg、plutovg、Noto Sans 等的玩意儿，回头贴出各自协议。

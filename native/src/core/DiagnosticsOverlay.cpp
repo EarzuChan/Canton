@@ -38,6 +38,7 @@ namespace canton::core {
             op.rect = rect;
             op.color = color;
             op.strokeWidth = width;
+            op.strokeInside = true;
             return op;
         }
 

@@ -12,7 +12,6 @@ namespace canton::runtime {
         PackageLoadOutcome packageOutcomeFromRuntimeLoad(RuntimePackageLoadResult loaded, PackageSource source) {
             PackageLoadOutcome outcome;
             outcome.loaded = loaded.ok;
-            outcome.serverUnavailable = loaded.serverUnavailable;
             outcome.activeSource = loaded.ok ? source : PackageSource::None;
             outcome.packageDir = std::move(loaded.packageDir);
             outcome.error = std::move(loaded.error);
@@ -21,6 +20,10 @@ namespace canton::runtime {
             outcome.initialTransaction = std::move(loaded.initialTransaction);
             outcome.scriptHost = std::move(loaded.scriptHost);
             return outcome;
+        }
+
+        void prependToast(PackageLoadOutcome& outcome, RuntimeLoadToast toast) {
+            outcome.toasts.insert(outcome.toasts.begin(), std::move(toast));
         }
     }
 
@@ -40,84 +43,41 @@ namespace canton::runtime {
         stopDevServerClient();
     }
 
-    PackageLoadOutcome PackageRuntimeSource::configure(PackageRuntimeConfig config) {
+    PackageLoadOutcome PackageRuntimeSource::configure(AppSourceConfig config) {
         config_ = std::move(config);
-        if (config_.preferDevServer && !config_.app.hasLive()) {
-            config_.app.useLive(config_.devServerUrl);
-        }
-
         stopDevServerClient();
-        liveRuntimeEnabled_ = config_.app.hasLive();
-        lastLiveUnavailable_ = false;
+        liveUnavailable_ = false;
         activeSource_ = PackageSource::None;
 
-        startDevServerClientIfNeeded();
-        auto outcome = loadConfiguredPackage();
-        outcome.intentKind = PackageLoadOutcome::IntentKind::PackageLoad;
+        if (config_.policy == LoadPolicy::OnlyDist) {
+            auto outcome = loadDistPackage();
+            outcome.intentKind = PackageLoadOutcome::IntentKind::PackageLoad;
+            return outcome;
+        }
+        if (liveClient_) devServerClient_ = liveClient_();
+        if (!devServerClient_) {
+            PackageLoadOutcome outcome;
+            outcome.error = makeErrorScreenModel(ErrorSource::AppPackage, std::string("这个宿主不含 Live 客户端，不能使用 ") + loadPolicyLabel(config_.policy) + " 策略", {}, {}, false);
+            outcome.toasts.push_back(makeToast(core::LogLevel::Error, "加载策略不可用", outcome.error->summary));
+            return outcome;
+        }
+        // 客户端连上后自行取首个模块快照，结果经 takeLivePackets 交回
+        devServerClient_->start(config_.devServerUrl);
+        PackageLoadOutcome outcome;
+        outcome.pending = true;
         return outcome;
     }
 
     PackageLoadOutcome PackageRuntimeSource::reload() {
-        auto outcome = loadConfiguredPackage();
+        if (devServerClient_) {
+            PackageLoadOutcome outcome;
+            outcome.pending = true;
+            devServerClient_->requestReload();
+            return outcome;
+        }
+        auto outcome = loadDistPackage();
         outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
-        prependToasts(outcome, {makeToast(core::LogLevel::Info, "已请求重新加载", "正在重新加载 Canton 应用包")});
-        return outcome;
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::reloadFromDevServer() {
-        auto outcome = loadConfiguredPackage();
-        outcome.intentKind = PackageLoadOutcome::IntentKind::HmrReload;
-        prependToasts(outcome, {makeToast(core::LogLevel::Info, "收到热更新重载请求", "开发服务器请求重新加载 Canton 应用")});
-        return outcome;
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::manualReload(bool toggleLive) {
-        std::vector<RuntimeLoadToast> prelude;
-        if (toggleLive && config_.app.hasLive()) {
-            liveRuntimeEnabled_ = !liveRuntimeEnabled_;
-            stopDevServerClient();
-            startDevServerClientIfNeeded();
-            prelude.push_back(makeToast(core::LogLevel::Info, liveRuntimeEnabled_ ? "Live 已启用" : "Live 已关闭", liveRuntimeEnabled_ ? "手动重载将优先加载 Live" : "手动重载将跳过 Live 并加载 Dist"));
-        } else {
-            prelude.push_back(makeToast(core::LogLevel::Info, "手动重新加载", "已按下 F5"));
-        }
-
-        auto outcome = loadConfiguredPackage();
-        outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
-        prependToasts(outcome, std::move(prelude));
-        return outcome;
-    }
-
-    bool PackageRuntimeSource::wantsReloadPolling() const {
-        return config_.app.hasLive();
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::loadConfiguredPackage() {
-        if (!config_.app.hasAnySource()) {
-            return noSourceOutcome();
-        }
-
-        if (config_.app.hasLive() && liveRuntimeEnabled_) {
-            return loadLivePackage();
-        }
-
-        if (config_.app.hasDist()) {
-            return loadDistPackage();
-        }
-
-        return disabledLiveWithoutDistOutcome();
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::loadLivePackage() {
-        if (!devServerClient_) {
-            LiveModulePacket unavailable;
-            unavailable.unavailable = true;
-            unavailable.error = "宿主未提供 Live 模块客户端";
-            return completeLiveLoad(std::move(unavailable));
-        }
-        PackageLoadOutcome outcome;
-        outcome.pending = true;
-        devServerClient_->requestReload();
+        prependToast(outcome, makeToast(core::LogLevel::Info, "已请求重新加载", "正在重新加载 Canton 应用包"));
         return outcome;
     }
 
@@ -131,80 +91,37 @@ namespace canton::runtime {
     }
 
     PackageLoadOutcome PackageRuntimeSource::completeLiveLoad(LiveModulePacket packet) {
-        if (packet.unavailable && config_.app.hasDist()) {
-            lastLiveUnavailable_ = true;
-            auto outcome = loadDistPackage();
-            prependToasts(outcome, {makeToast(core::LogLevel::Warn, "Live 不可用，正在回退到 Dist", packet.error)});
+        if (packet.unavailable) {
+            liveUnavailable_ = true;
+            if (config_.policy == LoadPolicy::LiveThenDist && !resolver_.locateDist(config_).missing) {
+                auto outcome = loadDistPackage();
+                outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
+                // 回退必须让开发者看得见，免得误以为跑的是 Live
+                prependToast(outcome, makeToast(core::LogLevel::Warn, "Live 不可用，已回退到 Dist", packet.error + "；DevServer 恢复后自动切回 Live", false));
+                return outcome;
+            }
+            PackageLoadOutcome outcome;
+            outcome.intentKind = PackageLoadOutcome::IntentKind::Reload;
+            activeSource_ = PackageSource::None;
+            const auto detail = config_.policy == LoadPolicy::LiveThenDist ? "也没有可回退的 Dist 包。启动 DevServer 后会自动连接" : "启动 DevServer 后会自动连接";
+            outcome.error = makeErrorScreenModel(ErrorSource::AppPackage, "连不上 Live DevServer：" + config_.devServerUrl, packet.error + "\n" + detail, {}, true);
+            outcome.toasts.push_back(makeToast(core::LogLevel::Error, "Live 不可用", packet.error));
             return outcome;
         }
-        auto outcome = packageOutcomeFromRuntimeLoad(runtimeLoader_.loadLiveSnapshot(config_, resolver_, packet.snapshot, packet.error), PackageSource::Live);
+        auto outcome = packageOutcomeFromRuntimeLoad(runtimeLoader_.loadLiveSnapshot(config_.devServerUrl, packet.snapshot, packet.error), PackageSource::Live);
         outcome.intentKind = PackageLoadOutcome::IntentKind::HmrReload;
-        if (outcome.loaded) {
-            activeSource_ = PackageSource::Live;
-            lastLiveUnavailable_ = false;
-        } else
-            activeSource_ = PackageSource::None;
+        liveUnavailable_ = false;
+        activeSource_ = outcome.loaded ? PackageSource::Live : PackageSource::None;
         return outcome;
     }
 
     PackageLoadOutcome PackageRuntimeSource::loadDistPackage() {
-        auto outcome = packageOutcomeFromRuntimeLoad(runtimeLoader_.loadDist(config_, resolver_), PackageSource::Dist);
-        if (!outcome.loaded) {
-            return outcome;
-        }
-
-        activeSource_ = PackageSource::Dist;
-        const auto message = !outcome.logs.empty() && !outcome.logs.front().message.empty() ? outcome.logs.front().message : outcome.packageDir.string();
-        outcome.logs.clear();
-        if (lastLiveUnavailable_)
-            outcome.toasts.push_back(makeToast(core::LogLevel::Info, "已加载 Dist 回退包", message));
-        else
-            outcome.logs.push_back({core::LogLevel::Info, "已加载 Dist 应用 " + message});
+        auto outcome = packageOutcomeFromRuntimeLoad(runtimeLoader_.loadDist(resolver_.resolveDist(config_)), PackageSource::Dist);
+        activeSource_ = outcome.loaded ? PackageSource::Dist : PackageSource::None;
         return outcome;
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::noSourceOutcome() const {
-        PackageLoadOutcome outcome;
-        outcome.activeSource = PackageSource::None;
-        outcome.error = makeErrorScreenModel(ErrorSource::AppPackage, "没有配置可用的应用源，请调用 config.app.useLive(...) 或 config.app.useDist(...)");
-        outcome.toasts.push_back(makeToast(core::LogLevel::Error, "没有可加载的应用源", "请配置 config.app.useLive(...) 或 config.app.useDist(...)"));
-        return outcome;
-    }
-
-    PackageLoadOutcome PackageRuntimeSource::disabledLiveWithoutDistOutcome() const {
-        PackageLoadOutcome outcome;
-        outcome.activeSource = PackageSource::None;
-        outcome.error = makeErrorScreenModel(ErrorSource::AppPackage, "Live 已关闭，且没有配置 Dist 应用包", "请重新启用 Live，或配置 config.app.useDist(...)", config_.app.distPath());
-        outcome.toasts.push_back(makeToast(core::LogLevel::Error, "没有启用的应用源", "Live 已关闭，且没有配置 Dist 应用包"));
-        return outcome;
-    }
-
-    void PackageRuntimeSource::startDevServerClientIfNeeded() {
-        if (!config_.app.hasLive() || !liveRuntimeEnabled_) {
-            return;
-        }
-
-        const auto resolved = resolver_.resolveDebug(config_.app, config_.devServerUrl);
-        if (!resolved.ok || resolved.devServerUrl.empty() || !liveClient_) {
-            return;
-        }
-
-        devServerClient_ = liveClient_();
-        if (devServerClient_) devServerClient_->start(resolved.devServerUrl);
     }
 
     void PackageRuntimeSource::stopDevServerClient() {
-        if (devServerClient_) {
-            devServerClient_.reset();
-        }
-    }
-
-    void PackageRuntimeSource::prependToasts(PackageLoadOutcome& outcome, std::vector<RuntimeLoadToast> toasts) const {
-        if (toasts.empty()) {
-            return;
-        }
-        toasts.insert(toasts.end(), std::make_move_iterator(outcome.toasts.begin()), std::make_move_iterator(outcome.toasts.end()));
-        outcome.toasts = std::move(toasts);
+        devServerClient_.reset();
     }
 }
-

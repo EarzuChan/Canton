@@ -1,3 +1,4 @@
+import { nativeAnimationSpec, spring, type AnimationSpec } from '../animation/value.ts'
 import { AlignmentLine } from '../values/primitives.ts'
 import type { AlignmentLineValue, BoxAlignment, HorizontalAlignment, VerticalAlignment } from '../values/primitives.ts'
 import { Modifier } from './modifier.ts'
@@ -33,7 +34,15 @@ export interface FlowColumnHandle extends ColumnHandle {
     fillMaxColumnWidth(fraction?: number): Modifier
 }
 
-export interface LazyItemHandle {
+// 某种动画给 null 表示不做；缺省对齐 Compose 的 LazyItemScope.animateItem
+export type AnimateItemOptions = Readonly<{ fadeInSpec?: AnimationSpec | null; placementSpec?: AnimationSpec | null; fadeOutSpec?: AnimationSpec | null }>
+
+export interface LazyGridItemHandle {
+    // 数据集里新出现的项淡入、位置变化的项滑到新位置、移除的项原地淡出；写在项内容的根上，整项一起动
+    animateItem(options?: AnimateItemOptions): Modifier
+}
+
+export interface LazyItemHandle extends LazyGridItemHandle {
     // 占所在 Lazy 容器视口（扣除 contentPadding）的比例
     fillParentMaxSize(fraction?: number): Modifier
     fillParentMaxWidth(fraction?: number): Modifier
@@ -64,6 +73,18 @@ function fill(type: string): (fraction?: number) => Modifier {
     }
 }
 
+function animateItem(options: AnimateItemOptions = {}): Modifier {
+    const spec = (value: AnimationSpec | null | undefined, fallback: AnimationSpec) => value === null ? null : nativeAnimationSpec(value ?? fallback)
+    return element('animateItem', {
+        fadeInSpec: spec(options.fadeInSpec, defaultFadeSpec),
+        placementSpec: spec(options.placementSpec, defaultPlacementSpec),
+        fadeOutSpec: spec(options.fadeOutSpec, defaultFadeSpec),
+    })
+}
+
+const defaultFadeSpec = spring({ stiffness: 400 })
+// 位移按像素收敛，停稳阈值取 1 像素
+const defaultPlacementSpec = spring({ stiffness: 400, visibilityThreshold: 1 })
 const alignByBaseline = () => alignBy(AlignmentLine.FirstBaseline)
 const fillCrossAxis = fill('fillCrossAxis')
 
@@ -72,4 +93,5 @@ export const rowHandle: RowHandle = Object.freeze({ weight, align, alignBy, alig
 export const columnHandle: ColumnHandle = Object.freeze({ weight, align })
 export const flowRowHandle: FlowRowHandle = Object.freeze({ ...rowHandle, fillMaxRowHeight: fillCrossAxis })
 export const flowColumnHandle: FlowColumnHandle = Object.freeze({ ...columnHandle, fillMaxColumnWidth: fillCrossAxis })
-export const lazyItemHandle: LazyItemHandle = Object.freeze({ fillParentMaxSize: fill('fillParentMaxSize'), fillParentMaxWidth: fill('fillParentMaxWidth'), fillParentMaxHeight: fill('fillParentMaxHeight') })
+export const lazyGridItemHandle: LazyGridItemHandle = Object.freeze({ animateItem })
+export const lazyItemHandle: LazyItemHandle = Object.freeze({ animateItem, fillParentMaxSize: fill('fillParentMaxSize'), fillParentMaxWidth: fill('fillParentMaxWidth'), fillParentMaxHeight: fill('fillParentMaxHeight') })

@@ -1,0 +1,30 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
+        <Text text="Text and fonts" :style="title" />
+        <Text text="Regular 400 The quick brown fox 0123456789" :style="body" />
+        <Text text="Bold 700 The quick brown fox" :style="{ ...body, fontWeight: 700 }" />
+        <Text text="Italic The quick brown fox" :style="{ ...body, fontStyle: 'italic' }" />
+        <Row :horizontalArrangement="Arrangement.spacedBy(12.dp)" &row-handle>
+            <Text text="Size 24" :style="{ ...body, fontSize: 24.sp, color: palette.sky }" :modifier="rowHandle.alignByBaseline()" />
+            <Text text="size 16" :style="{ ...body, fontSize: 16.sp, color: palette.pink }" :modifier="rowHandle.alignByBaseline()" />
+            <Text text="size 10 on one baseline" :style="{ ...body, fontSize: 10.sp, color: palette.amber }" :modifier="rowHandle.alignByBaseline()" />
+        </Row>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <Text text="Wrapped paragraph breaks at word boundaries and keeps the line height it was given" :style="{ ...body, lineHeight: 20.sp }" :modifier="rowHandle.weight(1).background(palette.panel, rounded(6.dp)).padding(8.dp)" />
+            <Column :modifier="rowHandle.weight(1)" :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                <Text text="Two lines at most then an ellipsis takes over the rest of this sentence" :style="body" :maxLines="2" overflow="ellipsis" :modifier="M.fillMaxWidth().background(palette.panel, rounded(6.dp)).padding(8.dp)" />
+                <Text text="Single line with ellipsis when too long" :style="body" :singleLine="true" overflow="ellipsis" :modifier="M.fillMaxWidth().background(palette.panel, rounded(6.dp)).padding(8.dp)" />
+            </Column>
+        </Row>
+        <Text c-for="align in aligns" :key="align" :text="`aligned ${align}`" :textAlign="align" :style="body" :modifier="M.fillMaxWidth().background(palette.panel, rounded(6.dp)).padding({ horizontal: 8.dp, vertical: 4.dp })" />
+    </Column>
+</template>
+
+<script>
+import { M, Arrangement, rounded, Color } from '@canton/framework/ui'
+import { body, title } from './theme.ts'
+
+const palette = { panel: Color(0xff1e293b), muted: Color(0xff94a3b8), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24) }
+
+const aligns = ['Start', 'Center', 'End'] as const
+</script>

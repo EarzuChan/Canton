@@ -55,7 +55,10 @@ function fontNative(readyImmediately = false): FontNative {
             return { identity: identity++, generation: 1n, ...(readyImmediately ? { ready: { contentVersion: 1 } } : {}) }
         },
         releasePainter: () => { log.push('release') },
-        defineFontFamily: (name, faces) => { defined.push({ name, faces }); log.push(`define ${name} ${faces.length}`) },
+        defineFontFamily: (name, faces) => {
+            defined.push({ name, faces })
+            log.push(`define ${name} ${faces.length}`)
+        },
         removeFontFamily: name => { log.push(`remove ${name}`) },
         beginFontPreload: () => { log.push('begin') },
         endFontPreload: () => { log.push('end') },

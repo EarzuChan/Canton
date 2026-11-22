@@ -1,0 +1,43 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+        <Text :text="`Lazy from ${list.firstVisibleItemIndex} of ${list.layoutInfo.totalItemsCount}`" :style="title" />
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <!-- 一万项的列表：只有视口里的项会被组合 -->
+            <LazyColumn :items="items" :itemKey="keyOf" :state="list" :modifier="rowHandle.weight(1).height(230.dp).background(palette.panel, rounded(8.dp))" &item>
+                <Row :modifier="M.fillMaxWidth().height((item.tall ? 44 : 30).dp).padding({ horizontal: 8.dp, vertical: 3.dp }).background(item.id % 2 ? palette.line : palette.canvas, rounded(4.dp)).padding({ horizontal: 8.dp })" &row-handle="innerHandle">
+                    <Text :text="`item ${item.id}`" :style="body" :modifier="innerHandle.align(Alignment.CenterVertically)" />
+                </Row>
+            </LazyColumn>
+            <!-- 网格：三列，个别项占满一行 -->
+            <LazyVerticalGrid :items="items" :itemKey="keyOf" :span="spanOf" :state="grid" :cells="GridCells.Fixed(3)" :modifier="rowHandle.weight(1).height(230.dp).background(palette.panel, rounded(8.dp))" &item>
+                <Box :modifier="M.fillMaxWidth().height(40.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &box-handle>
+                    <Text :text="`${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
+                </Box>
+            </LazyVerticalGrid>
+        </Row>
+        <Text text="ten thousand items and only the visible ones exist" :style="caption" />
+    </Column>
+</template>
+
+<script>
+import { createLazyState, watch } from '@canton/framework'
+import { M, Alignment, Arrangement, GridCells, GridItemSpan, rounded, Color } from '@canton/framework/ui'
+import { body, caption, title } from './theme.ts'
+
+const palette = { canvas: Color(0xff0f172a), panel: Color(0xff1e293b), line: Color(0xff334155), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24), green: Color(0xff34d399), violet: Color(0xffa78bfa) }
+
+const props = defineProps<{ step: number }>()
+type Item = { id: number; tall: boolean }
+const items: Item[] = Array.from({ length: 10000 }, (_, id) => ({ id, tall: id % 4 === 0 }))
+const colors = [palette.sky, palette.pink, palette.amber, palette.green, palette.violet]
+const keyOf = (item: Item) => item.id
+const spanOf = (item: Item) => item.id % 7 === 0 ? GridItemSpan.MaxLineSpan : GridItemSpan(1)
+const list = createLazyState()
+const grid = createLazyState()
+
+// 指令带来的数值是要滚到的项
+watch(() => props.step, value => {
+    list.scrollToItem(value, 6.px)
+    grid.scrollToItem(value)
+}, { immediate: true })
+</script>

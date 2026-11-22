@@ -11,16 +11,19 @@ const workspace = resolve(output, 'workspace')
 await rm(workspace, { recursive: true, force: true })
 await mkdir(workspace, { recursive: true })
 await prepareRuntimeFixtureWorkspace(workspace)
-const fixtures = ['app-smoke']
+// 夹具名到入口文件；有 public 目录的夹具，其中的资源会随包输出
+const fixtures: Record<string, string> = { 'app-smoke': 'src/main.ts', showcase: 'main.ts', layout: 'main.ts', lazy: 'main.ts', 'rearrange-runtime': 'main.ts', 'viewport-runtime': 'main.ts' }
 const requested = process.argv.slice(3)
-for (const fixture of requested) if (!fixtures.includes(fixture)) throw new Error(`未知的运行时夹具：${fixture}`)
-for (const fixture of requested.length ? requested : fixtures) {
+for (const fixture of requested) if (!(fixture in fixtures)) throw new Error(`未知的运行时夹具：${fixture}`)
+for (const fixture of requested.length ? requested : Object.keys(fixtures)) {
     await build({
         root: workspace,
         configFile: false,
-        plugins: [canton({ entry: resolve(workspace, 'tests/fixtures', fixture, 'src/main.ts') }) as unknown as Plugin],
+        publicDir: resolve(workspace, 'tests/fixtures', fixture, 'public'),
+        plugins: [canton({ entry: resolve(workspace, 'tests/fixtures', fixture, fixtures[fixture]!) }) as unknown as Plugin],
         build: { outDir: resolve(output, fixture), emptyOutDir: true },
     })
-    const source = await readFile(resolve(output, fixture, 'app.js'), 'utf8')
+    // 字节码构建的中间产物是以 .cbc 命名的 ESM
+    const source = await readFile(resolve(output, fixture, process.env.CANTON_UI_BUILD_SCRIPT_FORMAT === 'bytecode' ? 'app.cbc' : 'app.js'), 'utf8')
     if (CANTON_MACRO_PATTERN.test(source)) throw new Error(`测试 UI 产物残留未替换的编译宏：${fixture}`)
 }

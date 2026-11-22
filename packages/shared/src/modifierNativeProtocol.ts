@@ -52,6 +52,7 @@ export const modifierNativeProtocol: Readonly<Record<string, ModifierProtocolEnt
     alignBy: { fields: ['line'] },
     fillCrossAxis: { fields: ['fraction'] },
     fillParentMaxWidth: { fields: ['fraction'] }, fillParentMaxHeight: { fields: ['fraction'] }, fillParentMaxSize: { fields: ['fraction'] },
+    animateItem: { fields: ['fadeInSpec', 'placementSpec', 'fadeOutSpec'] },
     offset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
     absoluteOffset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
     graphicsLayer: { fields: ['translationX', 'translationY', 'scaleX', 'scaleY', 'rotationZ', 'transformOrigin', 'alpha', 'clip'], units: graphics, arguments: [graphics] },

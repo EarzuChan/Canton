@@ -10,9 +10,11 @@ Canton 面向 Windows 用户态桌面。TS 和 `.cta` 声明界面，QuickJS-NG 
 | [`packages/shared`](../packages/shared) | TS 和 Native 共用的协议定义，包括 Modifier 原生协议表、值单位契约与版本常量。 |
 | [`native/src/core`](../native/src/core) | 事务场景树、测量和放置、输入状态机、命中与保留绘制指令，以及各层共用的日志与单调时钟。独立于 QuickJS、Win32 和 D3D11。 |
 | [`native/src/quickjs`](../native/src/quickjs) | JS 上下文、模块装载、Native 协议桥，以及 `canton_ui_bytecode`。 |
-| [`native/src/runtime`](../native/src/runtime) | 帧调度和提交、事件回送、诊断以及资源和包加载的编排接口。 |
-| [`native/src/win32`](../native/src/win32) | Win32 平台资产。目前有从 HWND 接入的精确触控板滚动和控制台日志着色。 |
-| [`native-tests`](../native-tests) · [`tests`](../tests) | Native（CTest）与 TS（node:test）测试。 |
+| [`native/src/runtime`](../native/src/runtime) | 帧调度和提交、事件回送、诊断、加载策略（`lfd`/`live`/`dist`）、UI 包挂载、资源获取与解码；`SceneHost` 编排一个视口，宿主与无头回归共用。Live 客户端与 HTTP 单独成库，只有 Dev 宿主链接。 |
+| [`native/src/d3d11`](../native/src/d3d11) | D3D11 渲染：窗口与离屏两种呈现目标、形状与渐变与阴影的着色器（构建期编译嵌入）、路径覆盖率、DirectWrite 排版与字形图集、设备丢失重建、垂直同步线程。输入只有 core 的发布帧。 |
+| [`native/src/win32`](../native/src/win32) | Win32 平台资产：单窗口与消息循环、从 HWND 接入的精确触控板滚动、控制台日志着色。 |
+| [`native/src/host`](../native/src/host) | 宿主入口：装配运行时、渲染、窗口与 VBlank。出两份制品，`canton-host-dev.exe` 读 `CANTON_DEV_*` 环境变量并带 Live，`canton-host.exe` 写死 Dist；`CANTON_ENABLE_DEV` 只出现在这里、`quickjs/` 的顶层装配和构建接线里。 |
+| [`native-tests`](../native-tests) · [`tests`](../tests) | Native（CTest）与 TS（node:test）测试；无头回归 `canton_render_regression` 离屏出图，与 `native-tests/baselines` 的基线比对（WARP 逐像素、硬件按容差）。 |
 | [`cli`](../cli) | Windows 工具链发现、进程和文件事务、缓存与构建工具。 |
 
 ```mermaid
@@ -46,7 +48,7 @@ flowchart BT
 - QuickJS-NG 必选，不保留无脚本引擎的编译分支。
 - 理由见 [batch2 ADR 001](adr/batch2/1：Native模块分层、依赖方向与命名空间.md)。
 
-宿主窗口、D3D11 渲染与 DirectWrite、Live 网络、Dist 包挂载和扩展 SDK 的实现边界见 [batch1 ADR 006](adr/batch1/6：D3D11渲染管线、HLSL着色器与离屏层.md) 和 [batch1 ADR 009](adr/batch1/9：宿主加载规矩、Native统一结构与扩展交付.md)。`native/src/host`、`native/src/d3d11` 和 `native/include/canton` 为对应实现预留。
+宿主窗口、D3D11 渲染与 DirectWrite、Live 网络、Dist 包挂载和扩展 SDK 的实现边界见 [batch1 ADR 006](adr/batch1/6：D3D11渲染管线、HLSL着色器与离屏层.md) 和 [batch1 ADR 009](adr/batch1/9：宿主加载规矩、Native统一结构与扩展交付.md)，M3 的补充约定见 [batch2 ADR 004](adr/batch2/4：Dev宿主的环境变量与随包位置.md)、[005](adr/batch2/5：路径用CPU精确覆盖率光栅化.md)、[006](adr/batch2/6：无头回归与基线图.md)、[007](adr/batch2/7：第三方依赖的引入规矩.md)。`native/include/canton`（扩展 SDK）仍为 M7 预留。
 
 ## TS 分层
 
@@ -69,6 +71,5 @@ flowchart BT
 
 以下部分仍服务于旧加载模型或旧 CLI 流程，暂按原样保留，随对应里程碑重造或清算，不在此前修补：
 
-- `scripts/` 中围绕“用户消费 Native 源码”的部分（如 `verify-native-fetchcontent.ts`、`native-source-cache.ts`）：宿主改为预编译交付后，用户不再编译 Native，届时随扩展 SDK 的交付方式一并重定。格式化脚本依赖外部 `rg`，另行处理。
-- `tests/` 与 `native-tests/` 中依赖旧加载模型、尚未接通 D3D11 与新 App 模式的用例：M3 起逐步清算，反应式、重组事务、动画、Modifier 等不依赖宿主的用例预计沿用。
+- `scripts/` 中围绕“用户消费 Native 源码”的部分（如 `verify-native-fetchcontent.ts`、`native-source-cache.ts`）：宿主改为预编译交付后，用户不再编译 Native，届时随扩展 SDK 的交付方式一并重定。
 - `cli/` 的命令、受管项与测试：新 App 模式在 CLI 的落地（`canton.project.yaml`、创建工程、受管范围、dev/build）随 M8 讨论后重造；`create`、`sync` 尚未接入，`UiBuildService`、`DevSupervisor`、`IconAssetsService`、`NativeReadiness` 目前只有测试引用。

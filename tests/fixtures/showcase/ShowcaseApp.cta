@@ -1,0 +1,47 @@
+<template>
+    <Box :modifier="M.fillMaxSize().background(palette.canvas)">
+        <LayoutPage c-if="page === 'layout'" />
+        <TextPage c-else-if="page === 'text'" />
+        <ImagePage c-else-if="page === 'image'" />
+        <ScrollPage c-else-if="page === 'scroll'" :offset="argument" />
+        <LazyPage c-else-if="page === 'lazy'" :step="argument" />
+        <AnimationPage c-else-if="page === 'animation'" :step="argument" />
+        <ItemAnimationPage c-else-if="page === 'items'" :step="argument" />
+        <CanvasPage c-else-if="page === 'canvas'" />
+        <Text c-else :text="`unknown page ${page}`" :style="body" />
+        <!-- 没有输入的这一期，分步操作由测试程序或开发者经这个提交槽发指令 -->
+        <Input value="" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
+    </Box>
+</template>
+
+<script>
+import { ref } from '@canton/framework'
+import { M, Color } from '@canton/framework/ui'
+import { body } from './theme.ts'
+import LayoutPage from './LayoutPage.cta'
+import TextPage from './TextPage.cta'
+import ImagePage from './ImagePage.cta'
+import ScrollPage from './ScrollPage.cta'
+import LazyPage from './LazyPage.cta'
+import AnimationPage from './AnimationPage.cta'
+import ItemAnimationPage from './ItemAnimationPage.cta'
+import CanvasPage from './CanvasPage.cta'
+
+const palette = { canvas: Color(0xff0f172a) }
+
+const page = ref('layout')
+const argument = ref(0)
+
+// 指令形如 “页名” 或 “页名:数值”；数值的含义由各页自己定
+function command(value: string) {
+    if (value === 'crash') {
+        // 去掉调用栈：栈里的行列号随打包结果变，错误屏的截图要稳定
+        const error = new Error('showcase crash requested')
+        error.stack = ''
+        throw error
+    }
+    const [name, detail] = value.split(':')
+    page.value = name!
+    argument.value = detail === undefined ? 0 : Number(detail)
+}
+</script>

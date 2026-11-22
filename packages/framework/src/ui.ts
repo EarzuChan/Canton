@@ -1,5 +1,5 @@
 export * from './modifier/modifier.ts'
-export type { BoxHandle, RowHandle, ColumnHandle, FlowRowHandle, FlowColumnHandle, LazyItemHandle, WeightOptions } from './modifier/layoutHandle.ts'
+export type { BoxHandle, RowHandle, ColumnHandle, FlowRowHandle, FlowColumnHandle, LazyItemHandle, LazyGridItemHandle, AnimateItemOptions, WeightOptions } from './modifier/layoutHandle.ts'
 export * from './values/primitives.ts'
 
 export { createDensity, DensityKey } from './layout/density.ts'

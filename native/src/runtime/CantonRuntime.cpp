@@ -9,8 +9,14 @@
 namespace canton::runtime {
     namespace {
         struct ProcessingGuard {
-            explicit ProcessingGuard(bool& value) : value(value) { value = true; }
-            ~ProcessingGuard() { value = false; }
+            explicit ProcessingGuard(bool& value) : value(value) {
+                value = true;
+            }
+
+            ~ProcessingGuard() {
+                value = false;
+            }
+
             bool& value;
         };
     }
@@ -243,8 +249,12 @@ namespace canton::runtime {
         return reloadRequested_ || rearrangeHost_.hasPendingDiagnostics() || (!suspended_ && (frame_.hasPendingFrameWork(frameWorkState()) || (fonts_ && fontGeneration_ != fonts_->generation())));
     }
 
+    bool CantonRuntime::awaitingFontPreload() const noexcept {
+        return pipelineState_.publishedFrame().revision == 0 && fonts_ && fonts_->pendingPreloads() != 0;
+    }
+
     bool CantonRuntime::holdsFirstFrameForFonts() {
-        if (pipelineState_.publishedFrame().revision != 0 || !fonts_ || fonts_->pendingPreloads() == 0) {
+        if (!awaitingFontPreload()) {
             fontPreloadSince_.reset();
             return false;
         }
@@ -422,4 +432,3 @@ namespace canton::runtime {
     }
 
 }
-

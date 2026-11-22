@@ -19,4 +19,10 @@ await withNativeSession(async () => {
     await run(smokeExe, [appBundle, '--expect-script-diagnostics'])
     await run(smokeExe, [appBundle, '--expect-script-diagnostics-rejection'])
 
+    // 从 .cta 夹具经 UI 包、QuickJS 进 core 的端到端用例
+    for (const [target, fixture] of [['canton_layout_boundary', 'layout'], ['canton_lazy_runtime', 'lazy'], ['canton_rearrange_runtime', 'rearrange-runtime'], ['canton_viewport_runtime', 'viewport-runtime']] as const) {
+        await nativeCmake(["--build", buildDir, "--target", target, "--parallel", "4"])
+        await run(nativeExecutable(resolve(buildDir, 'native-tests'), target), [resolve(buildDir, 'native-tests/fixtures', fixture)])
+    }
+
 }, [nativeTestDirectory()])

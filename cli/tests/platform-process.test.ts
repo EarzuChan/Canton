@@ -105,7 +105,12 @@ test("清理结论为 unknown 时 stop 不抛错，可重试并在确认后固�
 
 test("容器清理动作出错时 stop 拒绝，之后仍可重试", async () => {
     let attempts = 0
-    const container: ProcessContainer = { reap: async () => { if (attempts++ === 0) throw new Error("无法执行清理"); return "clean" }, releaseIfEmpty() { } }
+    const container: ProcessContainer = {
+        reap: async () => {
+            if (attempts++ === 0) throw new Error("无法执行清理")
+            return "clean"
+        }, releaseIfEmpty() { }
+    }
     const child = new Executor(undefined, undefined, scripted(container)).start({ command: process.execPath, args: ["-e", "0"] })
     await child.completion
     await assert.rejects(child.stop(), /无法执行清理/)

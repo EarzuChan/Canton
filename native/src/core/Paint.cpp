@@ -1,4 +1,5 @@
 #include <core/Affine.h>
+#include <core/LazyLayout.h>
 #include <core/ModifierGeometry.h>
 #include <core/Paint.h>
 #include <core/Modifier.h>
@@ -7,8 +8,10 @@
 #include <cstdlib>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 
 namespace canton::core {
@@ -239,8 +242,7 @@ namespace canton::core {
                 ++counters.fragmentsBuilt;
                 return std::make_shared<const PaintFragment>(std::move(next));
             }
-            if (const auto* effect = next.layer ? std::get_if<EffectModifier>(&next.layer->value) : nullptr)
-                includeBounds(next.bounds, {effectOutputBounds(*effect, next.layer->bounds), true, false});
+            if (const auto* effect = next.layer ? std::get_if<EffectModifier>(&next.layer->value) : nullptr) includeBounds(next.bounds, {effectOutputBounds(*effect, next.layer->bounds), true, false});
             if (next.content)
                 for (const auto& op : *next.content) includeBounds(next.bounds, drawOpBounds(op));
             if (next.layer) {
@@ -251,6 +253,104 @@ namespace canton::core {
             }
             ++counters.fragmentsBuilt;
             return std::make_shared<const PaintFragment>(std::move(next));
+        }
+
+        // animateItem 写在项内容的根节点上，整项一起动
+        const AnimateItemModifier* itemAnimationSpec(const LayoutTree& tree, const LayoutNode& item) {
+            for (auto childId : item.children)
+                for (const auto& instance : tree.node(childId).modifier.elements())
+                    if (const auto* spec = std::get_if<AnimateItemModifier>(&instance.descriptor.value)) return spec;
+            return nullptr;
+        }
+
+        void requireLazyItemRoot(const LayoutTree& tree, NodeId id) {
+            const auto item = tree.parentOf(id);
+            const auto container = item ? tree.parentOf(*item) : std::nullopt;
+            if (!container || !std::holds_alternative<LazyMeasurePolicy>(tree.node(*container).measurePolicy)) throw std::invalid_argument("animateItem 只能用于 Lazy 项内容的根节点");
+        }
+
+        std::shared_ptr<const PaintFragment> fadedFragment(const std::shared_ptr<const PaintFragment>& fragment, float alpha) {
+            if (alpha >= 1 || !fragment) return fragment;
+            auto layer = std::make_shared<PaintLayerFragment>();
+            layer->value = AnimateItemModifier{};
+            layer->contentAlpha = std::max(0.0f, alpha);
+            PaintFragment wrapper;
+            wrapper.layer = std::move(layer);
+            wrapper.children.push_back({fragment, {}});
+            wrapper.bounds = fragment->bounds;
+            return std::make_shared<const PaintFragment>(std::move(wrapper));
+        }
+
+        // Lazy 项的位移、淡入与淡出：按 key 比较本次与上次绘制，改写容器内各项的位置并包上透明度。
+        // 只在数据集里新出现的 key 淡入、从数据集消失的 key 淡出；滚进滚出视口不算
+        void animateLazyItems(const LayoutTree& tree, LayoutNode& node, const std::vector<NodeId>& order, std::vector<PlacedPaintFragment>& children, double now) {
+            const auto& policy = std::get<LazyMeasurePolicy>(node.measurePolicy);
+            if (node.lazy.use_count() != 1) node.lazy = std::make_shared<LazyLayoutState>(*node.lazy);
+            auto& state = *node.lazy;
+            const auto compensation = static_cast<float>(state.placementCompensation);
+            const auto shifted = [&](Point point, float delta) {
+                (policy.horizontal ? point.x : point.y) += delta;
+                return point;
+            };
+            std::unordered_map<NodeId, const std::string*> keys;
+            for (std::size_t position = 0; position < node.children.size() && position < policy.indices.size(); ++position) keys[node.children[position]] = &policy.keys[policy.indices[position]];
+            std::unordered_map<std::string, LazyItemAnimation> next;
+            for (std::size_t at = 0; at < order.size(); ++at) {
+                const auto found = keys.find(order[at]);
+                const auto* spec = found == keys.end() ? nullptr : itemAnimationSpec(tree, tree.node(order[at]));
+                if (!spec) continue;
+                const auto& key = *found->second;
+                auto& placed = children[at];
+                const auto position = shifted(placed.offset, -compensation);
+                LazyItemAnimation item;
+                if (const auto previous = state.itemAnimations.find(key); previous != state.itemAnimations.end()) {
+                    item = std::move(previous->second);
+                    if (!spec->placement)
+                        item.placement.snapTo({});
+                    else if (position != item.position) {
+                        // 从当前显示的位置出发，偏移衰减到 0
+                        item.placement.current = {item.placement.current[0] + item.position.x - position.x, item.placement.current[1] + item.position.y - position.y};
+                        item.placement.animateTo({}, *spec->placement, now);
+                    }
+                    if (!spec->fadeIn) item.alpha.snapTo({1});
+                } else {
+                    auto start = 1.0f;
+                    if (const auto ghost = std::find_if(state.itemGhosts.begin(), state.itemGhosts.end(), [&](const LazyItemGhost& ghost) { return ghost.key == key; }); ghost != state.itemGhosts.end()) {
+                        start = ghost->alpha.current[0];
+                        state.itemGhosts.erase(ghost);
+                    } else if (state.itemsPainted && state.paintedKeys.find(key) == state.paintedKeys.end())
+                        start = 0;
+                    item.alpha.snapTo({spec->fadeIn ? start : 1.0f});
+                    if (spec->fadeIn && start < 1) item.alpha.animateTo({1}, *spec->fadeIn, now);
+                }
+                item.spec = *spec;
+                item.position = position;
+                item.fragment = placed.fragment;
+                const auto offset = item.placement.sample(now);
+                placed.offset.x += offset[0];
+                placed.offset.y += offset[1];
+                placed.fragment = fadedFragment(placed.fragment, item.alpha.sample(now)[0]);
+                next.emplace(key, std::move(item));
+            }
+            if (state.itemsPainted)
+                for (auto& [key, item] : state.itemAnimations)
+                    if (!next.contains(key) && state.keyToIndex.find(key) == state.keyToIndex.end() && item.spec.fadeOut) {
+                        LazyItemGhost ghost{key, {item.position.x + item.placement.current[0], item.position.y + item.placement.current[1]}, item.fragment, item.alpha};
+                        ghost.alpha.animateTo({0}, *item.spec.fadeOut, now);
+                        state.itemGhosts.push_back(std::move(ghost));
+                    }
+            // 残影画在现存项之下，淡到 0 后丢弃
+            std::vector<PlacedPaintFragment> ghosts;
+            std::erase_if(state.itemGhosts, [&](LazyItemGhost& ghost) {
+                const auto alpha = ghost.alpha.sample(now)[0];
+                if (!ghost.alpha.running) return true;
+                ghosts.push_back({fadedFragment(ghost.fragment, alpha), shifted(ghost.position, compensation)});
+                return false;
+            });
+            children.insert(children.begin(), ghosts.begin(), ghosts.end());
+            state.itemAnimations = std::move(next);
+            state.paintedKeys = state.keyToIndex;
+            state.itemsPainted = true;
         }
     }
 
@@ -279,7 +379,7 @@ namespace canton::core {
         }
         if (op.type == DrawOpType::DrawPainter && op.repeat == ImageRepeat::None && (op.contentScale == ContentScale::Unscaled || op.contentScale == ContentScale::Inside || op.contentScale == ContentScale::Crop)) return {{}, false, false};
         auto margin = 1.0f;
-        if (op.type == DrawOpType::StrokeRect) margin += op.strokeWidth * 0.5f;
+        if (op.type == DrawOpType::StrokeRect && !op.strokeInside) margin += op.strokeWidth * 0.5f;
         // 尖角线接最多伸出三倍线宽，其余线帽与线接不超过一倍
         if (op.type == DrawOpType::DrawPath && op.strokeWidth > 0) margin += op.strokeWidth * (op.join == StrokeJoin::Miter ? 3.0f : 1.0f);
         if (op.type == DrawOpType::DrawLine) {
@@ -299,10 +399,12 @@ namespace canton::core {
         }
         auto& node = tree.mutableNode(id);
         PaintFragment content;
-        for (auto childId : childrenInPaintOrder(tree, node)) {
+        const auto order = childrenInPaintOrder(tree, node);
+        for (auto childId : order) {
             const auto& child = tree.node(childId);
             content.children.push_back({buildFragment(tree, childId, counters), {child.bounds.x - node.contentBounds.x, child.bounds.y - node.contentBounds.y}});
         }
+        if (node.lazy && std::holds_alternative<LazyMeasurePolicy>(node.measurePolicy)) animateLazyItems(tree, node, order, content.children, tree.frameTimeMillis());
         auto current = node.contentFragment = retainFragment(node.contentFragment, std::move(content), counters);
         Point origin{node.contentBounds.x, node.contentBounds.y};
         for (std::size_t index = node.modifier.elements().size(); index-- > 0;) {
@@ -315,6 +417,7 @@ namespace canton::core {
             const auto customDraw = std::holds_alternative<DrawModifier>(value);
             if (customDraw && !instance.preparedDraw) throw std::logic_error("绘制 Modifier 尚未在候选准备阶段生成内容");
             if (!layer || layer->value != value || layer->bounds != localBounds || layer->textLayout != instance.textLayout || layer->fontEnvironment != fontEnvironment || customDraw && layer->drawCommands != instance.preparedDraw) {
+                if (std::holds_alternative<AnimateItemModifier>(value)) requireLazyItemRoot(tree, id);
                 auto next = std::make_shared<PaintLayerFragment>();
                 next->value = value;
                 next->fontEnvironment = fontEnvironment;
@@ -464,6 +567,7 @@ namespace canton::core {
                 op.color = withAlpha(style->gradient ? 0xffffffffu : style->color, alpha);
                 op.gradient = style->gradient;
                 op.strokeWidth = style->strokeWidth;
+                op.strokeInside = overlay;
                 op.shape = shapeType(*style);
                 op.corners = style->corners;
                 ops.push_back(op);

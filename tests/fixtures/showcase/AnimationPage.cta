@@ -1,0 +1,41 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(12.dp)">
+        <Text :text="`Animation ${Math.round(progress * 100)}`" :style="title" />
+        <!-- 进度条：宽度随动画值变化 -->
+        <Box :modifier="M.fillMaxWidth().height(16.dp).background(palette.panel, rounded(8.dp))">
+            <Box :modifier="M.fillMaxWidth(progress).fillMaxHeight().background(horizontalGradient([palette.sky, palette.violet]), rounded(8.dp))" />
+        </Box>
+        <Row :modifier="M.fillMaxWidth().height(110.dp)" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+            <!-- 位移、旋转与缩放 -->
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(palette.panel, rounded(8.dp))">
+                <Box :modifier="M.offset({ x: (12 + 150 * progress).dp, y: 30.dp }).size(48.dp, 48.dp).graphicsLayer({ rotationZ: 180 * progress, scaleX: 1 + 0.5 * progress, scaleY: 1 + 0.5 * progress }).background(palette.amber, rounded(10.dp))" />
+            </Box>
+            <!-- 颜色与透明度 -->
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(color, rounded(8.dp))" &box-handle>
+                <Text text="fading in" :style="body" :modifier="boxHandle.align(Alignment.Center).alpha(progress)" />
+            </Box>
+        </Row>
+        <!-- 尺寸动画由原生采样 -->
+        <Box :modifier="M.animateContentSize(sizeSpec).background(palette.green, rounded(6.dp))">
+            <Box :modifier="M.size(barWidth.dp, 24.dp)" />
+        </Box>
+        <Text text="frames are sampled at fixed times" :style="caption" />
+    </Column>
+</template>
+
+<script>
+import { computed } from '@canton/framework'
+import { M, Alignment, Arrangement, horizontalGradient, rounded, Color } from '@canton/framework/ui'
+import { animatedColorAsRef, animatedNumberAsRef, linearEasing, tween } from '@canton/framework/animation'
+import { body, caption, title } from './theme.ts'
+
+const palette = { panel: Color(0xff1e293b), sky: Color(0xff38bdf8), pink: Color(0xfff472b6), amber: Color(0xfffbbf24), green: Color(0xff34d399), violet: Color(0xffa78bfa) }
+
+const props = defineProps<{ step: number }>()
+// 指令数值为 0 时静止在起点，大于 0 时用 400 毫秒线性走到终点；测试程序在固定时刻取帧
+const spec = tween({ durationMillis: 400, easing: linearEasing })
+const sizeSpec = tween({ durationMillis: 400, easing: linearEasing })
+const barWidth = computed(() => props.step > 0 ? 260 : 80)
+const progress = animatedNumberAsRef(computed(() => props.step > 0 ? 1 : 0), { animationSpec: spec })
+const color = animatedColorAsRef(computed(() => props.step > 0 ? palette.pink : palette.panel), { animationSpec: spec })
+</script>

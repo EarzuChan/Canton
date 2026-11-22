@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import assert from 'node:assert/strict'
@@ -6,14 +6,22 @@ import { createServer } from 'vite'
 import canton from '../packages/vite-plugin/src/plugin.ts'
 import { withNativeSession, nativeSessionStart } from "./native-session.ts"
 import type { RunningProcess, ProcessResult } from "../cli/src/feature/platform/ProcessSpec.ts"
+import { repoRoot } from "./common.ts"
+import { configureNativeBuild, nativeCmake, nativeExecutable, nativeTestDirectory } from "./native-toolchain.ts"
 
+// 对端默认用 native-tests 的 canton_live_server，先构建；也可以传一个实现同一验证协议的程序路径
 const requestedExecutable = process.argv[2]
-if (!requestedExecutable) throw new Error('请提供实现 Live HMR 验证协议的宿主程序路径')
-const executable = resolve(requestedExecutable)
+const executable = requestedExecutable ? resolve(requestedExecutable) : nativeExecutable(resolve(nativeTestDirectory(), 'native-tests'), 'canton_live_server')
 
 await withNativeSession(async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'canton-live-hmr-'))
-    const server = await createServer({ root: directory, configFile: false, plugins: [canton({ entry: 'main.ts', port: 0 })], optimizeDeps: { noDiscovery: true }, server: { watch: { awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 10 } } } })
+    if (!requestedExecutable) {
+        await configureNativeBuild(repoRoot, nativeTestDirectory(), 'Debug', ['-DCANTON_BUILD_TESTS=ON'])
+        await nativeCmake(['--build', nativeTestDirectory(), '--target', 'canton_live_server', '--parallel', process.env.CMAKE_BUILD_PARALLEL_LEVEL ?? '4'])
+    }
+    // 临时目录可能是 8.3 短路径（用户名带空格时），Vite 按长路径解析模块，先换成真实路径
+    const directory = await realpath(await mkdtemp(join(tmpdir(), 'canton-live-hmr-')))
+    const server = await createServer({ root: directory, configFile: false, plugins: [canton({ entry: 'main.ts', port: 0 })], optimizeDeps: { noDiscovery: true }, server: { fs: { allow: [directory, repoRoot] }, watch: { awaitWriteFinish: { stabilityThreshold: 50, pollInterval: 10 } } } })
+    // 夹具根在临时目录、框架源码在仓库里：上面放行了仓库目录，Vite 才肯转换热更新客户端引用的框架模块
     let child: RunningProcess | undefined
     let completed: ProcessResult | undefined
     let processFailure: unknown
@@ -79,4 +87,4 @@ import.meta.hot.accept(next => { ${invalidate ? "hot.invalidate('向入口传播
         await rm(directory, { recursive: true, force: true })
     }
 
-}, [])
+}, requestedExecutable ? [] : [nativeTestDirectory()])

@@ -39,6 +39,8 @@ namespace canton::core {
         Rect rect;
         std::uint32_t color = 0;
         float strokeWidth = 0.0f;
+        // 描边落在轮廓内侧（border 修饰器、诊断框）；否则以轮廓为中线（Canvas 的形状描边），对齐 Compose
+        bool strokeInside = false;
         TextStyle textStyle;
         DrawShapeType shape = DrawShapeType::Rectangle;
         CornerRadii corners;

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createApp, createLazyState, onMounted, onUnmounted, ref, nextTick } from '@canton/framework'
 import { LazyColumn, LazyVerticalGrid, Text } from '@canton/framework/foundation'
+import { spring, tween } from '@canton/framework/animation'
 import { defineArrangable } from '@canton/framework/internal'
 import { GridItemSpan } from '../../packages/framework/src/values/primitives.ts'
 import type { Modifier } from '../../packages/framework/src/modifier/modifier.ts'
@@ -224,5 +225,30 @@ test('Lazy 元数据优化保留索引回调、深层依赖与回调替换，缺
     span.value = undefined
     await nextTick()
     assert.deepEqual(metadata(), { keys: ['s:0', 's:1', 's:2'], contentTypes: ['', '', ''], spans: [1, 1, 1] })
+    app.unmount()
+})
+
+test('Lazy 四件套都交付项 Handle，animateItem 给出三种动画规格且 null 关掉对应动画', () => {
+    const native = recordingNative(false)
+    const app = createApp(defineArrangable({
+        setup(_props, { call }) {
+            return () => {
+                call(0, LazyColumn, { items: () => [1] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `列${item}`, modifier: () => lazyItemHandle.animateItem({ fadeInSpec: null, placementSpec: tween({ durationMillis: 120 }) }) }) })
+                call(1, LazyVerticalGrid, { items: () => [2] }, { default: ({ item, lazyItemHandle }) => call(0, Text, { text: () => `格${item}`, modifier: () => lazyItemHandle.animateItem() }) })
+            }
+        }
+    }))
+    app.mount(native.target)
+    native.frame()
+    for (const node of [...native.candidateNodes!.values()].filter(node => (node.inputs.get('measurePolicy') as { kind?: string } | undefined)?.kind === 'Lazy')) native.materialize(node.id, [0])
+    native.finish()
+    const animations = [...native.nodes.values()].flatMap(node => ((node.inputs.get('modifier') as { elements?: readonly { type: string; value: Record<string, unknown> }[] } | undefined)?.elements ?? []).filter(element => element.type === 'animateItem').map(element => element.value))
+    assert.equal(animations.length, 2)
+    const [list, grid] = animations
+    assert.equal(list.fadeInSpec, null)
+    assert.deepEqual([(list.placementSpec as { kind: string }).kind, (list.placementSpec as { durationMillis: number }).durationMillis], ['tween', 120])
+    assert.deepEqual(grid.placementSpec, spring({ stiffness: 400, visibilityThreshold: 1 }))
+    assert.deepEqual(grid.fadeInSpec, spring())
+    assert.deepEqual(grid.fadeOutSpec, spring())
     app.unmount()
 })

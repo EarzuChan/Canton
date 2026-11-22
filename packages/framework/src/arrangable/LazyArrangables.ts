@@ -5,7 +5,7 @@ import type { ArrangableProps, PropType, SlotTypes, WithSlotTypes } from '../run
 import { acknowledgeLazyStateRequest, attachLazyState, createLazyState, lazyStateAppliedRequestVersion, lazyStatePublishedValue, lazyStateRequest, lazyStateStore, pauseLazyState, type LazyItemKey, type LazyState, type LazyStateOwner } from '../layout/lazy.ts'
 import { LazyMeasurePolicy, BoxMeasurePolicy, ColumnMeasurePolicy, RowMeasurePolicy } from '../layout/measurePolicy.ts'
 import { M, Modifier } from '../modifier/modifier.ts'
-import { lazyItemHandle, type LazyItemHandle } from '../modifier/layoutHandle.ts'
+import { lazyGridItemHandle, lazyItemHandle, type LazyGridItemHandle, type LazyItemHandle } from '../modifier/layoutHandle.ts'
 import { GridCells, type GridCellsValue, type GridItemSpanValue, type Padding, PaddingValues, type HorizontalAlignment, type VerticalAlignment } from '../values/primitives.ts'
 import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native/protocol.ts'
 import { Layout } from './Layout.ts'
@@ -19,7 +19,7 @@ function identity(value: unknown, name: string): string {
     throw new TypeError(`${name} 必须是字符串或有限数值`)
 }
 
-type LazyItemParams = { item: any; index: number; lazyItemHandle?: LazyItemHandle }
+type LazyItemParams = { item: any; index: number; lazyItemHandle: LazyItemHandle | LazyGridItemHandle }
 
 const LazyItem = defineArrangable({
     name: 'LazyItem',
@@ -27,8 +27,8 @@ const LazyItem = defineArrangable({
     slots: { default: slotParams<LazyItemParams>() },
     setup(props, { call, slot }) {
         const content = slot()
-        // item 与 index 在该项的内容作用域内读取，数据变化只重跑这一项；网格项不交付 Handle
-        const contents = { default: () => content(props.grid ? { item: props.item, index: props.index } : { item: props.item, index: props.index, lazyItemHandle }) }
+        // item 与 index 在该项的内容作用域内读取，数据变化只重跑这一项；网格项的 Handle 没有按视口填充
+        const contents = { default: () => content({ item: props.item, index: props.index, lazyItemHandle: props.grid ? lazyGridItemHandle : lazyItemHandle }) }
         return () => call(0, Layout, { measurePolicy: () => props.grid ? BoxMeasurePolicy() : props.horizontal ? RowMeasurePolicy() : ColumnMeasurePolicy() }, contents)
     },
 })
@@ -225,7 +225,7 @@ function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
 
 type LazyDefinition = ReturnType<typeof lazyDefinition>
 type LazyListDefinition = WithSlotTypes<LazyDefinition, LazySlots<{ lazyItemHandle: LazyItemHandle }>>
-type LazyGridDefinition = WithSlotTypes<LazyDefinition, LazySlots<{}>>
+type LazyGridDefinition = WithSlotTypes<LazyDefinition, LazySlots<{ lazyItemHandle: LazyGridItemHandle }>>
 
 export const LazyColumn = lazyDefinition('LazyColumn', false, false) as LazyListDefinition
 export const LazyRow = lazyDefinition('LazyRow', true, false) as LazyListDefinition
