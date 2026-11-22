@@ -79,7 +79,7 @@ onScopeDispose(cancelAsyncProbe)
 function tap() { clicks.value++ }
 function command(value: string) {
     if (value === 'bad-resource') {
-        missingPainter.value = painter('missing-m24-image.png')
+        missingPainter.value = painter('missing-image.png')
         missingResource.value = true
     }
     else if (value === 'lifetime-baseline') lifetimeBaseline = getCantonExecutionStats().activeValueBindings

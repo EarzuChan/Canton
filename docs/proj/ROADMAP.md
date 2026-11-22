@@ -1,6 +1,12 @@
 # 里程碑
 
-> 实施原则：每个里程碑聚焦单一专项、按严格前后置依赖依次推进；主示例工程 `demo/center`（Canton Center，启用 `native/` 的全能力 Gallery / Playground）自 M3 破壳并随各里程碑持续生长；另配极简纯 TS 工程 `demo/hello` 专门守住并验收“零 C++/CMake/MSVC 环境”的默认体验。
+> 实施原则：
+> - 每个里程碑聚焦单一专项、按严格前后置依赖依次推进。
+> - 正式示例工程到 M8 才建立，自始由 Canton CLI 托管：主示例 `demo/center`（Canton Center，启用 `native/` 的全能力 Gallery / Playground），以及极简纯 TS 工程 `demo/hello`（专门守住并验收“零 C++/CMake/MSVC 环境”的默认体验）。应用怎么摆放宿主、按什么配置启动和加载归 CLI 管，在 CLI 就绪前不为示例另开专用的启动通道。
+> - M3–M7 各期用 `tests/fixtures/` 下的验收夹具验证。夹具是测试资产，不算真·Demo级“完整”工程，宿主里不得出现只为夹具存在的分支或参数。同一份夹具有两种跑法：
+>   - **开窗把玩**：仓库脚本按正式加载规矩（`CANTON_DEV_*`）拉起宿主，弹出真窗口，可上手操作、改 `.cta` 热更新。主人的验收以此为准，不需要截图。
+>   - **无头回归**：测试程序在 WARP 下离屏渲染，做像素比对并可输出截图，供自动化与 AI 验收使用。
+> - 与验收无关的随手试验放在不进 Git 的临时目录。
 
 ## M0：设定冻结与架构蓝图（已完成）
 
@@ -58,10 +64,11 @@
 - **文本引擎**：DirectWrite 排版接入 `TextLayoutService` 与 GPU 字形图集（Atlas），支持字体加载与预加载屏障。
 - **稳健性**：Feature Level 11_0 + WARP 透明回退与 `DEVICE_REMOVED`/`DEVICE_RESET` 自动重建。
 - **宿主条件编译与运行时实装**：补齐 `native/src/runtime/` 的 Windows 原生工具替换（`UiPackage` ZIP/JSON/`BCrypt`、Live WinSock/WinHTTP 客户端、WIC/SVG 图像解码）；跑通 `CANTON_ENABLE_DEV` 条件编译、`CANTON_DEV_*` 加载规矩（`lfd`/`live`/`dist`）与最小 Win32 承载窗 + Vite Live HMR。
+- **夹具的两种跑法**：开窗把玩的启动脚本（起 Vite、注入 `CANTON_DEV_*`、拉起宿主）；无头回归的测试程序直接链接渲染库，在 WARP 下离屏渲染、读回像素做比对并可存成截图，不经宿主参数。
 - **承接 M2**：从 `.cta` 夹具经 QuickJS 进 core 场景树，断言布局结果与错误父级报错的贯通用例；首屏点亮后补 Lazy 项的 `animateItem`（位移动画、淡入淡出），网格项的 Handle 随之交付。
 
-Demo 生长：
-- **`demo/center` 破壳点亮**（本阶段由仓库脚本驱动）：首屏跑起基础布局、文本与字体、图片、滚动/Lazy、动画、Canvas 展页，支持改 `.cta` 热更新、错误屏与恢复。
+验收夹具：
+- **首屏点亮**：夹具跑起基础布局、文本与字体、图片、滚动/Lazy、动画、Canvas 各场景，支持改 `.cta` 热更新、错误屏与恢复。
 
 验收：
 - 在真实 Win11 桌面与无头 WARP 回归环境中稳定渲染上述图元与文字，改 `.cta` 可秒级热更，设备重置可自动恢复。
@@ -77,8 +84,8 @@ Demo 生长：
 - **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic）与 `cornerPreference` 静默回退、Per-Monitor V2 DPI 与 `WM_DPICHANGED`、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与防复古按钮闪现、`AUMID` 与三层任务栏身份。
 - **原生输入完善**：Win32 TSF/IMM 中文与组合输入法接入 `InputTextSession`；扶正并实测 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
 
-Demo 生长：
-- `demo/center` 升级为 **自绘标题栏 + Mica 背景** 的正式桌面壳，新增「窗口与模态实验室」（多窗共享响应式状态、同帧切窗不误退、嵌套模态锁、无框浮窗、跨不同 DPI 显示器拖拽与中文 IME 验收）。
+验收夹具：
+- 「窗口与模态」夹具：**自绘标题栏 + Mica 背景** 的桌面壳，多窗共享响应式状态、同帧切窗不误退、嵌套模态锁、无框浮窗、跨不同 DPI 显示器拖拽与中文 IME 验收。
 
 验收：
 - 多窗口创建/销毁/同帧切换、`onCloseRequest` 拦截、嵌套模态、Win11 Snap Layout 悬停最大化键、跨屏 DPI 切换与 IME 实机通过。
@@ -93,8 +100,8 @@ Demo 生长：
 - **`RuntimeEffect` & `RuntimeShader`**：100% 标准 HLSL SM 5.0 像素着色器 + `D3DReflect` 自动解析 `cbuffer` 与纹理槽；Dev 期 `d3dcompiler_47.dll` 编译与 Vite `.hlsl` 热更新（报错保留上一版）；Dist 期静态 `.hlsl` 预编译 DXBC 与动态源码兜底。
 - **双落点与离屏原语**：`Brush.shaderBrush`、`RenderEffect`（GPU 两 Pass `blur`、`colorFilter`、`shader`、`chain` + 离屏 RT 池）、`RenderLayer`（`createRenderLayer` / `recordLayer` / `drawLayer`）、`BlendMode` 与 `onGloballyPositioned`。
 
-Demo 生长：
-- `demo/center` 新增「着色器与视觉特效工坊」，并以独立旁包形态跑通**液态玻璃 / 折射模糊**实景演示，验收热更与帧率表现。
+验收夹具：
+- 「着色器与视觉特效」夹具，并以独立旁包形态跑通**液态玻璃 / 折射模糊**实景演示，验收热更与帧率表现。
 
 验收：
 - `.hlsl` 修改即时热替换、Dist DXBC 零冷启卡顿、`RenderLayer` + `RenderEffect` + `BlendMode` 组合正确，液态玻璃旁包流畅运行。
@@ -109,8 +116,8 @@ Demo 生长：
 - **Windows Shell 集成**：App 级隐藏顶层 `HWND`（`WS_EX_TOOLWINDOW`）、`<TrayIcon>`（稳定 `NIF_GUID` 与 `TaskbarCreated` 重建）、双轨 `<SystemTrayMenu>`（原生 `HMENU`）与 `<CustomTrayMenu>`（自绘浮窗 + `&menu-handle.dismiss()`）、`<Window>` `ITaskbarList3` 进度/角标/7 槽缩略图按钮、单活跃 `<MediaSession>`（SMTC）、`LaunchRequestKey` 冷启动与单实例 IPC 热唤醒（`<App :on-second-instance>`）、Jump List、关机拦截。
 - **资产与文件存储**：TS `assets.exists` 补齐与宿主只读资产直读接口；`@canton/framework/fs`（`SHGetKnownFolderPath` 用户标准目录、`dataDir`/`tempDir` 透明重定位、后台线程池异步文件 I/O 与可选 `atomic` 原子写）。
 
-Demo 生长：
-- `demo/center` 新增「桌面融合与存储工坊」（托盘常驻与双轨菜单切换、任务栏进度与缩略图按钮、模拟播放器 SMTC 联动、单实例唤醒展示、本地笔记原子持久化与开发期重定位 / 绿色便携模式验证）。
+验收夹具：
+- 「桌面融合与存储」夹具（托盘常驻与双轨菜单切换、任务栏进度与缩略图按钮、模拟播放器 SMTC 联动、单实例唤醒展示、本地笔记原子持久化与开发期重定位 / 绿色便携模式验证）。
 
 验收：
 - 关窗托盘驻留零显存、Explorer 重启托盘与任务栏状态自动恢复、单实例唤醒正确移交前台、标准目录改盘符后仍精准定位、透明重定位与原子写可靠。
@@ -126,8 +133,8 @@ Demo 生长：
 - **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`（回调形式的 `alignBy` 随它一起定）、同步 `ctx.assets()`、`ctx.paths()` 与 `canton::fs`。
 - **防劫持安全加载**：清单声明扩展 DLL 相对路径与 SHA-256，Dist 加载前校验哈希并限定 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`，握手校验 ABI 版本与结构体尺寸。
 
-Demo 生长：
-- `demo/center` 启用 `native/` 扩展 DLL，新增「Native 扩展实验室」（实时高频 `DrawCanvas` 波形、外部 `ID3D11Texture2D` 渲染纹理叠加 Canton 圆角/阴影/`RenderEffect`、后台异步与 STA 原生服务、原生重型文件处理）。
+验收夹具：
+- 「Native 扩展」夹具，自带一个只用 `canton-sdk` 头文件编译的扩展 DLL（实时高频 `DrawCanvas` 波形、外部 `ID3D11Texture2D` 渲染纹理叠加 Canton 圆角/阴影/`RenderEffect`、后台异步与 STA 原生服务、原生重型文件处理）。
 
 验收：
 - 扩展 DLL 仅凭 `canton-sdk` 头文件在秒级编译完成；测试 `/MD` 第三方库接入与 `/MT` 宿主共存无 `LNK2038`；篡改或未声明 DLL 在 Dist 下被严格拒绝。
@@ -145,8 +152,8 @@ Demo 生长：
   - `dev` 落实 `--flavor debug|release` × `--source lfd|live|dist` 规矩、注入 `CANTON_DEV_*` 与重定位目录，纯 TS 零编译秒启，有 `native/` 时仅快编用户扩展 DLL；
   - `pack` 产出统一 Windows 应用分发目录：复制预编译宿主改名 `<AppName>.exe`、直接修补 PE 注入 `.ico`/VersionInfo/DPI 清单、按需打包扩展 DLL 与 App-Local CRT DLL、写入扩展哈希清单与可选安装期文件关联/协议元数据。
 
-Demo 生长与总验收：
-- **`demo/center`**（启用 `native/`）与 **`demo/hello`**（极简纯 TS）全部正式迁交 Canton CLI 托管。
+Demo 建立与总验收：
+- 用 Canton CLI 新建 **`demo/center`**（启用 `native/`）与 **`demo/hello`**（极简纯 TS），自始由 CLI 托管。`demo/center` 的各页取自 M3–M7 验收夹具里的场景（首屏各项、窗口与模态、着色器与视觉特效、桌面融合与存储、Native 扩展）；仍用于自动回归的夹具留在 `tests/fixtures/`。
 - 端到端验收：在一台无 MSVC/CMake 环境下用 `demo/hello` 跑通 `create / sync / dev / build / pack`；在开发机用 `demo/center` 跑通纯 TS 与 `native/` 扩展双态交付与离线运行。
 
 ---
@@ -161,6 +168,10 @@ Demo 生长与总验收：
 ---
 
 # 远期想法暂存中心（非正常里程碑内容，属于未来再说、仅供参考）
+
+## 重要，须尽快考虑加入某个后期正常里程碑：网络和定时器 API
+
+- 需要考虑 API 形态，和在哪侧可用（ts + native？）。
 
 ## `.cta` 内层级作用域脚本，以及模板内、作用域下直写代码的写法支持
 

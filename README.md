@@ -12,8 +12,8 @@ Canton 是原生面向 Windows 的声明式 UI 框架，系同一作者的 Arran
 
 界面文件和独立入口脚本分别如下。
 
-```sfa
-// app/src/MyApp.sfa
+```cta
+// app/src/MyApp.cta
 <template>
     <App &app-handle>
         <Window title="My App" :on-close-request="appHandle.exitApplication">
@@ -24,7 +24,7 @@ Canton 是原生面向 Windows 的声明式 UI 框架，系同一作者的 Arran
 
 <script>
 import { App, Window } from '@canton/framework'
-import MainWindowView from './MainWindowView.sfa'
+import MainWindowView from './MainWindowView.cta'
 </script>
 ```
 

@@ -312,7 +312,7 @@ int main() {
         alignmentLines();
         flowCrossAxisFill();
         repeatedSize();
-        std::cout << "M3 固有尺寸、约束、Flow、父布局数据与有限重复动画通过\n";
+        std::cout << "固有尺寸、约束、Flow、父布局数据与有限重复动画通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

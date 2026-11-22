@@ -62,7 +62,7 @@ import { createFocusRequester } from '@canton/framework'
 import { M, MinSizeMeasurePolicy } from '@canton/framework/ui'
 const target = createFocusRequester()
 function changed(state: { isFocused: boolean; hasFocus: boolean }) {}
-</script>`, 'M3焦点.cta')
+</script>`, '焦点.cta')
     assert.match(compiled.code, /focusRequester.*onFocusChanged.*focusProperties.*focusGroup.*focusable/s)
 })
 

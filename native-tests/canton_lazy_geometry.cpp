@@ -342,7 +342,7 @@ int main() {
         numericBoundary();
         step = "Adaptive 算术边界";
         adaptiveNumericBoundary();
-        std::cout << "M3 Lazy 几何、COW、LRU、零项进度、锚点与网格通过\n";
+        std::cout << "Lazy 几何、COW、LRU、零项进度、锚点与网格通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << step << "：" << error.what() << '\n';

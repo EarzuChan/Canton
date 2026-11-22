@@ -241,7 +241,7 @@ native.submitRearrange(error => {
             requests.push_back(request);
             return request->get_future();
         });
-        const auto started = host.executeModule("m24-painter.js", R"JS(
+        const auto started = host.executeModule("painter.js", R"JS(
 const native = globalThis.__CANTON_NATIVE__
 native.createNode(1, 'Root')
 native.createNode(2, 'LayoutNode')
@@ -275,7 +275,7 @@ const handle = native.acquirePainter('成功', completion => {
         require(transaction.has_value(), "Painter 完成没有提交类型化操作");
 
         // 同一运行时再次获取已解码的地址：新身份、获取即就绪、不再请求加载器
-        const auto caching = host.executeModule("m24-painter-cache.js", R"JS(
+        const auto caching = host.executeModule("painter-cache.js", R"JS(
 const native = globalThis.__CANTON_NATIVE__
 native.createNode(1, 'Root')
 const first = native.acquirePainter('缓存', () => {
@@ -290,19 +290,19 @@ const first = native.acquirePainter('缓存', () => {
         require(cached.ok, cached.error.c_str());
         require(requests.size() == 3 && !host.hasPendingSemanticWork(), "已缓存的资源再次请求了加载器");
 
-        const auto waiting = host.executeModule("m24-painter-reset.js", R"JS(
+        const auto waiting = host.executeModule("painter-reset.js", R"JS(
 const native = globalThis.__CANTON_NATIVE__
 native.createNode(1, 'Root')
 native.acquirePainter('旧上下文', () => { throw new Error('reset 后不得执行旧回调') })
 )JS");
         require(waiting.ok && host.hasPendingSemanticWork(), "未完成资源请求没有登记");
-        const auto reset = host.executeModule("m24-painter-new.js", "globalThis.__CANTON_NATIVE__.createNode(1, 'Root')");
+        const auto reset = host.executeModule("painter-new.js", "globalThis.__CANTON_NATIVE__.createNode(1, 'Root')");
         require(reset.ok, reset.error.c_str());
         requests[3]->set_value({content, {}});
         require(!host.hasPendingSemanticWork(), "reset 后旧资源仍在等待队列");
         require(host.semanticCheckpoint(32).ok, "reset 后迟到结果执行了旧回调");
 
-        const auto failing = host.executeModule("m24-painter-failure.js", R"JS(
+        const auto failing = host.executeModule("painter-failure.js", R"JS(
 const native = globalThis.__CANTON_NATIVE__
 native.createNode(1, 'Root')
 const handle = native.acquirePainter('失败', completion => {
@@ -320,7 +320,7 @@ const handle = native.acquirePainter('失败', completion => {
         {
             canton::quickjs::QuickJsScriptHost temporary;
             temporary.setPainterLoader([late](const std::string&, std::function<void()>) { return late->get_future(); });
-            const auto pending = temporary.executeModule("m24-painter-destroy.js", "const n = globalThis.__CANTON_NATIVE__; n.createNode(1, 'Root'); n.acquirePainter('销毁', () => { throw new Error('销毁后不得回调') })");
+            const auto pending = temporary.executeModule("painter-destroy.js", "const n = globalThis.__CANTON_NATIVE__; n.createNode(1, 'Root'); n.acquirePainter('销毁', () => { throw new Error('销毁后不得回调') })");
             require(pending.ok && temporary.hasPendingSemanticWork(), "销毁用例未创建待完成请求");
         }
         late->set_value({content, {}});
@@ -329,7 +329,7 @@ const handle = native.acquirePainter('失败', completion => {
 
 void scriptExecutionBudgets() {
     canton::quickjs::QuickJsScriptHost host({10, 10, 10});
-    const auto runaway = host.executeModule("m24-budget-module.js", "while (true) {}");
+    const auto runaway = host.executeModule("budget-module.js", "while (true) {}");
     require(!runaway.ok && runaway.error.find("interrupted") != std::string::npos, "长脚本未被耗时预算终止");
 
     const auto source = R"JS(
@@ -337,14 +337,14 @@ const native = globalThis.__CANTON_NATIVE__
 native.installFrameDriver(() => { while (true) {} }, () => {}, () => {})
 native.requestFrame(true)
 )JS";
-    require(host.executeModule("m24-budget-frame.js", source).ok, "预算错误后无法重新加载应用");
+    require(host.executeModule("budget-frame.js", source).ok, "预算错误后无法重新加载应用");
     const auto frame = host.prepareVisualFrame(16);
     require(!frame.ok && frame.error.find("interrupted") != std::string::npos, "视觉回调未被耗时预算终止");
     require(!host.hasPendingTransactions(), "中断帧泄漏了候选事务");
 
-    const auto microtask = host.executeModule("m24-budget-microtask.js", "const n = globalThis.__CANTON_NATIVE__; n.installFrameDriver(() => {}, () => {}, () => {}); Promise.resolve().then(() => { while (true) {} })");
+    const auto microtask = host.executeModule("budget-microtask.js", "const n = globalThis.__CANTON_NATIVE__; n.installFrameDriver(() => {}, () => {}, () => {}); Promise.resolve().then(() => { while (true) {} })");
     require(!microtask.ok && microtask.error.find("interrupted") != std::string::npos, "单个长微任务逃过耗时预算");
-    require(host.executeModule("m24-budget-recover.js", "globalThis.__CANTON_NATIVE__.installFrameDriver(() => {}, () => {}, () => {})").ok, "中断后重新加载未恢复");
+    require(host.executeModule("budget-recover.js", "globalThis.__CANTON_NATIVE__.installFrameDriver(() => {}, () => {}, () => {})").ok, "中断后重新加载未恢复");
 }
 
 void visualCompletionBudgets() {
@@ -465,7 +465,7 @@ int main() {
         cancelledReceipts();
         scriptExecutionBudgets();
         visualCompletionBudgets();
-        std::cout << "M2.4 原生布局、基础呈现与 Painter 契约通过\n";
+        std::cout << "原生布局、基础呈现与 Painter 契约通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
