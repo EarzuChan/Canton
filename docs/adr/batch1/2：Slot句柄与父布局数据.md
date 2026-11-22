@@ -8,7 +8,7 @@ Canton 继承的 Arrange 代码基线将 Slot 表示为无参内容函数，而 
 
 ## Slot 传参与模板绑定
 
-每个 Slot 可声明零个、一个或多个具名参数。Handle（句柄）是其中一种参数，通常把容器交付给内容的一组操作放在一个对象上，Handle 可类比 Compose 中的 Scope（如 ColumnScope vs ColumnHandle），Compose 采用隐式（Receive 玩法）故叫 Scope 合适，而我们因提取时的。普通值和 Handle 使用相同的传参与绑定规则。
+每个 Slot 可声明零个、一个或多个具名参数。Handle（句柄）是其中一种参数，通常把容器交付给内容的一组操作放在一个对象上，Handle 可类比 Compose 中的 Scope（如 ColumnScope vs ColumnHandle），Compose 采用隐式（Receive 玩法）故叫 Scope 合适，而我们因提取时的“显式”而称之为 Handle。普通值和 Handle 使用相同的传参与绑定规则。
 
 提供方用 `defineSlots` 为各槽位声明参数，在每个 `<Slot>` 出口按名称传值。以下用示例组件 `ExampleContainer` 展示三个 Slot。`footer` 有零个参数，`default` 有一个参数，`header` 有两个参数。
 
