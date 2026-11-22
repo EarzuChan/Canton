@@ -1,4 +1,4 @@
-import { painter, Alignment, Arrangement, ContentScale, M } from '@canton/framework/ui'
+import { painter, Alignment, AlignmentLine, Arrangement, ContentScale, M, type BoxHandle, type ColumnHandle, type FlowColumnHandle, type FlowRowHandle, type LazyItemHandle, type RowHandle } from '@canton/framework/ui'
 import { Column, Image, Input, Text, type BoxProps, type ColumnProps, type ImageProps, type InputProps, type RowProps, type TextProps } from '@canton/framework/foundation'
 import { createScrollState, ref, type PropType, type ArrangableProps } from '@canton/framework'
 import { defineArrangable, callArrangable } from '@canton/framework/internal'
@@ -34,6 +34,24 @@ M.align(Alignment.Center)
 M.weight(1)
 // @ts-expect-error 同上
 M.matchParentSize()
+
+declare const box: BoxHandle, row: RowHandle, column: ColumnHandle, flowRow: FlowRowHandle, flowColumn: FlowColumnHandle, lazyItem: LazyItemHandle
+box.align(Alignment.BottomEnd).then(box.matchParentSize())
+row.weight(1, { fill: false }).then(row.align(Alignment.Top)).then(row.alignBy(AlignmentLine.LastBaseline)).then(row.alignByBaseline())
+column.weight(1).then(column.align(Alignment.End))
+flowRow.fillMaxRowHeight(0.5).then(flowRow.alignByBaseline())
+flowColumn.fillMaxColumnWidth().then(flowColumn.weight(1))
+lazyItem.fillParentMaxSize().then(lazyItem.fillParentMaxWidth(0.5)).then(lazyItem.fillParentMaxHeight())
+// @ts-expect-error Box 的 Handle 要求二维对齐
+box.align(Alignment.Top)
+// @ts-expect-error Box 不分配权重
+box.weight(1)
+// @ts-expect-error Row 的 Handle 按垂直方向对齐，基线对齐走 alignByBaseline
+row.align(Alignment.Baseline)
+// @ts-expect-error Column 的 Handle 按水平方向对齐
+column.align(Alignment.Top)
+// @ts-expect-error Column 没有对齐线
+column.alignBy(AlignmentLine.FirstBaseline)
 // @ts-expect-error 旧 CPU 模糊已移除（ADR 006）
 M.blur(1, 0)
 // @ts-expect-error 同上

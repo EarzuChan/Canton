@@ -1,5 +1,5 @@
 import { currentInstance, ValueBinding, invokeContent } from '../runtime/internal.ts'
-import { defineArrangable } from '../runtime/index.ts'
+import { defineArrangable, slotParams } from '../runtime/index.ts'
 import type { ArrangableProps, PropType } from '../runtime/index.ts'
 import { LayoutRearrangeNode, NativeRearrangeHost } from '../bridge/nativeRearrange.ts'
 import { isMeasurePolicy } from '../layout/measurePolicy.ts'
@@ -14,7 +14,7 @@ export type LayoutProps = ArrangableProps<typeof Layout>
 export const Layout = defineArrangable({
     name: 'Layout',
     props: { modifier: { type: Modifier, default: M }, measurePolicy: { type: Object as PropType<MeasurePolicy>, required: true, validator: isMeasurePolicy }, contentProvider: Object as PropType<LayoutContentProvider>, enabled: Boolean },
-    slotNames: ['default'],
+    slots: { default: slotParams() },
     setup(props, { slot, source }) {
         const instance = currentInstance!
 

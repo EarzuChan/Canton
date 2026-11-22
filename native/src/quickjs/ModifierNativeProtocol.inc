@@ -29,6 +29,11 @@ inline constexpr ModifierCallbackField horizontalScrollCallbacks[]{{"onScroll", 
 inline constexpr std::string_view animateContentSizeFields[]{"animationSpec", "clip"};
 inline constexpr std::string_view weightFields[]{"weight", "fill"};
 inline constexpr std::string_view alignFields[]{"alignment"};
+inline constexpr std::string_view alignByFields[]{"line"};
+inline constexpr std::string_view fillCrossAxisFields[]{"fraction"};
+inline constexpr std::string_view fillParentMaxWidthFields[]{"fraction"};
+inline constexpr std::string_view fillParentMaxHeightFields[]{"fraction"};
+inline constexpr std::string_view fillParentMaxSizeFields[]{"fraction"};
 inline constexpr std::string_view offsetFields[]{"x", "y"};
 inline constexpr std::string_view absoluteOffsetFields[]{"x", "y"};
 inline constexpr std::string_view graphicsLayerFields[]{"translationX", "translationY", "scaleX", "scaleY", "rotationZ", "transformOrigin", "alpha", "clip"};
@@ -95,6 +100,11 @@ inline constexpr ModifierProtocolEntry modifierProtocolEntries[]{
     {"weight", weightFields, {}},
     {"align", alignFields, {}},
     {"matchParentSize", {}, {}},
+    {"alignBy", alignByFields, {}},
+    {"fillCrossAxis", fillCrossAxisFields, {}},
+    {"fillParentMaxWidth", fillParentMaxWidthFields, {}},
+    {"fillParentMaxHeight", fillParentMaxHeightFields, {}},
+    {"fillParentMaxSize", fillParentMaxSizeFields, {}},
     {"offset", offsetFields, {}},
     {"absoluteOffset", absoluteOffsetFields, {}},
     {"graphicsLayer", graphicsLayerFields, {}},

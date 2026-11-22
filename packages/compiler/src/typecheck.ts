@@ -14,8 +14,6 @@ declare function __cantonGetters<D, P>(definition: D, parameters: P & Record<Exc
 type __Selected<D, P> = D extends { readonly contentTarget: infer K } ? K extends keyof P ? P[K] extends () => infer Target ? Target : never : never : never
 type __DynamicParameters<D, P> = D extends { readonly contentTarget: string } ? { props?: () => __Parameters<__Selected<D, P>> } : unknown
 declare function __cantonCheck<D, P extends __Values<D>>(definition: D, parameters: P & __DynamicParameters<D, P>, line: number, column: number): P
-type __ContentNames<D, P> = D extends { readonly contentTarget: string } ? __ContentNames<__Selected<D, P>, {}> : D extends { readonly slotNames: readonly (infer N)[] } ? N : never
-declare function __cantonCheckSlots<D, S, P>(definition: D, contents: S & Record<Exclude<keyof S, __ContentNames<D, P> | '_'>, never>, line: number, column: number, parameters: P): S
 `
 
 // 虚拟 TS 文件保留真实定义及参数类型，既检查 script，也检查模板调用
@@ -88,7 +86,7 @@ export function checkCtaProject(configPath: string, roots: readonly string[]): C
         let column = (mapped?.column ?? 0) + 1
         const locate = (node: ts.Node) => {
             if (position < node.getFullStart() || position >= node.end) return
-            if (ts.isCallExpression(node) && ['__cantonCheck', '__cantonCheckSlots'].includes(node.expression.getText(diagnostic.file))) {
+            if (ts.isCallExpression(node) && node.expression.getText(diagnostic.file) === '__cantonCheck') {
                 line = Number(node.arguments[2].getText(diagnostic.file)) + entry.templateLine - 1
                 column = Number(node.arguments[3].getText(diagnostic.file))
             }

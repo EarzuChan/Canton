@@ -54,5 +54,7 @@ export interface CompilerOptions extends ParserOptions {
     filename?: string
     hoistStatic?: boolean
     cantonTypecheck?: boolean
+    // 模块内描述各槽位参数的类型别名名称，出口按它检查实参
+    slotsType?: string
 }
 export type CodegenOptions = CompilerOptions

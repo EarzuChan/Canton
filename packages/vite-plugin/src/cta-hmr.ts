@@ -72,7 +72,7 @@ export function withCtaHmr(code: string, filename: string, script: string, previ
     }
     const options = definition.arguments[0]
     if (ts.isObjectLiteralExpression(options)) output.appendLeft(options.getStart(source) + 1, `\n__hmrId: ${JSON.stringify(id)},`)
-    let contract = ts.isObjectLiteralExpression(options) ? options.properties.filter(property => property.name && ['props', 'slotNames', 'contentTarget'].includes(property.name.getText(source))).map(property => property.getText(source)).join('\n') : ''
+    let contract = ts.isObjectLiteralExpression(options) ? options.properties.filter(property => property.name && ['props', 'slots', 'contentTarget'].includes(property.name.getText(source))).map(property => property.getText(source)).join('\n') : ''
     // provide/inject 和挂载钩子的闭包契约无法自动重放，脚本变化时重挂载该 Arrangable
     const lifecycle = (node: ts.Node) => {
         if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {

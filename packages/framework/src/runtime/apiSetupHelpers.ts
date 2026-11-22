@@ -27,8 +27,12 @@ export function withDefaults<T, Defaults extends InferDefaults<T>>(props: Readon
     throw new Error('withDefaults 只能在 CTA script 中由编译器处理')
 }
 
-export function useSlots(): SetupContext['slots'] {
-    return getContext('useSlots').slots
+export function useSlots<S = Record<string, any>>(): SetupContext<S>['slots'] {
+    return getContext('useSlots').slots as SetupContext<S>['slots']
+}
+
+export function defineSlots<_Slots extends Record<string, object>>(): void {
+    throw new Error('defineSlots 只能在 CTA script 中由编译器处理')
 }
 
 function getContext(calledFunctionName: string): SetupContext {

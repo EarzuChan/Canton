@@ -26,6 +26,8 @@ namespace {
         std::vector<float> heights;
         std::unordered_map<int, NodeId> active;
         NodeId nextId = 2;
+        // 设置后各项改为按视口取比例，不再用固定尺寸
+        std::optional<LayoutModifierSemantics> viewportFill;
 
         explicit Fixture(int count, float height) : heights(count, height) {
             tree.apply({CreateNodeMutation{1, NodeType::Layout}});
@@ -66,6 +68,10 @@ namespace {
         }
 
         void setHeight(int index, NodeId child) {
+            if (viewportFill) {
+                tree.setModifierChain(child, {{*viewportFill}});
+                return;
+            }
             LayoutModifierSemantics size;
             size.kind = LayoutModifierKind::Size;
             size.width = 18;
@@ -204,6 +210,37 @@ namespace {
         check(cached.state().itemMainSizes[0] < 0 && cached.state().measurements.at("key:0").crossConstraint == 45, "grid交叉间距变更继续使用旧宽度的离屏几何");
     }
 
+    void viewportFill() {
+        Fixture fixture(2, 10);
+        fixture.policy.beforePadding = 10;
+        fixture.policy.afterPadding = 20;
+        fixture.policy.crossBeforePadding = 4;
+        fixture.policy.crossAfterPadding = 6;
+        fixture.viewportFill.emplace();
+        fixture.viewportFill->kind = LayoutModifierKind::FillParentMaxSize;
+        fixture.viewportFill->fraction = 0.5f;
+        fixture.settle(100, 60);
+        check(fixture.tree.node(fixture.active.at(0)).bounds == Rect{4, 10, 25, 35}, "fillParentMaxSize 没有按扣除内容边距后的视口取比例");
+        fixture.settle(200, 60);
+        check(fixture.tree.node(fixture.active.at(0)).bounds.height == 85, "视口变化后按视口取比例的项没有重新测量");
+        fixture.viewportFill->kind = LayoutModifierKind::FillParentMaxHeight;
+        fixture.viewportFill->fraction = 1;
+        fixture.settle(200, 60);
+        check(fixture.tree.node(fixture.active.at(0)).bounds.height == 170 && fixture.tree.node(fixture.active.at(0)).bounds.width == 0, "fillParentMaxHeight 改变了另一轴");
+
+        Fixture horizontal(2, 10);
+        horizontal.policy.horizontal = true;
+        horizontal.policy.beforePadding = 10;
+        LayoutModifierSemantics scroll;
+        scroll.kind = LayoutModifierKind::HorizontalScroll;
+        horizontal.tree.setModifierChain(1, {{scroll}});
+        horizontal.viewportFill.emplace();
+        horizontal.viewportFill->kind = LayoutModifierKind::FillParentMaxWidth;
+        horizontal.viewportFill->fraction = 0.5f;
+        horizontal.settle(100, 60);
+        check(horizontal.tree.node(horizontal.active.at(0)).bounds == Rect{10, 0, 25, 0}, "横向列表的 fillParentMaxWidth 没有按主轴视口取比例");
+    }
+
     void materializationGuard() {
         for (int scenario = 0; scenario < 6; ++scenario) {
             NativeScene scene;
@@ -297,6 +334,8 @@ int main() {
         compatibleCacheAndAnchor();
         step = "网格padding/span/排列";
         gridPaddingAndArrangement();
+        step = "项按视口取比例";
+        viewportFill();
         step = "测量期物化范围/原子性";
         materializationGuard();
         step = "Lazy PX 数值边界";

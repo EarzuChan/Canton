@@ -331,17 +331,15 @@ test('AnimatedVisibility 保留退出结构、禁用交互并在卸载时取消�
     assert.equal(animation.animationStats.activeAnimations, baseline)
 })
 
-test('Crossfade 保留退出页参数，中断恢复旧页不重复创建逻辑实例', async () => {
+test('Crossfade 的每一层保留建立时的状态值，中断恢复旧页不重复创建逻辑实例', async () => {
     const native = recordingNative()
     const clock = { advanceBy: (delay: number) => native.frame(native.time + delay) }
     const selected = runtime.ref('A')
     const App = internal.defineArrangable({
         setup: (_props, { call }) => () => call(0, animation.Crossfade, {
-            is: () => foundation.Text,
-            props: () => ({ text: selected.value }),
             targetState: () => selected.value,
             animationSpec: () => animation.tween({ durationMillis: 100, easing: animation.linearEasing }),
-        })
+        }, { default: ({ state }) => call(0, foundation.Text, { text: () => state }) })
     })
     const app = runtime.createApp(App)
     mountFrame(app, native.target)

@@ -62,6 +62,7 @@ flowchart BT
 - 包之间单向依赖；vite-plugin 只在运行期按包导出解析 framework 的 HMR 客户端与内部入口，不静态导入 framework。
 - compiler 按编译阶段平铺：`syntax/` → `template/` → `cta/` → `script/` → `values/`，根目录组装 `compileScript`、`checkCtaProject` 与公开入口。
 - framework 按目录分层，自下而上：`values/` → `native/`（原生协议、日志、资产）→ `runtime/` → `animation/`、`draw/` → `layout/` → `modifier/` → `bridge/`（结构提交、Modifier 降级、事件适配）→ `arrangable/` → `app/`；根目录只放分层入口。
+- 槽位参数只存在于类型：编译产物用类型约束每次调用的内容表（转译时擦除），运行期按值传给内容函数。只对特定父布局有意义的 Modifier（权重、对齐、填充）由布局经默认槽交付的 Handle 构造，原生按实际父级校验。约定见 [batch1 ADR 002](adr/batch1/2：Slot句柄与父布局数据.md) 与 [batch2 ADR 003](adr/batch2/3：槽位参数只在类型层面、父布局数据按种类校验.md)。
 - 各包零循环导入（含仅类型的导入），规则由 `tests/runtime/package-layers.test.ts` 检查。理由见 [batch2 ADR 002](adr/batch2/2：TS包分层、依赖方向与命名.md)。
 
 ## 待清算

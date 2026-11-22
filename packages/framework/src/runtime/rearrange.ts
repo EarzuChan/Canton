@@ -1,5 +1,5 @@
 import { computed, effectScope, pauseTracking, ReactiveEffect, resetTracking, shallowRef, type EffectScope } from '@canton/reactivity'
-import { cantonParameterName } from '@canton/shared'
+import { cantonParameterName, hasOwn } from '@canton/shared'
 import { ArrangableInstance, setCurrentInstance, type AppContext, type InstanceSession, type RearrangeNode, type StructureScope, type ValueTask, type ArrangableDefinition, type ArrangableProps, type CallMetadata, type CallPosition, type RearrangeKey, type Content, type Contents, type Data, type StructureProgram } from './arrangable.ts'
 import { isArrangableDefinition } from './apiDefineArrangable.ts'
 import { PropStore } from './arrangableProps.ts'
@@ -679,30 +679,30 @@ function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope
         props.update(inputs, metadata)
         instance.contents = contents
         const contentVersion = shallowRef(0)
-        const invoke = (name: string) => {
+        const invoke = (name: string, params: object) => {
             contentVersion.value
-            if (instance.contents[name]?.() !== undefined) throw new TypeError('内容函数只能执行 Arrangable 调用，不能返回文本或节点描述')
+            if (instance.contents[name]?.(params) !== undefined) throw new TypeError('内容函数只能执行 Arrangable 调用，不能返回文本或节点描述')
         }
         contentVersions.set(instance, contentVersion)
         const slotFunctions = new Map<string, Content>()
         const slots = new Proxy(Object.create(null) as Record<string, Content>, {
             ownKeys: () => {
                 contentVersion.value
-                return instance.type.contentTarget ? Object.keys(instance.contents) : [...instance.type.slotNames]
+                return Object.keys(instance.type.contentTarget ? instance.contents : instance.type.slots)
             },
             getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
             get: (_target, name) => {
                 if (typeof name !== 'string') return undefined
-                if (!slotFunctions.has(name)) slotFunctions.set(name, () => invoke(name))
+                if (!slotFunctions.has(name)) slotFunctions.set(name, (params: object = noParams) => invoke(name, params))
                 return slotFunctions.get(name)
             },
         })
         instance.setupContext = {
             slots,
             call: callArrangable,
-            slot: (name = 'default') => {
-                if (!instance.type.contentTarget && !instance.type.slotNames.includes(name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
-                return instance.setupContext.slots[name]!
+            slot: (name: string = 'default') => {
+                if (!instance.type.contentTarget && !hasOwn(instance.type.slots, name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
+                return instance.setupContext.slots[name]
             },
             source: name => props.source(name),
         }
@@ -733,6 +733,8 @@ function initializeInstance(instance: ArrangableInstance, parent: RearrangeScope
 }
 
 const contentVersions = new WeakMap<ArrangableInstance, ReturnType<typeof shallowRef<number>>>()
+// 出口没有交付参数时，内容收到的空参数对象
+const noParams = Object.freeze({})
 
 function updateContents(instance: ArrangableInstance, contents: Contents): boolean {
     const before = instance.contents
@@ -795,7 +797,7 @@ class RetainedContents {
     }
 }
 
-export function retainContent(position: CallPosition, key: RearrangeKey, content: Content, max: number): void {
+export function retainContent(position: CallPosition, key: RearrangeKey, content: StructureProgram, max: number): void {
     const parent = requireScope()
     if (!(max > 0) || !Number.isInteger(max)) throw new TypeError('内容保留上限必须是正整数')
     let cache = parent.retainedContents.get(position)
@@ -838,7 +840,8 @@ export function retainContent(position: CallPosition, key: RearrangeKey, content
     })
 }
 
-export function invokeContent(position: CallPosition, content: Content): void {
+// 一个出口对应一个内容作用域；带实参的出口传入 () => content(实参)，实参在该作用域内求值
+export function invokeContent(position: CallPosition, content: StructureProgram): void {
     cantonScope(position, content)
 }
 
@@ -947,8 +950,8 @@ function normalizeInputs(inputs: PropInputs<Data>): PropInputs<Data> {
 
 function validateContents(definition: ArrangableDefinition, contents: Contents): void {
     for (const [name, content] of Object.entries(contents)) {
-        if (!definition.contentTarget && !definition.slotNames.includes(name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
-        if (typeof content !== 'function') throw new TypeError(`内容 ${name} 必须是无参数结构函数`)
+        if (!definition.contentTarget && !hasOwn(definition.slots, name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
+        if (typeof content !== 'function') throw new TypeError(`内容 ${name} 必须是结构函数`)
     }
 }
 

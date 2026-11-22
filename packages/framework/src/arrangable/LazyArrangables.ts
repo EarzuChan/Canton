@@ -1,12 +1,11 @@
 import { computed, onScopeDispose, shallowRef } from '@canton/reactivity'
-import { defineArrangable, onDeactivated } from '../runtime/index.ts'
+import { defineArrangable, onDeactivated, slotParams } from '../runtime/index.ts'
 import { currentInstance, retainContent } from '../runtime/internal.ts'
-import { parameterInputs, parameterObject } from '../runtime/rearrange.ts'
-import type { ArrangableDefinition, ArrangableProps, PropType } from '../runtime/index.ts'
-import { isArrangableDefinition } from '../runtime/apiDefineArrangable.ts'
+import type { ArrangableProps, PropType, SlotTypes, WithSlotTypes } from '../runtime/index.ts'
 import { acknowledgeLazyStateRequest, attachLazyState, createLazyState, lazyStateAppliedRequestVersion, lazyStatePublishedValue, lazyStateRequest, lazyStateStore, pauseLazyState, type LazyItemKey, type LazyState, type LazyStateOwner } from '../layout/lazy.ts'
 import { LazyMeasurePolicy, BoxMeasurePolicy, ColumnMeasurePolicy, RowMeasurePolicy } from '../layout/measurePolicy.ts'
 import { M, Modifier } from '../modifier/modifier.ts'
+import { lazyItemHandle, type LazyItemHandle } from '../modifier/layoutHandle.ts'
 import { GridCells, type GridCellsValue, type GridItemSpanValue, type Padding, PaddingValues, type HorizontalAlignment, type VerticalAlignment } from '../values/primitives.ts'
 import type { HorizontalArrangementProp, VerticalArrangementProp } from '../native/protocol.ts'
 import { Layout } from './Layout.ts'
@@ -20,16 +19,23 @@ function identity(value: unknown, name: string): string {
     throw new TypeError(`${name} 必须是字符串或有限数值`)
 }
 
+type LazyItemParams = { item: any; index: number; lazyItemHandle?: LazyItemHandle }
+
 const LazyItem = defineArrangable({
     name: 'LazyItem',
-    props: { item: null, index: { type: Number, required: true }, definition: { type: Object as PropType<ArrangableDefinition>, required: true }, itemProps: Function as PropType<(item: any, index: number) => Record<string, unknown>>, horizontal: Boolean, grid: Boolean },
-    slotNames: [],
-    setup(props, { call }) {
-        return () => call(0, Layout, { measurePolicy: () => props.grid ? BoxMeasurePolicy() : props.horizontal ? RowMeasurePolicy() : ColumnMeasurePolicy() }, {
-            default: () => call(0, props.definition, parameterInputs(parameterObject(0, () => props.itemProps?.(props.item, props.index) ?? {}))),
-        })
+    props: { item: null, index: { type: Number, required: true }, horizontal: Boolean, grid: Boolean },
+    slots: { default: slotParams<LazyItemParams>() },
+    setup(props, { call, slot }) {
+        const content = slot()
+        // item 与 index 在该项的内容作用域内读取，数据变化只重跑这一项；网格项不交付 Handle
+        const contents = { default: () => content(props.grid ? { item: props.item, index: props.index } : { item: props.item, index: props.index, lazyItemHandle }) }
+        return () => call(0, Layout, { measurePolicy: () => props.grid ? BoxMeasurePolicy() : props.horizontal ? RowMeasurePolicy() : ColumnMeasurePolicy() }, contents)
     },
 })
+
+// 默认槽的 item 类型取自 items 的元素类型
+type LazySlotArgs<P, Handle> = { default: { item: P extends { readonly items: () => readonly (infer T)[] } ? T : unknown; index: number } & Handle }
+interface LazySlots<Handle> extends SlotTypes { readonly slots: LazySlotArgs<this['parameters'], Handle> }
 
 function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
     return defineArrangable({
@@ -38,8 +44,6 @@ function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
             modifier: { type: Modifier, default: M },
             items: { type: Array as PropType<readonly any[]>, required: true },
             itemKey: Function as PropType<(item: any, index: number) => LazyItemKey>,
-            itemContent: { type: Object as PropType<ArrangableDefinition>, required: true, validator: isArrangableDefinition },
-            itemProps: Function as PropType<(item: any, index: number) => Record<string, unknown>>,
             contentType: Function as PropType<(item: any, index: number) => string | number | null>,
             span: Function as PropType<(item: any, index: number) => GridItemSpanValue>,
             state: Object as PropType<LazyState>,
@@ -51,9 +55,10 @@ function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
             contentPadding: { type: Object as PropType<Padding>, default: emptyPadding },
             userScrollEnabled: { type: Boolean, default: true },
         },
-        slotNames: [],
-        setup(props, { call }) {
+        slots: { default: slotParams<LazyItemParams>() },
+        setup(props, { call, slot }) {
             const owner = currentInstance!
+            const itemContents = { default: slot() }
             const defaultState = createLazyState()
             type StateAttachment = { readonly state: LazyState; readonly owner: LazyStateOwner; readonly detach: () => void }
             let attachments = new Map<LazyState, StateAttachment>()
@@ -178,9 +183,8 @@ function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
                     const selected = indices.value
                     // 缓存上限包含本帧活动范围，另保留最多 32 个离屏逻辑项
                     for (const index of selected) retainContent(0, dataset.keys[index], () => call(0, LazyItem, {
-                        item: () => props.items[index], index: () => index, definition: () => props.itemContent, itemProps: () => props.itemProps,
-                        horizontal: () => horizontal, grid: () => grid,
-                    }), selected.length + 32)
+                        item: () => props.items[index], index: () => index, horizontal: () => horizontal, grid: () => grid,
+                    }, itemContents), selected.length + 32)
                 },
             }
             return () => call(0, Layout, {
@@ -219,10 +223,14 @@ function lazyDefinition(name: string, horizontal: boolean, grid: boolean) {
     })
 }
 
-export const LazyColumn = lazyDefinition('LazyColumn', false, false)
-export const LazyRow = lazyDefinition('LazyRow', true, false)
-export const LazyVerticalGrid = lazyDefinition('LazyVerticalGrid', false, true)
-export const LazyHorizontalGrid = lazyDefinition('LazyHorizontalGrid', true, true)
+type LazyDefinition = ReturnType<typeof lazyDefinition>
+type LazyListDefinition = WithSlotTypes<LazyDefinition, LazySlots<{ lazyItemHandle: LazyItemHandle }>>
+type LazyGridDefinition = WithSlotTypes<LazyDefinition, LazySlots<{}>>
+
+export const LazyColumn = lazyDefinition('LazyColumn', false, false) as LazyListDefinition
+export const LazyRow = lazyDefinition('LazyRow', true, false) as LazyListDefinition
+export const LazyVerticalGrid = lazyDefinition('LazyVerticalGrid', false, true) as LazyGridDefinition
+export const LazyHorizontalGrid = lazyDefinition('LazyHorizontalGrid', true, true) as LazyGridDefinition
 export type LazyColumnProps = ArrangableProps<typeof LazyColumn>
 export type LazyRowProps = ArrangableProps<typeof LazyRow>
 export type LazyVerticalGridProps = ArrangableProps<typeof LazyVerticalGrid>

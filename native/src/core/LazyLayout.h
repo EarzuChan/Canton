@@ -72,6 +72,8 @@ namespace canton::core {
         float crossSpacing = 0;
         float contentSize = 0;
         float viewportSize = 0;
+        // 扣除内容边距后的视口，供项内按视口取比例的 Modifier 读取
+        Size itemViewport;
         float scrollOffset = 0;
         float anchorOffset = 0;
         std::string anchorKey;

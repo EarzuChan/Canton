@@ -14,7 +14,6 @@ export const Canvas = defineArrangable({
         controller: { type: Object as PropType<CanvasController>, validator: isCanvasController },
         onDraw: { type: Function as PropType<DrawCallback>, required: true },
     },
-    slotNames: [],
     setup: (props, { call, source }) => () => call(0, Box, {
         modifier: () => canvasModifier(props.modifier, props.onDraw, props.invalidation, props.controller),
     }, {}, { sources: { modifier: source('modifier') ?? source('onDraw') } }),

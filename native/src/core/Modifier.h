@@ -65,7 +65,20 @@ namespace canton::core {
         HorizontalScroll,
         IntrinsicWidth,
         IntrinsicHeight,
+        // 按所在 Lazy 容器的视口（扣除内容边距）取比例
+        FillParentMaxWidth,
+        FillParentMaxHeight,
+        FillParentMaxSize,
     };
+
+    constexpr bool fillsLazyViewport(LayoutModifierKind kind) noexcept {
+        return kind == LayoutModifierKind::FillParentMaxWidth || kind == LayoutModifierKind::FillParentMaxHeight || kind == LayoutModifierKind::FillParentMaxSize;
+    }
+
+    // 按比例取父级约束或 Lazy 视口的各项，比例限定在 0..1
+    constexpr bool fillsByFraction(LayoutModifierKind kind) noexcept {
+        return kind == LayoutModifierKind::FillMaxWidth || kind == LayoutModifierKind::FillMaxHeight || kind == LayoutModifierKind::FillMaxSize || fillsLazyViewport(kind);
+    }
 
     struct LayoutModifierSemantics {
         LayoutModifierKind kind = LayoutModifierKind::Padding;
@@ -85,14 +98,19 @@ namespace canton::core {
         bool operator==(const LayoutModifierSemantics&) const = default;
     };
 
-    enum class ParentDataKind { Weight, Align, MatchParentSize };
+    enum class ParentDataKind { Weight, Align, MatchParentSize, AlignBy, FillCrossAxis };
 
+    // 交给父布局读取的数据；单个描述只带 kind 对应的字段，ModifierChain::parentData() 把整条链合并成一份
     struct ParentDataModifierSemantics {
         ParentDataKind kind = ParentDataKind::Weight;
         float weight = 0.0f;
         bool weightFill = true;
         std::optional<LayoutAlignment> align;
         bool matchParentSize = false;
+        // 与同一行内其它按线对齐的兄弟项对齐到同一条线；与 align 互斥，链上后出现的生效
+        std::optional<AlignmentLine> alignBy;
+        // 占所在 Flow 行（列）交叉轴尺寸的比例
+        std::optional<float> fillCrossAxis;
         bool operator==(const ParentDataModifierSemantics&) const = default;
     };
 

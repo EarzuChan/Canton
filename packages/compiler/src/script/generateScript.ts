@@ -8,14 +8,19 @@ import { DEFAULT_FILENAME, type CTADescriptor, type CTAScriptBlock, type ImportB
 import { warnOnce } from '../cta/warn.ts'
 import { ScriptCompileContext } from './context.ts'
 import { genRuntimeProps, processDefineProps } from './defineProps.ts'
+import { processDefineSlots } from './defineSlots.ts'
 import { transformDestructuredProps } from './definePropsDestructure.ts'
 import type { CTAScriptCompileOptions } from './options.ts'
-import { DEFINE_PROPS, WITH_DEFAULTS, getImportedName, isCallOf, isLiteralNode } from './utils.ts'
+import { DEFINE_PROPS, DEFINE_SLOTS, WITH_DEFAULTS, getImportedName, isCallOf, isLiteralNode } from './utils.ts'
 
 const MACROS = [
     DEFINE_PROPS,
     WITH_DEFAULTS,
+    DEFINE_SLOTS,
 ]
+
+// 模块内描述各槽位参数的类型别名，模板出口与定义的槽位声明共用
+const SLOTS_TYPE = '__Slots'
 
 // 生成保有单位声明的中间 TS，供当前文件及跨 CTA 契约分析共同使用
 export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileOptions): CTAScriptBlock {
@@ -108,7 +113,7 @@ export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileO
     }
 
     for (const node of scriptAst.body) {
-        if (node.type === 'ExpressionStatement' && processDefineProps(ctx, unwrapTSNode(node.expression))) {
+        if (node.type === 'ExpressionStatement' && (processDefineProps(ctx, unwrapTSNode(node.expression)) || processDefineSlots(ctx, unwrapTSNode(node.expression)))) {
             ctx.s.remove(node.start! + startOffset, node.end! + startOffset)
         }
 
@@ -121,6 +126,7 @@ export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileO
                 const decl = node.declarations[i]
                 const init = decl.init && unwrapTSNode(decl.init)
                 if (init) {
+                    if (isCallOf(init, DEFINE_SLOTS)) ctx.error(`${DEFINE_SLOTS}() 只能写成顶层语句，没有返回值；要读取槽位请用 useSlots()`, init)
                     const isDefineProps = processDefineProps(ctx, init, decl.id as LVal)
                     if (ctx.propsDestructureRestId) {
                         setupBindings[ctx.propsDestructureRestId] = BindingTypes.SETUP_REACTIVE_CONST
@@ -241,6 +247,7 @@ export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileO
                 inline: true,
                 isTS: ctx.isTS,
                 bindingMetadata: ctx.bindingMetadata,
+                slotsType: SLOTS_TYPE,
             },
         })
         slotNames = ast?.slotNames ?? []
@@ -273,7 +280,14 @@ export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileO
 
     const genDefaultAs = options.genDefaultAs ? `const ${options.genDefaultAs} =` : `export default`
 
-    let runtimeOptions = `\n    __file: ${JSON.stringify(filename)},\n    slotNames: ${JSON.stringify(slotNames)},`
+    let runtimeOptions = `\n    __file: ${JSON.stringify(filename)},`
+    let slotTypes = ''
+    if (slotNames.length) {
+        // 模板出口决定有哪些槽位，defineSlots 没有写到的槽位没有参数
+        const declared = ctx.slotsCall?.typeParameters ? ctx.getString(ctx.slotsCall.typeParameters.params[0]) : '{}'
+        slotTypes = `type __DefinedSlots = ${declared}\ntype ${SLOTS_TYPE} = { [K in ${slotNames.map(name => JSON.stringify(name)).join(' | ')}]: K extends keyof __DefinedSlots ? __DefinedSlots[K] : {} }\n`
+        runtimeOptions += `\n    slots: { ${slotNames.map(name => `${JSON.stringify(name)}: ${ctx.helper('slotParams')}<${SLOTS_TYPE}[${JSON.stringify(name)}]>()`).join(', ')} },`
+    }
     if (filename && filename !== DEFAULT_FILENAME) {
         const match = filename.match(/([^/\\]+)\.\w+$/)
         if (match) {
@@ -283,7 +297,7 @@ export function generateCtaScript(cta: CTADescriptor, options: CTAScriptCompileO
 
     if (propsDecl) runtimeOptions += `\n  props: ${propsDecl},`
 
-    ctx.s.prependLeft(startOffset, `\n${genDefaultAs} ${ctx.helper('defineArrangable')}({${runtimeOptions}\n    setup(${args}) {\n`)
+    ctx.s.prependLeft(startOffset, `\n${slotTypes}${genDefaultAs} ${ctx.helper('defineArrangable')}({${runtimeOptions}\n    setup(${args}) {\n`)
     ctx.s.appendRight(endOffset, `})`)
 
     // 汇总 Canton 编译辅助函数导入

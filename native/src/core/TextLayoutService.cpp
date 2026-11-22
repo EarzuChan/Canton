@@ -107,6 +107,7 @@ namespace canton::core {
 
         result.height = result.lineHeight * static_cast<float>(result.lines.size());
         result.baseline = result.lineHeight * 0.8f;
+        result.lastBaseline = result.height - result.lineHeight + result.baseline;
         result.inkBounds = {0, 0, result.width, result.height};
         return result;
     }

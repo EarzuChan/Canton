@@ -223,3 +223,36 @@ for (const failure of ['setup', 'native'] as const) test(`CTA ${failure} 失败�
     assert.equal(count, previous)
     app.unmount()
 })
+
+test('CTA 模板热更新增删槽位参数绑定与出口实参，保留 ref、setup 与 native 节点，槽位局部名不被当作 script 变量', () => {
+    const providerId = 'hmr-slot-provider.cta', consumerId = 'hmr-slot-consumer.cta'
+    let count: any
+    let setups = 0
+    // 依赖模块对象不变，脚本才不会因依赖更新而重建 setup
+    const providerState = {
+        capture: (value: any) => {
+            count = value
+            setups++
+        }
+    }
+    const provider = (outlet: string) => `<script>import {ref} from '@canton/framework'\nimport {capture} from './state'\nconst count = ref(1)\ncapture(count)\ndefineSlots<{ default: { value: number; unit?: string } }>()</script><template>${outlet}</template>`
+    const consumer = (content: string) => `<script>import {Provider} from './state'\nconst value = '外层'</script><template><Text :text="value" />${content}</template>`
+    const Provider = evaluate(provider('<Slot :value="count" />'), providerId, providerState)
+    const app = createApp(evaluate(consumer('<Provider &value><Text :text="String(value)" /></Provider>'), consumerId, { Provider }))
+    const native = recordingNative()
+    mountFrame(app, native.target)
+    count.value = 5
+    advanceFrames()
+    const initial = native.textNodes()
+    assert.deepEqual(initial.map(node => node.text), ['外层', '5'])
+
+    applyArrangableHmr(consumerId, evaluate(consumer('<Provider &value="current" &unit><Text :text="value + current + (unit ?? \'\')" /></Provider>'), consumerId, { Provider }))
+    advanceFrames()
+    assert.deepEqual(native.textNodes(), [initial[0], { id: initial[1].id, text: '外层5' }])
+
+    applyArrangableHmr(providerId, evaluate(provider('<Slot :value="count" unit="个" />'), providerId, providerState))
+    advanceFrames()
+    assert.deepEqual(native.textNodes(), [initial[0], { id: initial[1].id, text: '外层5个' }])
+    assert.equal(setups, 1)
+    app.unmount()
+})

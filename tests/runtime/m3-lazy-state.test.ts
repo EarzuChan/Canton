@@ -31,7 +31,7 @@ function feedback(node: RecordedLayoutNode, value: object): void {
 function rootFor(source: { value: LazyState | undefined }) {
     return defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => items, itemContent: () => Item, itemProps: () => (index: number) => ({ index }), state: () => source.value })
+            return () => call(0, LazyColumn, { items: () => items, state: () => source.value }, { default: ({ item }) => call(0, Item, { index: () => item }) })
         }
     })
 }
@@ -111,8 +111,8 @@ test('Lazy 两个活跃 Layout 可在同一候选交换 state，重复连接仍�
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
             return () => {
-                call(0, LazyColumn, { items: () => items, itemContent: () => Item, state: () => first.value })
-                call(1, LazyColumn, { items: () => items, itemContent: () => Item, state: () => second.value })
+                call(0, LazyColumn, { items: () => items, state: () => first.value }, { default: () => call(0, Item, {}) })
+                call(1, LazyColumn, { items: () => items, state: () => second.value }, { default: () => call(0, Item, {}) })
             }
         }
     }))
@@ -172,11 +172,12 @@ test('同一材料化候选 A→B→A 只保留最终 state owner，失败也恢
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
             return () => call(0, LazyColumn, {
-                items: () => items, itemContent: () => Item,
-                itemProps: () => (index: number) => {
-                    if (switchDuringMaterialize) source.value = index === 1 ? b : a
-                    return { index }
-                }, state: () => source.value
+                items: () => items, state: () => source.value,
+            }, {
+                default: ({ item }) => {
+                    if (switchDuringMaterialize) source.value = item === 1 ? b : a
+                    call(0, Item, { index: () => item })
+                },
             })
         }
     }))
@@ -214,7 +215,7 @@ test('KeepAlive 成功停用才结束 Lazy 动画，恢复失败保留旧 owner�
     const Page = defineArrangable({
         setup(_props, { call }) {
             setups++
-            return () => call(0, LazyColumn, { items: () => items, itemContent: () => Item, state: () => source.value })
+            return () => call(0, LazyColumn, { items: () => items, state: () => source.value }, { default: () => call(0, Item, {}) })
         }
     })
     const app = createApp(defineArrangable({
@@ -286,7 +287,7 @@ for (const keepAlive of [false, true]) test(`${keepAlive ? 'KeepAlive' : '条件
     const errors: unknown[] = []
     const Page = defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, itemContent: () => Item, state: () => state })
+            return () => call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, state: () => state }, { default: () => call(0, Item, {}) })
         }
     })
     const app = createApp(defineArrangable({
@@ -360,7 +361,7 @@ test('Lazy 恢复首项 key 被删除时回退到已发布索引，重试仍保�
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
             return () => {
-                if (shown.value) call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, itemContent: () => Item, state: () => state })
+                if (shown.value) call(0, LazyColumn, { items: () => data.value, itemKey: () => (item: number) => item, state: () => state }, { default: () => call(0, Item, {}) })
             }
         }
     }))

@@ -145,7 +145,6 @@ test('真实 CTA 空分支、多根与重复内容调用维护插入顺序及独
     app.unmount()
 })
 
-
 test('对象绑定区分形状和值，字段变化不唤醒结构，移除字段恢复声明默认值', async () => {
     const values = runtime.ref<Record<string, unknown>>({ text: '正文', style: { color: 1 } })
     const Root = evaluateCta("<template><Text c-bind=\"inputs\" /></template><script>import { computed } from '@canton/framework'\nimport type { TextStyleProp } from '@canton/framework/ui'\nimport { values } from \"./state\"\nconst inputs = computed(() => values.value as { text?: string; style?: TextStyleProp })\n</script>", { values })
@@ -228,11 +227,6 @@ test('真实 CTA 的 #header 交付具名多根内容及默认内容', () => {
     assert.deepEqual(updated.map(node => node.id), initial.map(node => node.id))
     assert.deepEqual(updated.map(node => node.text), ['更新标题', '副标题', '正文'])
     app.unmount()
-})
-
-test('CTA 拒绝长写槽位指令', () => {
-    const source = '<template><Template c-slot:header><Text text="标题" /></Template></template>'
-    assert.throws(() => compileCantonCta(source, '具名内容.cta'), /不支持的模板指令/)
 })
 
 test('固定 Modifier 链只重新求值失效分段并精确写入既有实例', async () => {
@@ -333,7 +327,6 @@ test('列表词法环境中的固定 Modifier 链保持分段缓存，重排后�
     app.unmount()
 })
 
-
 test('KeepAlive 保留调用生命，停用释放原生受体，恢复交付最新输入', async () => {
     const selected = runtime.ref('A')
     const value = runtime.ref('初始')
@@ -368,7 +361,6 @@ test('KeepAlive 保留调用生命，停用释放原生受体，恢复交付最�
     app.unmount()
     assert.equal(disposals, 1)
 })
-
 
 test('KeepAlive 多根内容按 LRU 淘汰，隐藏项与活动项卸载均只释放一次', async () => {
     const selected = runtime.ref('A')

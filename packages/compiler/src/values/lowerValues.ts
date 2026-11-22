@@ -34,7 +34,7 @@ interface CtaColorFactory {
 }
 export declare const Color: CtaColorFactory
 `
-    const analysisPrelude = "\nimport * as __CantonUnitsFoundation from '@canton/framework/foundation'\nimport * as __Foundation from '@canton/framework/foundation'\nimport * as __CantonUnitsRoot from '@canton/framework'\nimport * as __CantonUnitsUi from '@canton/framework/ui'\nimport * as __CantonUnitsAnimation from '@canton/framework/animation'\nimport * as __CantonUnitsInternal from '@canton/framework/internal'\ndeclare function __cantonCheck(...args: any[]): any\n"
+    const analysisPrelude = "\nimport * as __CantonUnitsFoundation from '@canton/framework/foundation'\nimport * as __Foundation from '@canton/framework/foundation'\nimport * as __CantonUnitsRoot from '@canton/framework'\nimport * as __CantonUnitsUi from '@canton/framework/ui'\nimport * as __CantonUnitsAnimation from '@canton/framework/animation'\nimport * as __CantonUnitsInternal from '@canton/framework/internal'\ndeclare function __cantonCheck<P>(definition: unknown, parameters: P, line: number, column: number): P\n"
     host.readFile = file => {
         if (resolve(file) === entry) return normalizedEntry.content + analysisPrelude
         if (colorModulePath && resolve(file) === colorModulePath) return `${read(file) ?? ''}${colorDeclarations}`

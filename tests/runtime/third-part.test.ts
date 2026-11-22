@@ -7,7 +7,7 @@ import { checkCtaProject } from '../../packages/compiler/src/typecheck.ts'
 import { createApp, ref, provide, nextTick, onMounted, onScopeDispose, watch, watchPostEffect } from '@canton/framework'
 import { Layout, Text, Input, DynamicArrangable, KeepAlive } from '@canton/framework/foundation'
 import { M, createDensity, DensityKey, MinSizeMeasurePolicy, rounded } from '@canton/framework/ui'
-import { defineArrangable } from '@canton/framework/internal'
+import { defineArrangable, slotParams } from '@canton/framework/internal'
 import { animatedNumberAsRef, linearEasing, tween } from '@canton/framework/animation'
 import { compileCantonCta } from '../../packages/vite-plugin/src/ctaTransform.ts'
 import { recordingNative } from './recordingNative.ts'
@@ -253,7 +253,7 @@ test('Density 解析失败保留旧帧，恢复有效倍率后只更新真实消
 test('动态调用转交具名内容并按选中目标校验，失败保留旧帧', () => {
     const selected = ref(false)
     const errors: unknown[] = []
-    const Page = defineArrangable({ slotNames: ['header'], setup: (_props, { slot }) => slot('header') })
+    const Page = defineArrangable({ slots: { header: slotParams() }, setup: (_props, { slot }) => slot('header') })
     const Empty = defineArrangable({ setup: () => () => { } })
     const native = recordingNative()
     const app = createApp(defineArrangable({ setup: (_props, { call }) => () => call(0, DynamicArrangable, { is: () => selected.value ? Empty : Page }, { header: () => call(0, Text, { text: () => '标题' }) }) }))
@@ -352,7 +352,7 @@ test('动态定义的 props 与具名内容在真实 CTA 类型检查中按所�
         writeFileSync(file, source('{ title: 123 }', 'footer'))
         const diagnostics = checkCtaProject(resolve('tsconfig.json'), [file])
         assert.ok(diagnostics.some(item => /string/.test(item.message)), JSON.stringify(diagnostics))
-        assert.ok(diagnostics.some(item => /never/.test(item.message)), JSON.stringify(diagnostics))
+        assert.ok(diagnostics.some(item => /"footer"/.test(item.message)), JSON.stringify(diagnostics))
     } finally {
         rmSync(directory, { recursive: true })
     }

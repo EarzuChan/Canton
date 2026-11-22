@@ -111,9 +111,19 @@ const tokenizer = new Tokenizer(stack, {
         }
     },
     onattribname(start, end) {
-        currentProp = {
+        const name = getSlice(start, end)
+        // & 开头的属性绑定槽位参数，其后整段是参数名
+        currentProp = name.charCodeAt(0) === CharCodes.Amp ? {
+            type: NodeTypes.DIRECTIVE,
+            name: 'param',
+            rawName: name,
+            exp: undefined,
+            arg: createSimpleExpression(name.slice(1), true, getLoc(start + 1, end)),
+            modifiers: [],
+            loc: getLoc(start),
+        } : {
             type: NodeTypes.ATTRIBUTE,
-            name: getSlice(start, end),
+            name,
             nameLoc: getLoc(start, end),
             value: undefined,
             loc: getLoc(start),
@@ -202,7 +212,8 @@ const tokenizer = new Tokenizer(stack, {
                             quote === QuoteType.Unquoted ? getLoc(currentAttrStartIndex, currentAttrEndIndex) : getLoc(currentAttrStartIndex - 1, currentAttrEndIndex + 1),
                     }
                 } else {
-                    const expParseMode = currentProp.name === 'for' ? ExpParseMode.Skip : ExpParseMode.Normal
+                    // 槽位参数的值是别名或解构模式，按形参解析
+                    const expParseMode = currentProp.name === 'for' ? ExpParseMode.Skip : currentProp.name === 'param' ? ExpParseMode.Params : ExpParseMode.Normal
                     const trimmed = currentAttrValue.trim()
                     const preserveRef = currentProp.name === 'bind' && isRawRefExpression(trimmed)
                     const expressionStart = preserveRef ? currentAttrStartIndex + currentAttrValue.indexOf('<') + 1 : currentAttrStartIndex

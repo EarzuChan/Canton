@@ -32,17 +32,19 @@
 
 ---
 
-## M2：`.cta` 槽位句柄与布局正规化（ADR B1：2）
+## M2：`.cta` 槽位句柄与布局正规化（ADR B1：2）：已完成
 
-目标：在点亮新窗口前先锁定终态 `.cta` DSL 与布局 Handle 体系，确保自 M3 起所有新界面与 Demo 全部以终态语法编写、零返工。
+目标：在点亮新窗口前先锁定终态 `.cta` DSL 与布局 Handle 体系，确保自 M3 起所有新界面与 Demo 全部以终态语法编写、零返工。施工清单见 [m2.md](m2.md)。
 
 范围：
-- **编译器与类型检查**：新增 `&handle` 词法/解析与词法作用域遮蔽（含同名绑定与别名）、砍掉 `a-slot:*`/`c-slot:*` 仅保留 `#name`、放开 `<Slot>` 具名传参、新增 `defineSlots<...>()` 与 `.cta` 离线类型检查推导和诊断。
-- **运行时与布局组件**：`Content` 支持参数传递与多出口独立作用域；`Box`、`Row`、`Column`、`FlowRow`、`FlowColumn` 升级产出对应布局 Handle（接回底层 `ParentData`）；恢复并扩写依赖布局 Handle 的端到端用例。
+- **编译器与类型检查**：新增 `&handle` 词法/解析与词法作用域遮蔽（含同名绑定、别名与解构）、砍掉 `a-slot:*`/`c-slot:*` 仅保留 `#name`、放开 `<Slot>` 具名传参、新增 `defineSlots<...>()` 与 `.cta` 离线类型检查推导和诊断。
+- **运行时与布局组件**：`Content` 支持参数传递与多出口独立作用域；`Box`、`Row`、`Column`、`FlowRow`、`FlowColumn` 升级产出对应布局 Handle（接回底层 `ParentData`）；Lazy 四件套与 `Crossfade` 由传定义改为槽位传参；恢复并扩写依赖布局 Handle 的用例。
+- **布局能力补齐**：按对齐线对齐（`alignBy` / `alignByBaseline`）、Flow 交叉轴填充（`fillMaxRowHeight` / `fillMaxColumnWidth`）、Lazy 项按视口填充（`fillParentMaxSize` 等）。
 - **HMR 兼容**：保状态 HMR 与槽位参数更新路径适配。
 
 验收：
-- 零参/单参/多参、默认槽与具名槽、嵌套同名 Handle 别名区分、跨组件转交错误父级布局诊断全部通过自动化测试。
+- 零参/单参/多参、默认槽与具名槽、嵌套同名 Handle 别名区分通过自动化测试。
+- 跨组件转交与错误父级布局诊断分两段验证：TS 侧验 Handle 片段经参数转交后不变，C++ core 验错误父级报错；从 `.cta` 贯通到布局结果的用例移交 M3。
 - 现有测试与内置布局迁移完成，旧公开布局 Modifier 不可用。
 
 ---
@@ -56,6 +58,7 @@
 - **文本引擎**：DirectWrite 排版接入 `TextLayoutService` 与 GPU 字形图集（Atlas），支持字体加载与预加载屏障。
 - **稳健性**：Feature Level 11_0 + WARP 透明回退与 `DEVICE_REMOVED`/`DEVICE_RESET` 自动重建。
 - **宿主条件编译与运行时实装**：补齐 `native/src/runtime/` 的 Windows 原生工具替换（`UiPackage` ZIP/JSON/`BCrypt`、Live WinSock/WinHTTP 客户端、WIC/SVG 图像解码）；跑通 `CANTON_ENABLE_DEV` 条件编译、`CANTON_DEV_*` 加载规矩（`lfd`/`live`/`dist`）与最小 Win32 承载窗 + Vite Live HMR。
+- **承接 M2**：从 `.cta` 夹具经 QuickJS 进 core 场景树，断言布局结果与错误父级报错的贯通用例；首屏点亮后补 Lazy 项的 `animateItem`（位移动画、淡入淡出），网格项的 Handle 随之交付。
 
 Demo 生长：
 - **`demo/center` 破壳点亮**（本阶段由仓库脚本驱动）：首屏跑起基础布局、文本与字体、图片、滚动/Lazy、动画、Canvas 展页，支持改 `.cta` 热更新、错误屏与恢复。
@@ -120,7 +123,7 @@ Demo 生长：
 
 范围：
 - **2×2 宿主扩展端就位**：完善 `CANTON_ENABLE_NATIVE_EXT=1` 的 `ext` 宿主与 C ABI 导出函数表（`canton_abi.h`），保证 `mini` 版（`EXT=0`）物理不含扩展加载路径且 4 份宿主共享同一 `QuickJsBuildIdentity`。
-- **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`、同步 `ctx.assets()`、`ctx.paths()` 与 `canton::fs`。
+- **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`（回调形式的 `alignBy` 随它一起定）、同步 `ctx.assets()`、`ctx.paths()` 与 `canton::fs`。
 - **防劫持安全加载**：清单声明扩展 DLL 相对路径与 SHA-256，Dist 加载前校验哈希并限定 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`，握手校验 ABI 版本与结构体尺寸。
 
 Demo 生长：

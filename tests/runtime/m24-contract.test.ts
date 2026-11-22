@@ -340,7 +340,7 @@ test('CTA 类型检查按 paths 解析定义并拒绝未声明具名内容', () 
 
         writeFileSync(join(directory, 'Bad.cta'), "<template><Receiver><Template #footer><Text text=\"误传\" /></Template></Receiver></template><script>import Receiver from \"@views/Receiver.cta\"\n</script>")
         const diagnostics = checkCtaProject(join(directory, 'tsconfig.json'), [join(directory, 'Bad.cta')])
-        assert.ok(diagnostics.some(item => item.file.endsWith('Bad.cta') && item.line === 1 && /never/.test(item.message)), JSON.stringify(diagnostics))
+        assert.ok(diagnostics.some(item => item.file.endsWith('Bad.cta') && item.line === 1 && /"footer"/.test(item.message)), JSON.stringify(diagnostics))
     } finally {
         rmSync(directory, { recursive: true })
     }

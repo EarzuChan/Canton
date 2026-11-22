@@ -320,14 +320,20 @@ namespace canton::quickjs {
                 item.height = requiredNumberField(payload, "height", type);
                 if (failed_) return {};
                 result.push_back({item, key});
-            } else if (type == "fillMaxWidth" || type == "fillMaxHeight" || type == "fillMaxSize") {
+            } else if (type == "fillMaxWidth" || type == "fillMaxHeight" || type == "fillMaxSize" || type == "fillParentMaxWidth" || type == "fillParentMaxHeight" || type == "fillParentMaxSize") {
                 canton::core::LayoutModifierSemantics item;
                 if (type == "fillMaxWidth")
                     item.kind = canton::core::LayoutModifierKind::FillMaxWidth;
                 else if (type == "fillMaxHeight")
                     item.kind = canton::core::LayoutModifierKind::FillMaxHeight;
-                else
+                else if (type == "fillMaxSize")
                     item.kind = canton::core::LayoutModifierKind::FillMaxSize;
+                else if (type == "fillParentMaxWidth")
+                    item.kind = canton::core::LayoutModifierKind::FillParentMaxWidth;
+                else if (type == "fillParentMaxHeight")
+                    item.kind = canton::core::LayoutModifierKind::FillParentMaxHeight;
+                else
+                    item.kind = canton::core::LayoutModifierKind::FillParentMaxSize;
                 item.fraction = numberField(payload, "fraction", 1.0f);
                 result.push_back({item, key});
             } else if (type == "widthIn" || type == "heightIn" || type == "sizeIn") {
@@ -492,7 +498,7 @@ namespace canton::quickjs {
                     }
                 }
                 result.push_back({item, key});
-            } else if (type == "weight" || type == "align" || type == "matchParentSize") {
+            } else if (type == "weight" || type == "align" || type == "matchParentSize" || type == "alignBy" || type == "fillCrossAxis") {
                 canton::core::ParentDataModifierSemantics item;
                 if (type == "weight") {
                     item.weight = requiredNumberField(payload, "weight", type);
@@ -502,10 +508,22 @@ namespace canton::quickjs {
                     const auto name = requiredStringField(payload, "alignment", type);
                     item.align = canton::core::parseLayoutAlignment(name);
                     if (!failed_ && !item.align) {
-                        JS_ThrowTypeError(context_, "Canton Modifier.align 不支持对齐值：'%s'", name.c_str());
+                        JS_ThrowTypeError(context_, "align 不支持对齐值：'%s'", name.c_str());
                         failed_ = true;
                         return {};
                     }
+                } else if (type == "alignBy") {
+                    item.kind = canton::core::ParentDataKind::AlignBy;
+                    const auto name = requiredStringField(payload, "line", type);
+                    item.alignBy = canton::core::parseAlignmentLine(name);
+                    if (!failed_ && !item.alignBy) {
+                        JS_ThrowTypeError(context_, "alignBy 不支持对齐线：'%s'", name.c_str());
+                        failed_ = true;
+                        return {};
+                    }
+                } else if (type == "fillCrossAxis") {
+                    item.kind = canton::core::ParentDataKind::FillCrossAxis;
+                    item.fillCrossAxis = requiredNumberField(payload, "fraction", type);
                 } else
                     item.kind = canton::core::ParentDataKind::MatchParentSize;
                 result.push_back({item, key});

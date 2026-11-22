@@ -25,6 +25,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
     const setup: string[] = []
     const bindings = options.bindingMetadata ?? {}
     const filename = options.filename ?? '模板.cta'
+    const runtimeModule = options.runtimeModuleName ?? '@canton/framework/internal'
 
     const map = new SourceMapGenerator({ file: filename })
     map.setSourceContent(filename, ast.source)
@@ -51,6 +52,13 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
         },
     }
 
+    // 模板内声明的局部名在生成其作用范围期间登记，表达式改写据此不把它们当作 script 绑定
+    const scoped = <T>(names: readonly string[], generate: () => T): T => {
+        for (const name of names) context.identifiers[name] = (context.identifiers[name] ?? 0) + 1
+        try { return generate() } finally { for (const name of names) context.identifiers[name]-- }
+    }
+    const hasLocals = () => Object.values(context.identifiers).some(count => count > 0)
+
     const expression = (node: ExpressionNode | undefined): string => {
         if (!node) return 'undefined'
 
@@ -76,7 +84,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
         if (!segments.length || current.type !== 'Identifier' || !bindings.__cantonModifierRoots?.includes(current.name)) return
         const name = `__modifier${identity}`
         const invocation = `${helper('cantonModifier')}(${current.name}, [${segments.map(segment => `[${JSON.stringify(segment.method)}, () => [${segment.args.join(', ')}]]`).join(', ')}], ${JSON.stringify(`${filename}:${node.loc.start.line}:${node.loc.start.column}`)})`
-        if (Object.values(context.identifiers).some(count => count > 0)) return invocation
+        if (hasLocals()) return invocation
         setup.push(`const ${name} = ${invocation}`)
         return name
     }
@@ -97,6 +105,22 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
     const emit = (text: string, loc: SourceLocation): string => {
         const index = locations.push(loc) - 1
         return `\u0000${index}\u0000${text}`
+    }
+
+    // 内容函数按值接收槽位参数：owner 上的 & 绑定降为形参解构，局部名只在内容内可见
+    const content = (owner: ElementNode, nodes: TemplateChildNode[]): string => {
+        const locals: string[] = []
+        const bindings = owner.props.flatMap(prop => {
+            if (prop.type !== NodeTypes.DIRECTIVE || prop.name !== 'param') return []
+            const name = camelize((prop.arg as SimpleExpressionNode).content)
+            const pattern = prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION && prop.exp.content.trim() ? processExpression({ ...prop.exp }, context, true) : undefined
+            for (const local of pattern ? pattern.identifiers ?? [stringifyExpression(pattern)] : [name]) {
+                if (locals.includes(local)) throw Object.assign(new SyntaxError(`槽位参数的局部名重复：${local}`), { code: 'CANTON_TEMPLATE', loc: prop.loc })
+                locals.push(local)
+            }
+            return [emit(pattern ? `${name}: ${stringifyExpression(pattern)}` : name, prop.loc)]
+        })
+        return `(${bindings.length ? `{ ${bindings.join(', ')} }` : ''}) => {\n${scoped(locals, () => children(nodes))}\n}`
     }
 
     const children = (nodes: TemplateChildNode[]): string => {
@@ -145,10 +169,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
             const id = position++
             const source = expression(parsed.source)
             const aliases = [parsed.value, parsed.key, parsed.index].map((value, index) => value?.type === NodeTypes.SIMPLE_EXPRESSION ? value.content : `__item${id}_${index}`)
-            for (const alias of aliases) for (const name of alias.match(/[A-Za-z_$][\w$]*/g) ?? []) context.identifiers[name] = (context.identifiers[name] ?? 0) + 1
-            const identity = key(node)
-            const body = element(node, skipIf, true)
-            for (const alias of aliases) for (const name of alias.match(/[A-Za-z_$][\w$]*/g) ?? []) context.identifiers[name]--
+            const [identity, body] = scoped(aliases.flatMap(alias => alias.match(/[A-Za-z_$][\w$]*/g) ?? []), () => [key(node), element(node, skipIf, true)])
             return `${helper('cantonScope')}(${id}, () => ${helper('cantonList')}(${id}, ${source}, (${aliases.join(', ')}) => ${identity}, (${aliases.join(', ')}) => {\n${body}\n}), undefined, ${location(node.loc)})`
         }
 
@@ -157,8 +178,23 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
         if (node.tag === 'Slot') {
             const named = node.props.find(prop => prop.type === NodeTypes.ATTRIBUTE && prop.name === 'name')
             const name = named?.type === NodeTypes.ATTRIBUTE ? named.value?.content ?? 'default' : 'default'
-            setup.push(`const __content${id} = ${helper('useSlots')}()[${JSON.stringify(name)}]`)
-            return `${helper('invokeContent')}(${id}, __content${id})`
+            setup.push(`const __content${id} = ${helper('useSlots')}${options.slotsType ? `<${options.slotsType}>` : ''}()[${JSON.stringify(name)}]`)
+            const args: string[] = []
+            for (const prop of node.props) {
+                if (prop.type === NodeTypes.DIRECTIVE && prop.name !== 'bind') continue
+                const argument = prop.type === NodeTypes.ATTRIBUTE ? prop.name : (prop.arg as SimpleExpressionNode).content
+                if (argument === 'name' || argument === 'key') continue
+                const value = prop.type === NodeTypes.ATTRIBUTE ? JSON.stringify(prop.value?.content ?? true) : expression(prop.exp)
+                args.push(emit(`${JSON.stringify(camelize(argument))}: ${value}`, prop.loc))
+            }
+            if (!args.length) return `${helper('invokeContent')}(${id}, __content${id})`
+            // 实参在该出口的内容作用域内求值；不引用模板局部名时出口函数只建一次，父级重排不会连带重跑内容
+            let outlet = emit(`() => __content${id}({ ${args.join(', ')} })`, node.loc)
+            if (!hasLocals()) {
+                setup.push(`const __outlet${id} = ${outlet}`)
+                outlet = `__outlet${id}`
+            }
+            return `${helper('invokeContent')}(${id}, ${outlet})`
         }
 
         const binding = bindings[node.tag]
@@ -220,30 +256,34 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
 
             if (slot && child.type === NodeTypes.ELEMENT) {
                 const name = slot.arg?.type === NodeTypes.SIMPLE_EXPRESSION ? slot.arg.content : 'default'
-                slots.push(`${JSON.stringify(name)}: () => {\n${children(child.children)}\n}`)
+                slots.push(emit(`${JSON.stringify(name)}: ${content(child, child.children)}`, child.loc))
                 slotNames.push(name)
             } else defaultChildren.push(child)
         }
 
+        // 没有默认内容时不生成内容函数，标签上的 & 绑定无处可落，随之略去，也不参与类型检查
         if (defaultChildren.some(child => child.type === NodeTypes.ELEMENT)) {
-            slots.push(`default: () => {\n${children(defaultChildren)}\n}`)
+            slots.push(emit(`default: ${content(node, defaultChildren)}`, node.loc))
             slotNames.push('default')
         }
 
         let inputs = dynamicShape ? `${helper('parameterInputs')}([${parameters.join(', ')}], ${location(node.loc)})` : `{${fixedParameters.join(', ')}}`
-        let contents = `{${slots.join(', ')}}`
+        if (options.cantonTypecheck) inputs = `__cantonCheck(${definition}, ${dynamicShape ? `{${checkParameters.join(', ')}}` : inputs}, ${node.loc.start.line}, ${node.loc.start.column})`
 
-        if (!options.cantonTypecheck && !dynamicShape && !Object.values(context.identifiers).some(count => count > 0)) {
-            setup.push(`const __inputs${id} = Object.freeze(${inputs})`)
+        // 内容表按定义与本次调用的参数约束：槽位须已声明，& 绑定的局部名由此得到类型。约束只存在于类型，转译时擦除
+        const named = `__inputs${id}`
+        const definitionType = binding === BindingTypes.PROPS || binding === BindingTypes.PROPS_ALIASED ? definition : binding ? node.tag : `__Foundation.${node.tag}`
+        let contents = slots.length ? `{${slots.join(', ')}}${emit(` satisfies import(${JSON.stringify(runtimeModule)}).ContentsOf<typeof ${definitionType}, typeof ${named}>`, node.loc)}` : '{}'
+        let declaration = ''
+
+        if (!options.cantonTypecheck && !dynamicShape && !hasLocals()) {
+            setup.push(`const ${named} = Object.freeze(${inputs})`)
             setup.push(`const __contents${id} = Object.freeze(${contents})`)
-            inputs = `__inputs${id}`
+            inputs = named
             contents = `__contents${id}`
-        }
-
-        if (options.cantonTypecheck) {
-            if (dynamicShape) inputs = `{${checkParameters.join(', ')}}`
-            inputs = `__cantonCheck(${definition}, ${inputs}, ${node.loc.start.line}, ${node.loc.start.column})`
-            contents = `__cantonCheckSlots(${definition}, ${contents}, ${node.loc.start.line}, ${node.loc.start.column}, ${inputs})`
+        } else if (slots.length) {
+            declaration = `const ${named} = ${inputs}\n`
+            inputs = named
         }
 
         let plan = ''
@@ -253,12 +293,12 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
             plan = `parameters: __parameters${id}, `
         }
 
-        return emit(`${helper('callArrangable')}(${id}, ${definition}, ${inputs}, ${contents}, { ${plan}key: ${key(node)}, constants: ${JSON.stringify(constants)}, source: ${location(node.loc)}, sources: {${sources.join(', ')}} })`, node.loc)
+        return declaration + emit(`${helper('callArrangable')}(${id}, ${definition}, ${inputs}, ${contents}, { ${plan}key: ${key(node)}, constants: ${JSON.stringify(constants)}, source: ${location(node.loc)}, sources: {${sources.join(', ')}} })`, node.loc)
     }
 
     const body = children(ast.children)
     const marked = setup.length ? `(() => {\n${setup.join('\n')}\nreturn () => {\n${body}\n}\n})()` : `() => {\n${body}\n}`
-    const preamble = `import { ${[...helpers].map(name => `${name} as _${name}`).join(', ')} } from ${JSON.stringify(options.runtimeModuleName ?? '@canton/framework/internal')}\n`
+    const preamble = `import { ${[...helpers].map(name => `${name} as _${name}`).join(', ')} } from ${JSON.stringify(runtimeModule)}\n`
     let code = ''
     let line = 1
     let column = 0

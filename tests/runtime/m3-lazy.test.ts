@@ -28,7 +28,7 @@ test('Lazy 多次测量子组合延续单一候选，失败保留旧项且不提
     const values = ref(Array.from({ length: 1000 }, (_, index) => index))
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, itemContent: () => Item, itemProps: () => (value: number) => ({ value }), state: () => state })
+            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
         }
     }))
     app.mount(native.target)
@@ -74,7 +74,7 @@ test('Lazy 活动范围缩小不淘汰可见项，离屏逻辑缓存有限且恢
     })
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => Array.from({ length: 200 }, (_, index) => index), itemContent: () => Item, itemProps: () => (value: number) => ({ value }), state: () => state })
+            return () => call(0, LazyColumn, { items: () => Array.from({ length: 200 }, (_, index) => index), state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
         }
     }))
     app.mount(native.target)
@@ -124,7 +124,7 @@ test('同一材料化候选移出再取回 key 重建原生身份，失败恢复
     })
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => [0, 1, 2], itemContent: () => Item, itemProps: () => (value: number) => ({ value }), state: () => state })
+            return () => call(0, LazyColumn, { items: () => [0, 1, 2], state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
         }
     }))
     app.mount(native.target)
@@ -162,7 +162,7 @@ test('Lazy 数据重排在测量前迁移活动 key，保留原生身份且失�
     })
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, itemContent: () => Item, itemProps: () => (value: number) => ({ value }), state: () => state })
+            return () => call(0, LazyColumn, { items: () => values.value, itemKey: () => (value: number) => value, state: () => state }, { default: ({ item }) => call(0, Item, { value: () => item }) })
         }
     }))
     app.mount(native.target)
@@ -201,7 +201,7 @@ test('Lazy 元数据优化保留索引回调、深层依赖与回调替换，缺
     const Item = defineArrangable({ setup(_props, { call }) { return () => call(0, Text, { text: () => '项' }) } })
     const app = createApp(defineArrangable({
         setup(_props, { call }) {
-            return () => call(0, LazyVerticalGrid, { items: () => values.value, itemKey: () => key.value, contentType: () => type.value, span: () => span.value, itemContent: () => Item })
+            return () => call(0, LazyVerticalGrid, { items: () => values.value, itemKey: () => key.value, contentType: () => type.value, span: () => span.value }, { default: () => call(0, Item, {}) })
         }
     }))
     app.mount(native.target)

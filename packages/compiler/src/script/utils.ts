@@ -6,6 +6,7 @@ import { isArray } from '@canton/shared'
 export const UNKNOWN_TYPE = 'Unknown'
 export const DEFINE_PROPS = 'defineProps'
 export const WITH_DEFAULTS = 'withDefaults'
+export const DEFINE_SLOTS = 'defineSlots'
 
 export function resolveObjectKey(node: Node, computed: boolean): string | undefined {
     switch (node.type) {

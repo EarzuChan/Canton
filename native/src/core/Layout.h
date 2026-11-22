@@ -67,4 +67,9 @@ namespace canton::core {
         const TextLayoutService* textLayoutService_ = nullptr;
         LayoutMaterializer materializer_;
     };
+
+    // 子项在一行内参与按线对齐时，返回它那条线到自身顶边的距离；不参与或内容没有这条线时为空
+    std::optional<float> alignedLine(const LayoutNode& child, LayoutAlignment defaultAlignment);
+    // 节点所在 Lazy 项的容器状态，供按视口取比例的 Modifier 读取；不在 Lazy 项内时报错
+    const LayoutNode& lazyContainerOf(const LayoutTree& tree, NodeId id);
 }

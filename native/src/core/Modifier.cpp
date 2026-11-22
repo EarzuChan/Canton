@@ -48,7 +48,7 @@ namespace canton::core {
             [](const auto& input) -> std::string_view {
                 using T = std::decay_t<decltype(input)>;
                 if constexpr (std::is_same_v<T, LayoutModifierSemantics>) {
-                    constexpr std::string_view names[]{"padding", "width", "height", "size", "requiredWidth", "requiredHeight", "requiredSize", "fillMaxWidth", "fillMaxHeight", "fillMaxSize", "widthIn", "heightIn", "sizeIn", "defaultMinSize", "verticalScroll", "horizontalScroll", "intrinsicWidth", "intrinsicHeight"};
+                    constexpr std::string_view names[]{"padding", "width", "height", "size", "requiredWidth", "requiredHeight", "requiredSize", "fillMaxWidth", "fillMaxHeight", "fillMaxSize", "widthIn", "heightIn", "sizeIn", "defaultMinSize", "verticalScroll", "horizontalScroll", "intrinsicWidth", "intrinsicHeight", "fillParentMaxWidth", "fillParentMaxHeight", "fillParentMaxSize"};
                     return names[static_cast<std::size_t>(input.kind)];
                 }
                 if constexpr (std::is_same_v<T, PaintStyleSemantics>) {
@@ -63,7 +63,10 @@ namespace canton::core {
                     constexpr std::string_view names[]{"focusRequester", "focusProperties", "focusGroup", "onFocusChanged"};
                     return names[static_cast<std::size_t>(input.kind)];
                 }
-                if constexpr (std::is_same_v<T, ParentDataModifierSemantics>) return input.kind == ParentDataKind::Weight ? "weight" : input.kind == ParentDataKind::Align ? "align" : "matchParentSize";
+                if constexpr (std::is_same_v<T, ParentDataModifierSemantics>) {
+                    constexpr std::string_view names[]{"weight", "align", "matchParentSize", "alignBy", "fillCrossAxis"};
+                    return names[static_cast<std::size_t>(input.kind)];
+                }
                 if constexpr (std::is_same_v<T, PaintModifier>) return "paint";
                 if constexpr (std::is_same_v<T, TextModifier>) return "text";
                 if constexpr (std::is_same_v<T, TextFieldModifier>) return "textField";
@@ -106,6 +109,7 @@ namespace canton::core {
                     if (input.padding.start < 0 || input.padding.top < 0 || input.padding.end < 0 || input.padding.bottom < 0 || input.value < 0 || input.width < 0 || input.height < 0 || input.scrollValue < 0) throw std::invalid_argument("Canton Modifier size, padding and scroll inputs must be nonnegative");
                     if (input.minWidth >= 0 && input.maxWidth >= 0 && input.minWidth > input.maxWidth) throw std::invalid_argument("Canton Modifier minWidth exceeds maxWidth");
                     if (input.minHeight >= 0 && input.maxHeight >= 0 && input.minHeight > input.maxHeight) throw std::invalid_argument("Canton Modifier minHeight exceeds maxHeight");
+                    if (fillsByFraction(input.kind) && (input.fraction < 0 || input.fraction > 1)) throw std::invalid_argument("填充比例必须在 0..1 之间");
                 } else if constexpr (std::is_same_v<T, PaintStyleSemantics>) {
                     const auto& corners = input.corners;
                     for (auto number : {input.strokeWidth, corners.topStart, corners.topEnd, corners.bottomEnd, corners.bottomStart, input.alpha}) finite(number);
@@ -148,7 +152,9 @@ namespace canton::core {
                 } else if constexpr (std::is_same_v<T, ParentDataModifierSemantics>) {
                     finite(input.weight);
                     if (input.kind == ParentDataKind::Weight && input.weight <= 0) throw std::invalid_argument("weight 必须为正数");
-                    if (input.kind == ParentDataKind::Align && !input.align) throw std::invalid_argument("Canton Modifier.align 缺少对齐值");
+                    if (input.kind == ParentDataKind::Align && !input.align) throw std::invalid_argument("align 缺少对齐值");
+                    if (input.kind == ParentDataKind::AlignBy && !input.alignBy) throw std::invalid_argument("alignBy 缺少对齐线");
+                    if (input.kind == ParentDataKind::FillCrossAxis && !(input.fillCrossAxis && *input.fillCrossAxis >= 0 && *input.fillCrossAxis <= 1)) throw std::invalid_argument("交叉轴填充比例必须在 0..1 之间");
                 }
             },
             value);
@@ -333,13 +339,26 @@ namespace canton::core {
         ParentDataModifierSemantics result;
         for (const auto& instance : elements_) {
             if (const auto* input = std::get_if<ParentDataModifierSemantics>(&instance.descriptor.value)) {
-                if (input->kind == ParentDataKind::Weight) {
-                    result.weight = input->weight;
-                    result.weightFill = input->weightFill;
-                } else if (input->kind == ParentDataKind::Align)
-                    result.align = input->align;
-                else
-                    result.matchParentSize = true;
+                switch (input->kind) {
+                    case ParentDataKind::Weight:
+                        result.weight = input->weight;
+                        result.weightFill = input->weightFill;
+                        break;
+                    case ParentDataKind::Align:
+                        result.align = input->align;
+                        result.alignBy.reset();
+                        break;
+                    case ParentDataKind::AlignBy:
+                        result.alignBy = input->alignBy;
+                        result.align.reset();
+                        break;
+                    case ParentDataKind::MatchParentSize:
+                        result.matchParentSize = true;
+                        break;
+                    case ParentDataKind::FillCrossAxis:
+                        result.fillCrossAxis = input->fillCrossAxis;
+                        break;
+                }
             }
         }
         return result;

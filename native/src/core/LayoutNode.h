@@ -15,6 +15,13 @@ namespace canton::core {
     struct TextLayout;
     struct DrawOp;
 
+    // Flow 测量得到的一行：成员、交叉轴尺寸，以及按线对齐的成员共用的那条线到行顶的距离（没有时为负）
+    struct FlowLine {
+        std::vector<NodeId> children;
+        float cross = 0.0f;
+        float alignedLine = -1.0f;
+    };
+
     struct LayoutNode {
         NodeId id = 0;
         NodeType type = NodeType::Unknown;
@@ -25,9 +32,11 @@ namespace canton::core {
         Rect contentBounds;
         std::uint64_t generation = 0;
         Rect bounds;
+        // 首行与末行基线到自身顶边的距离，没有文本内容时为负
         float baseline = -1.0f;
+        float lastBaseline = -1.0f;
         std::vector<NodeId> children;
-        std::vector<std::vector<NodeId>> flowLines;
+        std::vector<FlowLine> flowLines;
         std::shared_ptr<LazyLayoutState> lazy;
         std::uint32_t dirty = 0;
         std::uint32_t subtreeDirty = 0;

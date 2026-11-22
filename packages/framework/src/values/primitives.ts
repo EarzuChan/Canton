@@ -98,6 +98,10 @@ export const Alignment = Object.freeze({
     Top: "Top", CenterVertically: "CenterVertically", Bottom: "Bottom",
 })
 
+// 兄弟项之间按线对齐时可选的对齐线，由文本内容给出
+export const AlignmentLine = Object.freeze({ FirstBaseline: "FirstBaseline", LastBaseline: "LastBaseline" })
+export type AlignmentLineValue = typeof AlignmentLine[keyof typeof AlignmentLine]
+
 export type BoxAlignment = typeof Alignment['TopStart' | 'TopCenter' | 'TopEnd' | 'CenterStart' | 'Center' | 'CenterEnd' | 'BottomStart' | 'BottomCenter' | 'BottomEnd']
 export type HorizontalAlignment = typeof Alignment['Start' | 'Center' | 'CenterHorizontally' | 'End']
 export type VerticalAlignment = typeof Alignment['Top' | 'Center' | 'CenterVertically' | 'Bottom']

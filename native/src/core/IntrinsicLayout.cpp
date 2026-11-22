@@ -1,6 +1,7 @@
 #include <core/Layout.h>
 #include <core/TextLayoutService.h>
 #include <core/TextMetrics.h>
+#include <core/LazyLayout.h>
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,11 @@ namespace canton::core {
                     const auto queried = width ? item->padding.start + item->padding.end : item->padding.top + item->padding.bottom;
                     const auto other = width ? item->padding.top + item->padding.bottom : item->padding.start + item->padding.end;
                     return queried + intrinsic(tree, id, index + 1, width, maximum, std::max(0.0f, opposite - other));
+                }
+                if (fillsLazyViewport(kind)) {
+                    const auto viewport = lazyContainerOf(tree, id).lazy->itemViewport;
+                    if (kind != (width ? LayoutModifierKind::FillParentMaxHeight : LayoutModifierKind::FillParentMaxWidth)) return (width ? viewport.width : viewport.height) * item->fraction;
+                    return intrinsic(tree, id, index + 1, width, maximum, (width ? viewport.height : viewport.width) * item->fraction);
                 }
                 const auto fixesWidth = kind == LayoutModifierKind::Width || kind == LayoutModifierKind::RequiredWidth || kind == LayoutModifierKind::Size || kind == LayoutModifierKind::RequiredSize;
                 const auto fixesHeight = kind == LayoutModifierKind::Height || kind == LayoutModifierKind::RequiredHeight || kind == LayoutModifierKind::Size || kind == LayoutModifierKind::RequiredSize;

@@ -46,6 +46,9 @@ export class ScriptCompileContext {
     propsDestructureRestId: string | undefined
     propsRuntimeDefaults: Node | undefined
 
+    // 定义Slots
+    slotsCall: CallExpression | undefined
+
     // 代码生成
     bindingMetadata: BindingMetadata = {}
     helperImports: Set<string> = new Set()

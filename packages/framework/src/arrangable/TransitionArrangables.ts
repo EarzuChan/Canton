@@ -1,6 +1,6 @@
 import { Box } from './LayoutingArrangables.ts'
-import { cantonScope, defineArrangable, onMounted, shallowRef, watch } from "../runtime/index.ts"
-import type { Arrangable, ArrangableProps, PropType } from "../runtime/index.ts"
+import { cantonScope, defineArrangable, onMounted, shallowRef, slotParams, watch } from "../runtime/index.ts"
+import type { ArrangableProps, PropType, SlotTypes, WithSlotTypes } from "../runtime/index.ts"
 import { animatedNumberAsRef, tween } from "../animation/value.ts"
 import type { AnimationSpec } from "../animation/value.ts"
 import { M } from "../modifier/modifier.ts"
@@ -11,7 +11,7 @@ const clampAlpha = (value: number) => Math.max(0, Math.min(1, value))
 export type AnimatedVisibilityProps = ArrangableProps<typeof AnimatedVisibility>
 export const AnimatedVisibility = defineArrangable({
     name: "AnimatedVisibility",
-    slotNames: ["default"],
+    slots: { default: slotParams() },
     props: {
         visible: { type: Boolean, required: true },
         appear: Boolean,
@@ -20,6 +20,9 @@ export const AnimatedVisibility = defineArrangable({
         exitTo: { type: Object as PropType<VisibilityTransform>, default: () => ({ alpha: 0 }) },
     },
     setup(props, { call, slot }) {
+        const content = slot()
+        // 内部 Box 的 Handle 不交给外部内容
+        const contents = { default: () => content() }
         const retained = shallowRef(props.visible)
         const target = shallowRef(props.visible && !props.appear ? 1 : 0)
         const progress = animatedNumberAsRef(target, { animationSpec: props.animationSpec })
@@ -46,12 +49,12 @@ export const AnimatedVisibility = defineArrangable({
                         scaleY: 1 - (1 - (edge.scaleY ?? 1)) * remaining,
                     })
                 },
-            }, { default: slot() })
+            }, contents)
         }
     },
 })
 
-type CrossfadeEntry = { id: number; value: unknown; definition: Arrangable; params: Record<string, unknown>; initial: boolean }
+type CrossfadeEntry = Readonly<{ id: number; value: unknown; initial: boolean }>
 const CrossfadeLayer = defineArrangable({
     props: {
         entry: { type: Object as PropType<CrossfadeEntry>, required: true },
@@ -59,7 +62,11 @@ const CrossfadeLayer = defineArrangable({
         animationSpec: { type: Object as PropType<AnimationSpec>, required: true },
         retire: { type: Function as PropType<(entry: CrossfadeEntry) => void>, required: true },
     },
-    setup(props, { call }) {
+    slots: { default: slotParams<{ state: any }>() },
+    setup(props, { call, slot }) {
+        const content = slot()
+        // 每层交付它建立时的状态值，退出中的层不随目标状态改变
+        const contents = { default: () => content({ state: props.entry.value }) }
         const target = shallowRef(props.entry.initial ? 1 : 0)
         const alpha = animatedNumberAsRef(target, { animationSpec: props.animationSpec })
         onMounted(() => { target.value = props.active ? 1 : 0 })
@@ -70,30 +77,29 @@ const CrossfadeLayer = defineArrangable({
         return () => call(0, Box, {
             enabled: () => props.active,
             modifier: () => M.alpha(clampAlpha(alpha.value)),
-        }, { default: () => call(0, props.entry.definition, Object.fromEntries(Object.keys(props.entry.params).map(name => [name, () => props.entry.params[name]]))) })
+        }, contents)
     },
 })
 
 export type CrossfadeProps = ArrangableProps<typeof Crossfade>
-export const Crossfade = defineArrangable({
+const crossfade = defineArrangable({
     name: "Crossfade",
     props: {
-        is: { type: Object as PropType<Arrangable>, required: true },
-        props: { type: Object as PropType<Record<string, unknown>>, default: () => ({}) },
         targetState: { required: true },
         animationSpec: { type: Object as PropType<AnimationSpec>, default: () => tween() },
     },
-    setup(props, { call }) {
+    slots: { default: slotParams<{ state: any }>() },
+    setup(props, { call, slot }) {
+        const layerContents = { default: slot() }
         let nextId = 1
 
-        const entry = (initial: boolean): CrossfadeEntry => ({ id: nextId++, value: props.targetState, definition: props.is, params: { ...props.props }, initial })
+        const entry = (initial: boolean): CrossfadeEntry => ({ id: nextId++, value: props.targetState, initial })
         const entries = shallowRef<CrossfadeEntry[]>([entry(true)])
         const retire = (retired: CrossfadeEntry) => { if (!Object.is(retired.value, props.targetState)) entries.value = entries.value.filter(item => item.id !== retired.id) }
 
-        // 参数组装完成后读取整组输入，退出中的层保留切换前的定义与参数
-        watch(() => [props.targetState, props.is, props.props], () => {
-            const active = entries.value.find(item => Object.is(item.value, props.targetState))
-            entries.value = active ? entries.value.map(item => item.id === active.id ? { ...item, definition: props.is, params: { ...props.props } } : item) : [...entries.value, entry(false)]
+        // 目标状态没有对应的层时追加一层；切回仍在退出的状态时沿用原来那层
+        watch(() => props.targetState, state => {
+            if (!entries.value.some(item => Object.is(item.value, state))) entries.value = [...entries.value, entry(false)]
         })
 
         return () => call(0, Box, {}, {
@@ -103,8 +109,12 @@ export const Crossfade = defineArrangable({
                     active: () => Object.is(item.value, props.targetState),
                     animationSpec: () => props.animationSpec,
                     retire: () => retire,
-                }), item.id)
+                }, layerContents), item.id)
             }
         })
     },
 })
+// 默认槽的 state 类型取自 targetState
+type CrossfadeSlotArgs<P> = { default: { state: P extends { readonly targetState: () => infer T } ? T : unknown } }
+interface CrossfadeSlots extends SlotTypes { readonly slots: CrossfadeSlotArgs<this['parameters']> }
+export const Crossfade = crossfade as WithSlotTypes<typeof crossfade, CrossfadeSlots>

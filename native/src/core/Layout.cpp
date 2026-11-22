@@ -66,9 +66,10 @@ namespace canton::core {
             return node.modifier.parentData().align;
         }
 
+        // 父布局数据按实际父级的种类校验：父级不认的数据一律报错，不静默忽略
         void validateParentData(const LayoutTree& tree, const LayoutNode& node) {
             const auto data = node.modifier.parentData();
-            if (data.weight == 0 && !data.align && !data.matchParentSize) return;
+            if (data.weight == 0 && !data.align && !data.matchParentSize && !data.alignBy && !data.fillCrossAxis) return;
             const auto parent = tree.parentOf(node.id);
             if (!parent) throw std::invalid_argument("父布局 Modifier 必须用于相应布局的直接子项");
             const auto& policy = tree.node(*parent).measurePolicy;
@@ -76,11 +77,29 @@ namespace canton::core {
             const auto* flow = std::get_if<FlowMeasurePolicy>(&policy);
             if (data.matchParentSize && !box) throw std::invalid_argument("matchParentSize 只能用于 Box 的直接子项");
             if (data.weight > 0 && !row && !column && !flow) throw std::invalid_argument("weight 只能用于 Row、Column 或 Flow 的直接子项");
+            if (data.alignBy && !row && !(flow && flow->horizontal)) throw std::invalid_argument("alignBy 只能用于 Row 或 FlowRow 的直接子项");
+            if (data.fillCrossAxis && !flow) throw std::invalid_argument("fillMaxRowHeight 与 fillMaxColumnWidth 只能用于 Flow 的直接子项");
             if (const auto align = data.align) {
                 const auto valid = box ? isBoxAlignment(*align) : row ? isVerticalAlignment(*align) || align == LayoutAlignment::Baseline : column ? isHorizontalAlignment(*align) : flow ? isAxisAlignment(*align, !flow->horizontal) : false;
                 if (!valid) throw std::invalid_argument("align 与父布局的交叉轴方向不匹配");
             }
         }
+    }
+
+    std::optional<float> alignedLine(const LayoutNode& child, LayoutAlignment defaultAlignment) {
+        const auto data = child.modifier.parentData();
+        const auto first = data.alignBy ? *data.alignBy == AlignmentLine::FirstBaseline : data.align.value_or(defaultAlignment) == LayoutAlignment::Baseline;
+        if (!data.alignBy && !first) return std::nullopt;
+        const auto line = first ? child.baseline : child.lastBaseline;
+        return line >= 0 ? std::optional{line} : std::nullopt;
+    }
+
+    const LayoutNode& lazyContainerOf(const LayoutTree& tree, NodeId id) {
+        for (auto parent = tree.parentOf(id); parent; parent = tree.parentOf(*parent)) {
+            const auto& node = tree.node(*parent);
+            if (node.lazy && std::holds_alternative<LazyMeasurePolicy>(node.measurePolicy)) return node;
+        }
+        throw std::invalid_argument("fillParentMaxSize、fillParentMaxWidth 与 fillParentMaxHeight 只能用于 Lazy 项的内容");
     }
 
     LayoutEngine::LayoutEngine() : textLayoutService_(&defaultTextLayoutService()) {}
@@ -166,10 +185,9 @@ namespace canton::core {
                 case LayoutModifierKind::FillMaxWidth:
                 case LayoutModifierKind::FillMaxHeight:
                 case LayoutModifierKind::FillMaxSize: {
-                    const auto fraction = std::clamp(item.fraction, 0.0f, 1.0f);
                     const auto width = item.kind != LayoutModifierKind::FillMaxHeight && inner.hasBoundedWidth();
                     const auto height = item.kind != LayoutModifierKind::FillMaxWidth && inner.hasBoundedHeight();
-                    inner = exact(inner, inner.maxWidth * fraction, inner.maxHeight * fraction, width, height);
+                    inner = exact(inner, inner.maxWidth * item.fraction, inner.maxHeight * item.fraction, width, height);
                     break;
                 }
                 case LayoutModifierKind::WidthIn:
@@ -196,6 +214,14 @@ namespace canton::core {
                     scrolling = true;
                     if (!std::holds_alternative<LazyMeasurePolicy>(node.measurePolicy)) inner.maxWidth = InfiniteConstraint;
                     break;
+                case LayoutModifierKind::FillParentMaxWidth:
+                case LayoutModifierKind::FillParentMaxHeight:
+                case LayoutModifierKind::FillParentMaxSize: {
+                    const auto viewport = lazyContainerOf(tree, id).lazy->itemViewport;
+                    required = true;
+                    inner = exact(inner, viewport.width * item.fraction, viewport.height * item.fraction, item.kind != LayoutModifierKind::FillParentMaxHeight, item.kind != LayoutModifierKind::FillParentMaxWidth, true);
+                    break;
+                }
             }
         }
         if (const auto* paint = std::get_if<PaintModifier>(&instance.descriptor.value); paint && paint->sizeToIntrinsics && painterIntrinsicSize(paint->painter)) {
@@ -224,8 +250,12 @@ namespace canton::core {
             measured.height = clamp(measured.height, constraints.minHeight, constraints.maxHeight);
         }
         if (required) instance.childOffset = {(measured.width - instance.childMeasured.width) * 0.5f, (measured.height - instance.childMeasured.height) * 0.5f};
-        if (text) node.baseline = instance.textLayout->baseline;
+        if (text) {
+            node.baseline = instance.textLayout->baseline;
+            node.lastBaseline = instance.textLayout->lastBaseline;
+        }
         if (node.baseline >= 0) node.baseline += instance.childOffset.y;
+        if (node.lastBaseline >= 0) node.lastBaseline += instance.childOffset.y;
         if (const auto* animation = std::get_if<AnimateContentSizeModifier>(&instance.descriptor.value)) {
             if (instance.sizeAnimation.initialized && (instance.sizeAnimation.running || instance.sizeAnimation.target != measured || instance.sizeAnimation.spec != animation->animationSpec)) ++counters_.animationSamples;
             measured = instance.sizeAnimation.update(measured, animation->animationSpec, tree.frameTimeMillis());
@@ -246,7 +276,7 @@ namespace canton::core {
 
     Size LayoutEngine::measureContent(LayoutTree& tree, NodeId id, Constraints constraints) {
         auto& node = tree.mutableNode(id);
-        node.baseline = -1.0f;
+        node.baseline = node.lastBaseline = -1.0f;
         Size content;
 
         std::visit(
@@ -288,19 +318,18 @@ namespace canton::core {
                         height = std::max(height, measuredChild.height);
                     }
                     width += gaps;
-                    const auto defaultAlign = policy.verticalAlignment;
-                    float maxBaseline = -1.0f, maxDescent = 0.0f;
+                    // 按线对齐的子项共用一条线：线上方取最大值，线下方取最大值
+                    float beforeLine = -1.0f, afterLine = 0.0f;
                     for (auto childId : node.children) {
                         const auto& child = tree.node(childId);
-                        const auto alignment = alignModifier(child);
-                        if (child.baseline >= 0 && alignment.value_or(defaultAlign) == LayoutAlignment::Baseline) {
-                            maxBaseline = std::max(maxBaseline, child.baseline);
-                            maxDescent = std::max(maxDescent, child.bounds.height - child.baseline);
+                        if (const auto line = alignedLine(child, policy.verticalAlignment)) {
+                            beforeLine = std::max(beforeLine, *line);
+                            afterLine = std::max(afterLine, child.bounds.height - *line);
                         }
                     }
-                    if (maxBaseline >= 0) {
-                        height = std::max(height, maxBaseline + maxDescent);
-                        node.baseline = maxBaseline;
+                    if (beforeLine >= 0) {
+                        height = std::max(height, beforeLine + afterLine);
+                        node.baseline = node.lastBaseline = beforeLine;
                     }
                     content = {width, height};
                 } else if constexpr (std::is_same_v<Policy, ColumnMeasurePolicy>) {
@@ -336,7 +365,11 @@ namespace canton::core {
                         height += measuredChild.height;
                     }
                     height += gaps;
-                    if (!node.children.empty()) node.baseline = tree.node(node.children.front()).baseline;
+                    if (!node.children.empty()) {
+                        node.baseline = tree.node(node.children.front()).baseline;
+                        const auto& last = tree.node(node.children.back());
+                        if (last.lastBaseline >= 0) node.lastBaseline = height - last.bounds.height + last.lastBaseline;
+                    }
                     content = {width, height};
                 } else if constexpr (std::is_same_v<Policy, LazyMeasurePolicy>) {
                     content = measureLazy(tree, node, constraints, policy);
@@ -363,11 +396,9 @@ namespace canton::core {
         node.bounds.height = clamp(content.height, constraints.minHeight, safeMax(constraints.maxHeight, content.height));
         if (const auto* policy = std::get_if<BoxMeasurePolicy>(&node.measurePolicy); policy && !node.children.empty()) {
             const auto& child = tree.node(node.children.front());
-            if (child.baseline >= 0) {
-                const auto alignment = alignModifier(child);
-                const auto defaultAlign = policy->contentAlignment;
-                node.baseline = child.baseline + alignOffset(node.bounds.height, child.bounds.height, alignment.value_or(defaultAlign), false);
-            }
+            const auto offset = alignOffset(node.bounds.height, child.bounds.height, alignModifier(child).value_or(policy->contentAlignment), false);
+            if (child.baseline >= 0) node.baseline = child.baseline + offset;
+            if (child.lastBaseline >= 0) node.lastBaseline = child.lastBaseline + offset;
         }
         return {node.bounds.width, node.bounds.height};
     }
@@ -441,17 +472,14 @@ namespace canton::core {
         if (const auto* policy = std::get_if<RowMeasurePolicy>(&node.measurePolicy)) {
             const auto arrangement = mainAxisPlacement(tree, node, width, true, policy->arrangement);
             const auto defaultAlign = policy->verticalAlignment;
-            float baseline = -1.0f;
-            for (auto childId : node.children) {
-                const auto& child = tree.node(childId);
-                const auto alignment = alignModifier(child);
-                if (alignment.value_or(defaultAlign) == LayoutAlignment::Baseline) baseline = std::max(baseline, child.baseline);
-            }
+            float sharedLine = -1.0f;
+            for (auto childId : node.children)
+                if (const auto line = alignedLine(tree.node(childId), defaultAlign)) sharedLine = std::max(sharedLine, *line);
             float cursor = x + arrangement.offset;
             for (auto childId : node.children) {
                 const auto& child = tree.node(childId);
-                const auto alignment = alignModifier(child).value_or(defaultAlign);
-                const auto offset = alignment == LayoutAlignment::Baseline && child.baseline >= 0 ? baseline - child.baseline : alignOffset(height, child.bounds.height, alignment, false);
+                const auto line = alignedLine(child, defaultAlign);
+                const auto offset = line ? sharedLine - *line : alignOffset(height, child.bounds.height, alignModifier(child).value_or(defaultAlign), false);
                 place(tree, childId, cursor, y + offset);
                 cursor += child.bounds.width + arrangement.spacing;
             }

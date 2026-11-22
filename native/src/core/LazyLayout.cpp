@@ -233,6 +233,19 @@ namespace canton::core {
             return result;
         }
 
+        // 视口变化后，项内按视口取比例的节点连同通往它的各层都要重新测量；内层 Lazy 的项读的是内层视口，不往里找
+        bool invalidateViewportReaders(LayoutTree& tree, NodeId id) {
+            const auto& node = tree.node(id);
+            auto reads = std::ranges::any_of(node.modifier.elements(), [](const auto& instance) {
+                const auto* layout = std::get_if<LayoutModifierSemantics>(&instance.descriptor.value);
+                return layout && fillsLazyViewport(layout->kind);
+            });
+            if (!std::holds_alternative<LazyMeasurePolicy>(node.measurePolicy))
+                for (auto child : node.children) reads |= invalidateViewportReaders(tree, child);
+            if (reads) tree.mutableNode(id).measurementValid = false;
+            return reads;
+        }
+
         MainPlacement mainPlacement(const LazyLayoutState& state, const LazyMeasurePolicy& policy) {
             MainPlacement result;
             const auto extra = std::max(0.0f, state.viewportSize - state.contentSize);
@@ -254,6 +267,11 @@ namespace canton::core {
         else if (node.lazy.use_count() != 1)
             node.lazy = std::make_shared<LazyLayoutState>(*node.lazy);
         auto& state = *node.lazy;
+        const auto mainViewport = std::max(0.0f, viewport - policy.beforePadding - policy.afterPadding);
+        if (const auto itemViewport = policy.horizontal ? Size{mainViewport, cross} : Size{cross, mainViewport}; state.itemViewport != itemViewport) {
+            state.itemViewport = itemViewport;
+            for (auto child : node.children) invalidateViewportReaders(tree, child);
+        }
         int cells = policy.grid ? policy.cells : 1;
         if (policy.grid && policy.adaptiveMinSize > 0) {
             const auto ratio = (static_cast<double>(cross) + policy.crossSpacing) / (static_cast<double>(policy.adaptiveMinSize) + policy.crossSpacing);

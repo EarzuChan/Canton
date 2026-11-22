@@ -28,6 +28,9 @@ namespace canton::core {
         Baseline = 15,
     };
 
+    // 兄弟项之间按线对齐时可选的对齐线，由文本内容给出
+    enum class AlignmentLine : std::uint8_t { FirstBaseline, LastBaseline };
+
     // 主轴排布；Top / Bottom 归入 Start / End
     enum class Arrangement : std::uint8_t {
         Start,
@@ -72,6 +75,12 @@ namespace canton::core {
         };
         for (const auto& [name, alignment] : names)
             if (name == value) return alignment;
+        return std::nullopt;
+    }
+
+    constexpr std::optional<AlignmentLine> parseAlignmentLine(std::string_view value) noexcept {
+        if (value == "FirstBaseline") return AlignmentLine::FirstBaseline;
+        if (value == "LastBaseline") return AlignmentLine::LastBaseline;
         return std::nullopt;
     }
 

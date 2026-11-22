@@ -70,7 +70,9 @@ namespace canton::core {
         std::vector<TextLineLayout> lines;
         std::uint64_t environment = 0;
         const void* serviceIdentity = nullptr;
+        // 首行与末行基线到文本顶边的距离
         float baseline = 0.0f;
+        float lastBaseline = 0.0f;
         Rect inkBounds;
         bool boundsKnown = true;
         bool truncated = false;

@@ -176,6 +176,112 @@ namespace {
         check(tree.node(1).bounds.width == 67 && tree.node(1).bounds.height == 25 && tree.node(4).bounds.x == 37, "FlowColumn 对称布局错误");
     }
 
+    template <typename Action>
+    bool rejects(Action&& action) {
+        try {
+            action();
+        } catch (const std::invalid_argument&) {
+            return true;
+        }
+        return false;
+    }
+
+    ModifierDescriptor text(std::string value, float fontSize) {
+        TextModifier item;
+        item.text = std::move(value);
+        item.style.fontSize = fontSize;
+        return {item};
+    }
+
+    ModifierDescriptor alignBy(AlignmentLine line) {
+        ParentDataModifierSemantics value;
+        value.kind = ParentDataKind::AlignBy;
+        value.alignBy = line;
+        return {value};
+    }
+
+    ModifierDescriptor fillCrossAxis(float fraction) {
+        ParentDataModifierSemantics value;
+        value.kind = ParentDataKind::FillCrossAxis;
+        value.fillCrossAxis = fraction;
+        return {value};
+    }
+
+    void alignmentLines() {
+        LayoutTree tree;
+        children(tree, 3);
+        tree.mutableNode(1).measurePolicy = RowMeasurePolicy{};
+        tree.setModifierChain(2, {alignBy(AlignmentLine::FirstBaseline), text("小", 10)});
+        tree.setModifierChain(3, {alignBy(AlignmentLine::FirstBaseline), text("大\n大", 30)});
+        tree.setModifierChain(4, {size(10, 10)});
+        LayoutEngine layout;
+        layout.layout(tree, 1, {0, 300, 0, 300});
+        const auto line = [&](NodeId id, bool last = false) { return tree.node(id).bounds.y + (last ? tree.node(id).lastBaseline : tree.node(id).baseline); };
+        check(tree.node(3).lastBaseline > tree.node(3).baseline && tree.node(2).lastBaseline == tree.node(2).baseline, "文本没有给出首行与末行基线");
+        check(tree.node(2).bounds.y > 0 && near(line(2), line(3)) && tree.node(4).bounds.y == 0, "Row 没有只让按线对齐的子项共用首行基线");
+        check(near(tree.node(1).bounds.height, tree.node(3).bounds.height), "Row 高度没有容纳对齐后的子项");
+        tree.setModifierChain(3, {alignBy(AlignmentLine::LastBaseline), text("大\n大", 30)});
+        layout.layout(tree, 1, {0, 300, 0, 300});
+        check(near(line(2), line(3, true)) && tree.node(3).bounds.y == 0, "末行基线没有与兄弟项的首行基线对到同一条线");
+
+        FlowMeasurePolicy flow;
+        flow.maxItems = 2;
+        tree.mutableNode(1).measurePolicy = flow;
+        tree.setModifierChain(4, {alignBy(AlignmentLine::FirstBaseline), text("小", 10)});
+        layout.layout(tree, 1, {0, 300, 0, 300});
+        check(near(line(2), line(3, true)) && tree.node(4).bounds.y == tree.node(1).flowLines[0].cross, "FlowRow 没有按行各自对齐");
+
+        tree.mutableNode(1).measurePolicy = ColumnMeasurePolicy{};
+        check(rejects([&] { layout.layout(tree, 1, {0, 300, 0, 300}); }), "Column 子项的 alignBy 未诊断");
+        tree.mutableNode(1).measurePolicy = BoxMeasurePolicy{};
+        check(rejects([&] { layout.layout(tree, 1, {0, 300, 0, 300}); }), "Box 子项的 alignBy 未诊断");
+        for (NodeId id = 2; id <= 4; ++id) tree.setModifierChain(id, {size(10, 10)});
+        ParentDataModifierSemantics alignment;
+        alignment.kind = ParentDataKind::Align;
+        alignment.align = LayoutAlignment::Top;
+        tree.setModifierChain(2, {{alignment}, size(10, 10)});
+        tree.mutableNode(1).measurePolicy = ColumnMeasurePolicy{};
+        check(rejects([&] { layout.layout(tree, 1, {0, 300, 0, 300}); }), "Column 上的垂直 align 未诊断");
+        flow.horizontal = false;
+        tree.mutableNode(1).measurePolicy = flow;
+        check(rejects([&] { layout.layout(tree, 1, {0, 300, 0, 300}); }), "FlowColumn 上方向不符的 align 未诊断");
+    }
+
+    void flowCrossAxisFill() {
+        LayoutTree tree;
+        children(tree, 3);
+        tree.mutableNode(1).measurePolicy = FlowMeasurePolicy{};
+        LayoutModifierSemantics width;
+        width.kind = LayoutModifierKind::Width;
+        width.value = 20;
+        ParentDataModifierSemantics weight;
+        weight.weight = 1;
+        tree.setModifierChain(2, {size(30, 10)});
+        tree.setModifierChain(3, {size(30, 40)});
+        tree.setModifierChain(4, {fillCrossAxis(1), {width}});
+        LayoutEngine layout;
+        layout.layout(tree, 1, {0, 200, 0, 200});
+        check(tree.node(4).bounds == Rect{60, 0, 20, 40} && tree.node(1).bounds.height == 40, "fillMaxRowHeight 没有占满所在行最高一项");
+        tree.setModifierChain(4, {fillCrossAxis(0.5f), {weight}});
+        layout.layout(tree, 1, {0, 200, 0, 200});
+        check(tree.node(4).bounds == Rect{60, 0, 140, 20}, "交叉轴填充没有按比例或没有与 weight 同用");
+        check(layout.minIntrinsicHeight(tree, 1, 200) == 40, "交叉轴填充改变了 Flow 的固有高度");
+        tree.setModifierChain(2, {fillCrossAxis(1), size(30, 10)});
+        tree.setModifierChain(3, {fillCrossAxis(1), size(30, 10)});
+        tree.setModifierChain(4, {fillCrossAxis(1), size(30, 10)});
+        layout.layout(tree, 1, {0, 200, 0, 200});
+        check(tree.node(1).bounds.height == 10, "整行都是填充项时行高没有取各项自身尺寸");
+
+        tree.mutableNode(1).measurePolicy = RowMeasurePolicy{};
+        check(rejects([&] { layout.layout(tree, 1, {0, 200, 0, 200}); }), "Row 子项的交叉轴填充未诊断");
+        LayoutModifierSemantics fillParent;
+        fillParent.kind = LayoutModifierKind::FillParentMaxSize;
+        tree.setModifierChain(2, {{fillParent}});
+        tree.setModifierChain(3, {size(30, 10)});
+        tree.setModifierChain(4, {size(30, 10)});
+        check(rejects([&] { layout.layout(tree, 1, {0, 200, 0, 200}); }), "Lazy 项之外的 fillParentMaxSize 未诊断");
+    }
+
     void repeatedSize() {
         SizeAnimation animation;
         AnimationSpec spec;
@@ -203,8 +309,10 @@ int main() {
         intrinsicAndBounds();
         matchingBox();
         flow();
+        alignmentLines();
+        flowCrossAxisFill();
         repeatedSize();
-        std::cout << "M3 固有尺寸、约束、Flow 与有限重复动画通过\n";
+        std::cout << "M3 固有尺寸、约束、Flow、父布局数据与有限重复动画通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

@@ -45,10 +45,13 @@ export const modifierNativeProtocol: Readonly<Record<string, ModifierProtocolEnt
     defaultMinSize: { fields: ['minWidth', 'minHeight'], units: sizeRange, arguments: [sizeRange] },
     verticalScroll: scroll('verticalScroll'), horizontalScroll: scroll('horizontalScroll'),
     animateContentSize: { fields: ['animationSpec', 'clip'] },
-    // Internal ParentData descriptors, reserved for layout handles.
+    // 以下各项只由布局 Handle 构造，公开 Modifier 上没有对应方法
     weight: { fields: ['weight', 'fill'] },
     align: { fields: ['alignment'] },
     matchParentSize: { fields: [] },
+    alignBy: { fields: ['line'] },
+    fillCrossAxis: { fields: ['fraction'] },
+    fillParentMaxWidth: { fields: ['fraction'] }, fillParentMaxHeight: { fields: ['fraction'] }, fillParentMaxSize: { fields: ['fraction'] },
     offset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
     absoluteOffset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
     graphicsLayer: { fields: ['translationX', 'translationY', 'scaleX', 'scaleY', 'rotationZ', 'transformOrigin', 'alpha', 'clip'], units: graphics, arguments: [graphics] },

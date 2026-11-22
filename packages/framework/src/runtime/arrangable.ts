@@ -1,12 +1,25 @@
-import { effectScope, type EffectScope } from '@canton/reactivity'
+import { effectScope, type EffectScope, type Ref } from '@canton/reactivity'
+import type { IfAny } from '@canton/shared'
 import type { ArrangableObjectPropsOptions, Data, ExtractPublicPropTypes, PropInputs } from './propTypes.ts'
 import type { LifecycleHooks } from './enums.ts'
 import type { FrameScheduler } from './scheduler.ts'
 
 export type { Data }
 export type StructureProgram = () => void
-export type Content = () => void
+// 内容按值接收出口交付的参数对象；没有参数的槽位不接收实参
+export type Content<P = any> = [keyof P] extends [never] ? () => void : (params: P) => void
 export type Contents = Readonly<Record<string, Content | undefined>>
+// 槽位声明只在类型层面携带参数，运行期只用到槽位名
+export interface SlotDeclaration<P = {}> { readonly params?: P }
+export type SlotDeclarations = Readonly<Record<string, SlotDeclaration>>
+export type SlotParams<S> = { readonly [K in keyof S]: S[K] extends SlotDeclaration<infer P> ? P : never }
+// 槽位参数的类型随调用参数变化的定义（如 Lazy 的 item 取自 items）实现本接口，以 this['parameters'] 读取调用参数的类型，并经 WithSlotTypes 挂到定义的类型上；运行期不存在
+export interface SlotTypes { readonly parameters: unknown; readonly slots: object }
+export type WithSlotTypes<D, F extends SlotTypes> = D & { readonly slotTypes: F }
+// 给定定义与调用参数，各槽位交付给内容的参数
+export type SlotArgs<D, P = unknown> = D extends { readonly slotTypes: infer F extends SlotTypes } ? (F & { readonly parameters: P })['slots'] : D extends { readonly slots: infer S } ? SlotParams<S> : never
+// 编译产物用它约束一次调用的内容表：D 可以是定义或装着定义的 Ref，类型未知的定义不作约束
+export type ContentsOf<D, P = unknown> = IfAny<D, Contents, D extends Ref<infer V> ? ContentsOf<V, P> : { readonly [K in keyof SlotArgs<D, P>]?: Content<SlotArgs<D, P>[K]> }>
 export type CallPosition = string | number
 export type RearrangeKey = string | number | symbol | bigint | null | undefined
 
@@ -16,7 +29,7 @@ export interface ArrangableDefinition<P extends Data = any> {
     readonly __file?: string
     readonly __hmrId?: string
     readonly props: ArrangableObjectPropsOptions<P>
-    readonly slotNames: readonly string[]
+    readonly slots: SlotDeclarations
     readonly contentTarget?: string
     readonly setup: (props: Readonly<P>, context: SetupContext) => StructureProgram
 }
@@ -38,10 +51,10 @@ export interface CallMetadata {
     readonly constants?: readonly string[]
 }
 
-export interface SetupContext {
-    readonly slots: Readonly<Record<string, Content>>
+export interface SetupContext<S = Record<string, any>> {
+    readonly slots: { readonly [K in keyof S]: Content<S[K]> }
     readonly call: <D extends ArrangableDefinition>(position: CallPosition, definition: D, inputs: PropInputs<ArrangableProps<D>>, contents?: Contents, metadata?: CallMetadata) => void
-    readonly slot: (name?: string) => Content
+    readonly slot: <K extends keyof S & string = 'default' & keyof S>(name?: K) => Content<S[K]>
     readonly source: (name: string) => string | undefined
 }
 
