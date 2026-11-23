@@ -266,7 +266,10 @@ namespace canton::quickjs {
         impl_->runtime.assetLoader = std::move(loader);
     }
 
-    QuickJsScriptHost::~QuickJsScriptHost() = default;
+    QuickJsScriptHost::~QuickJsScriptHost() {
+        // 先销毁 QuickJS 上下文（disposeApp / nativeUnmount 会引用 pendingTransactions_）
+        impl_.reset();
+    }
 
     void QuickJsScriptHost::setPainterLoader(canton::core::PainterLoader loader) {
         impl_->runtime.painterLoader = std::move(loader);

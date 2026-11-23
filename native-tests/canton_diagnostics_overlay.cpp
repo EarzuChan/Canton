@@ -213,8 +213,16 @@ namespace {
         check(harness.frame.changes.repaint.full && harness.frame.changes.appRepaint.empty(), "诊断气泡不应计作 App 帧");
         check(publishFps(0), "关闭 FPS 徽标没有发布");
         checkBadgeOnly();
+        harness.pipeline.timeline().setEnabled(true);
         harness.apply(modify(10, box(0xffff0000)));
-        check(harness.frame.changes.appRepaint.empty(), "关闭 FPS 徽标后仍采集 App 脏区");
+        check(covers(harness.frame.changes.appRepaint, {140, 0, 20, 10}), "关闭 FPS 后 appRepaint 仍应记录用户脏区");
+        check(harness.pipeline.timeline().latest()->repaint == harness.frame.changes.appRepaint, "时间线应记录纯用户脏区");
+        const auto recordedBefore = harness.pipeline.timeline().recorded();
+        check(harness.pipeline.publishRetained(harness.scene, harness.frame, [&](const auto&, auto& frame) {
+            frame.content.diagnosticsToastDrawOps = {DrawOp{.type = DrawOpType::FillRect, .rect = badge, .color = 0xff112233u}};
+        }), "二次诊断气泡没有发布");
+        check(harness.frame.changes.repaint.full && harness.frame.changes.appRepaint.empty(), "仅诊断气泡变化时 appRepaint 必须为空");
+        check(harness.pipeline.timeline().recorded() == recordedBefore, "纯诊断保留发布不应写入用户帧时间线");
     }
 }
 

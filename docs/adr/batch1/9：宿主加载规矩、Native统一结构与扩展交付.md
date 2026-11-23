@@ -26,17 +26,17 @@
 
 彻底废除 Arrange 时期由用户在 C++ 中调用 `useLive()` / `useDist()` 的配置方式。加载行为划分为三种策略：
 
-- **`live-then-dist`（简称 `lfd`）**：优先连接 Live DevServer；连不上且存在随包 Dist 时回退至 Dist，并**弹出显式诊断提示**（避免开发者误以为运行在 Live）；若无 Dist 则进入错误屏并支持重试。
+- **`live-fallback-dist`（简称 `lfd`）**：优先连接 Live DevServer；连不上且存在随包 Dist 时回退至 Dist，并**弹出显式诊断提示**（避免开发者误以为运行在 Live）；若无 Dist 则进入错误屏并支持重试。
 - **`only-live`（简称 `live`）**：仅连接 Live DevServer；连不上直接进入错误屏并支持重试，绝不静默回退旧 Dist。
 - **`only-dist`（简称 `dist`）**：不启动也不连接 DevServer，仅读取随包 Dist。
 
 策略受编译期物理边界与开发风味双重约束：
 
-| 场景 | 使用的宿主 | 允许的策略 | 默认策略 |
-| --- | --- | --- | --- |
-| `canton dev`（默认 `--flavor debug`） | Dev 宿主（`DEV=1`） | `lfd` / `live` / `dist` | **`live-then-dist`（`lfd`）** |
-| `canton dev --flavor release` | Dist 宿主（`DEV=0`） | **仅 `dist`**（强配 `live`/`lfd` 时 CLI 直接报错拒绝） | **`only-dist`（`dist`）** |
-| `canton pack` 正式成品 | Dist 宿主（`DEV=0`） | **编译期锁死 `dist`** | **`only-dist`（`dist`）** |
+| 场景 | 使用的宿主 | 允许的策略 | 默认策略                            |
+| --- | --- | --- |---------------------------------|
+| `canton dev`（默认 `--flavor debug`） | Dev 宿主（`DEV=1`） | `lfd` / `live` / `dist` | **`live-fallback-dist`（`lfd`）** |
+| `canton dev --flavor release` | Dist 宿主（`DEV=0`） | **仅 `dist`**（强配 `live`/`lfd` 时 CLI 直接报错拒绝） | **`only-dist`（`dist`）**         |
+| `canton pack` 正式成品 | Dist 宿主（`DEV=0`） | **编译期锁死 `dist`** | **`only-dist`（`dist`）**         |
 
 - **强配优先级（`debug` 风味下）**：命令行 `--source <live|dist|lfd>` > `canton.local.yaml`（`dev.sourcePolicy`，个人偏好不进 Git）> 风味默认。`canton.project.yaml` 不控制开发期加载策略。当 `debug` 风味配置为 `dist` 时，CLI 自动跳过启动 Vite DevServer。
 - **Dev 通道不污染 `argv`**：Live 地址、加载策略、首帧就绪文件/令牌以及 [ADR 008](8：应用路径、只读资产与文件存储边界.md) 的开发期路径重定位，统一经内部环境变量 `CANTON_DEV_*` 注入 Dev 宿主；Dist 宿主在编译期彻底剥离 LiveClient、WebSocket、HMR、诊断浮层与所有 `CANTON_DEV_*` 解析逻辑。进程命令行 `argv` 完整留给 [ADR 005](5：WindowsShell集成、托盘与启动唤醒.md) 的 `LaunchRequest`。

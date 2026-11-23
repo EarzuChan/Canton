@@ -11,7 +11,7 @@
                 <ItemAnimationPage c-else-if="page === 'items'" :step="argument" />
                 <CanvasPage c-else-if="page === 'canvas'" />
                 <Text c-else :text="`unknown page ${page}`" :style="body" />
-                <Input value="" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
+                <Input value="" :selectAllOnFocus="true" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
             </Box>
         </Window>
     </App>

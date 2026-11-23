@@ -4,7 +4,6 @@
 #include <d3d11/DWriteText.h>
 #include <runtime/AppSession.h>
 #include <runtime/DiagnosticsScene.h>
-#include <runtime/SceneHost.h>
 
 #include <atomic>
 #include <chrono>
@@ -18,99 +17,8 @@ namespace render_regression {
 
         class FixtureSession {
            public:
-            FixtureSession(CaseContext& context, const std::string& fixture) : context_(context), fonts_(std::make_shared<core::FontRegistry>()), measurer_(fonts_.get()), scene_(measurer_, fonts_, options()) {
-                if (context.fixtures.empty()) throw std::runtime_error("夹具用例需要 --fixtures 指向构建好的夹具目录");
-                scene_.setWorkAvailable([this] { woken_.store(true, std::memory_order_release); });
-                scene_.resize(context.width, context.height);
-                runtime::AppSourceConfig source;
-                source.policy = runtime::LoadPolicy::OnlyDist;
-                source.distOverride = context.fixtures / fixture;
-                scene_.configure(std::move(source));
-                settle();
-                if (!scene_.ready()) {
-                    const auto* error = scene_.diagnostics().error();
-                    throw std::runtime_error("夹具没有成功出首帧：" + (error ? error->summary : std::string("未知原因")));
-                }
-            }
-
-            // 推进到给定的虚拟时刻，按 16 毫秒一拍
-            void advanceTo(double millis) {
-                while (now_ + 16.0 <= millis) {
-                    now_ += 16.0;
-                    (void)scene_.pumpFrame(now_);
-                }
-            }
-
-            // 资源在后台线程加载：停在当前虚拟时刻反复泵帧，直到一段真实时间内没有新工作
-            void settle() {
-                auto quietSince = std::chrono::steady_clock::now();
-                const auto deadline = quietSince + std::chrono::seconds(10);
-                while (std::chrono::steady_clock::now() < deadline) {
-                    const auto revision = scene_.publishedFrame().revision;
-                    (void)scene_.pumpFrame(now_);
-                    if (woken_.exchange(false, std::memory_order_acq_rel) || scene_.publishedFrame().revision != revision)
-                        quietSince = std::chrono::steady_clock::now();
-                    else if (std::chrono::steady_clock::now() - quietSince > std::chrono::milliseconds(120))
-                        return;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                }
-                throw std::runtime_error("夹具迟迟安定不下来");
-            }
-
-            void command(const std::string& text) {
-                const auto& tree = scene_.runtime().scene().tree();
-                for (const auto id : tree.nodeIds()) {
-                    const auto slot = test_support::event(tree.node(id), core::EventSlotKind::InputSubmit);
-                    if (!slot.valid()) continue;
-                    scene_.runtime().enqueueStringEvent(slot, text);
-                    return;
-                }
-                throw std::runtime_error("夹具里找不到接收指令的输入框");
-            }
-
-            void resize(int width, int height) {
-                context_.width = width;
-                context_.height = height;
-                scene_.resize(width, height);
-            }
-
-            [[nodiscard]] Image capture() {
-                return context_.render(scene_.publishedFrame().content);
-            }
-
-            [[nodiscard]] runtime::SceneHost& scene() noexcept {
-                return scene_;
-            }
-
-            [[nodiscard]] double now() const noexcept {
-                return now_;
-            }
-
-           private:
-            static runtime::SceneHostOptions options() {
-                runtime::SceneHostOptions result;
-                // 画面只留应用内容；错误屏用精简样式，不带因机器而异的路径
-                result.detailedErrorScreen = false;
-                result.diagnosticsFontFamily = {test_support::testFontFamily};
-                return result;
-            }
-
-            CaseContext& context_;
-            std::shared_ptr<core::FontRegistry> fonts_;
-            d3d11::DWriteTextMeasurer measurer_;
-            runtime::SceneHost scene_;
-            std::atomic<bool> woken_{false};
-            double now_ = 0;
-        };
-
-        // 多窗口离屏回归会话：默认取主窗口（索引 0），也可按窗口序号或窗口标题指定目标窗口离屏取图
-        class MultiWindowFixtureSession {
-           public:
-            MultiWindowFixtureSession(CaseContext& context, const std::string& fixture)
-                : context_(context),
-                  fonts_(std::make_shared<core::FontRegistry>()),
-                  measurer_(fonts_.get()),
-                  app_(measurer_, fonts_, makeOptions()) {
+            FixtureSession(CaseContext& context, const std::string& fixture)
+                : context_(context), fonts_(std::make_shared<core::FontRegistry>()), measurer_(fonts_.get()), app_(measurer_, fonts_, options(context)) {
                 if (context.fixtures.empty()) throw std::runtime_error("夹具用例需要 --fixtures 指向构建好的夹具目录");
                 app_.setWorkAvailable([this] { woken_.store(true, std::memory_order_release); });
                 runtime::AppSourceConfig source;
@@ -120,10 +28,19 @@ namespace render_regression {
                 settle();
                 if (!app_.ready()) {
                     const auto* error = app_.globalDiagnostics().error();
-                    throw std::runtime_error("多窗口夹具没有成功出首帧：" + (error ? error->summary : std::string("未知原因")));
+                    throw std::runtime_error("夹具没有成功出首帧：" + (error ? error->summary : std::string("未知原因")));
                 }
             }
 
+            // 推进到给定的虚拟时刻，按 16 毫秒一拍
+            void advanceTo(double millis) {
+                while (now_ + 16.0 <= millis) {
+                    now_ += 16.0;
+                    (void)app_.pumpFrame(now_);
+                }
+            }
+
+            // 等后台资源加载时保持虚拟时刻不动
             void settle() {
                 auto quietSince = std::chrono::steady_clock::now();
                 const auto deadline = quietSince + std::chrono::seconds(10);
@@ -135,43 +52,64 @@ namespace render_regression {
                         return;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
-                throw std::runtime_error("多窗口夹具迟迟安定不下来");
+                throw std::runtime_error("夹具迟迟安定不下来");
             }
 
-            [[nodiscard]] Image captureWindow(std::size_t windowIndex = 0) {
-                const auto ids = app_.windowIds();
-                if (windowIndex >= ids.size()) throw std::runtime_error("目标窗口索引越界");
-                const auto* win = app_.window(ids[windowIndex]);
-                context_.width = win->widthPx;
-                context_.height = win->heightPx;
-                return context_.render(win->pipeline.publishedFrame().content);
-            }
-
-            [[nodiscard]] Image captureWindowByTitle(std::string_view title) {
-                for (const auto id : app_.windowIds()) {
-                    const auto* win = app_.window(id);
-                    if (win && win->config.title == title) {
-                        context_.width = win->widthPx;
-                        context_.height = win->heightPx;
-                        return context_.render(win->pipeline.publishedFrame().content);
+            void command(const std::string& text) {
+                auto& win = windowAt(0);
+                auto& tree = win.pipeline.scene().tree();
+                for (const auto id : tree.nodeIds()) {
+                    if (!test_support::event(tree.node(id), core::EventSlotKind::InputSubmit).valid()) continue;
+                    if (!win.input.requestFocus(tree, id, win.text, {}) || !app_.charInput(win.windowId, text) || !app_.keyDown(win.windowId, {13, "Enter"})) {
+                        throw std::runtime_error("夹具输入框未接收指令");
                     }
+                    (void)app_.keyStateChanged(win.windowId, [](int) { return false; });
+                    win.input.clearFocus(tree, win.text, {});
+                    return;
                 }
-                throw std::runtime_error("未找到标题匹配的目标窗口");
+                throw std::runtime_error("夹具里找不到接收指令的输入框");
             }
+
+            void resize(int width, int height) {
+                app_.notifyWindowResized(windowAt(0).windowId, width, height);
+            }
+
+            [[nodiscard]] Image capture(std::size_t windowIndex = 0) {
+                const auto& win = windowAt(windowIndex);
+                const auto& frame = win.pipeline.publishedFrame();
+                if (frame.revision == 0) throw std::runtime_error("目标窗口尚未发布首帧");
+                auto target = context_;
+                target.width = win.widthPx;
+                target.height = win.heightPx;
+                return target.render(frame.content);
+            }
+
+            [[nodiscard]] bool hasError() const noexcept { return app_.globalDiagnostics().hasError(); }
+            [[nodiscard]] double now() const noexcept { return now_; }
 
            private:
-            static runtime::AppSessionOptions makeOptions() {
+            [[nodiscard]] runtime::WindowSurfaceState& windowAt(std::size_t index) {
+                const auto ids = app_.windowIds();
+                if (index >= ids.size()) throw std::runtime_error("目标窗口索引越界");
+                return *app_.window(ids[index]);
+            }
+
+            runtime::AppSessionOptions options(const CaseContext& context) {
                 runtime::AppSessionOptions result;
-                result.detailedErrorScreen = false;
                 result.diagnosticsFontFamily = {test_support::testFontFamily};
+                if (context.width > 0 && context.height > 0) {
+                    result.platform.onWindowCreated = [this, width = context.width, height = context.height](core::WindowId id, const core::WindowConfigSpec&) {
+                        if (app_.windowIds().front() == id) app_.notifyWindowResized(id, width, height);
+                    };
+                }
                 return result;
             }
 
             CaseContext& context_;
             std::shared_ptr<core::FontRegistry> fonts_;
             d3d11::DWriteTextMeasurer measurer_;
-            runtime::AppSession app_;
             std::atomic<bool> woken_{false};
+            runtime::AppSession app_;
             double now_ = 0;
         };
 
@@ -203,8 +141,8 @@ namespace render_regression {
                 }
             };
             append(scene.buildFpsBadge(bounds, 60, context.text));
-            append(scene.buildBadge(bounds, {"LIVE", 0xff22c55eu}, runtime::DiagnosticVisibility::Always, context.text));
-            append(scene.buildToasts(bounds, {{core::LogLevel::Info, "Live App started", "http localhost 9178"}, {core::LogLevel::Warn, "Live unavailable", "fell back to Dist"}, {core::LogLevel::Error, "Hot update failed", ""}}, runtime::DiagnosticVisibility::Always));
+            append(scene.buildBadge(bounds, {"LIVE", 0xff34d399u}, runtime::DiagnosticVisibility::Always, context.text));
+            append(scene.buildToasts(bounds, {{core::LogLevel::Info, "Live App started", "http localhost 9178"}, {core::LogLevel::Warn, "Live unavailable", "fell back to Dist"}, {core::LogLevel::Error, "Hot update failed", ""}}, runtime::DiagnosticVisibility::Always, 1.0f, &context.text));
             return context.renderOps(std::move(ops));
         }
     }
@@ -214,6 +152,16 @@ namespace render_regression {
     }
 
     void addFixtureCases(std::vector<Case>& cases) {
+        cases.push_back({"render-windows", 0, 0, [](CaseContext& context) {
+                             FixtureSession session(context, "render-windows");
+                             const auto main = session.capture();
+                             const auto second = session.capture(1);
+                             if (main.width != 80 || main.height != 64 || main.pixels.at(0) != 0xff102030u ||
+                                 second.width != 48 || second.height != 32 || second.pixels.at(0) != 0xff4070a0u) {
+                                 throw std::runtime_error("离屏取图未命中指定窗口的视口或内容");
+                             }
+                             return second;
+                         }, false});
         cases.push_back(page("showcase-layout", "layout"));
         cases.push_back(page("showcase-text", "text"));
         cases.push_back(page("showcase-image", "image"));
@@ -265,7 +213,7 @@ namespace render_regression {
                              FixtureSession session(context, "showcase");
                              session.command("crash");
                              session.advanceTo(session.now() + 64);
-                             if (!session.scene().diagnostics().hasError()) throw std::runtime_error("脚本抛错后没有进入错误屏");
+                             if (!session.hasError()) throw std::runtime_error("脚本抛错后没有进入错误屏");
                              return session.capture();
                          }});
     }

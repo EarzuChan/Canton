@@ -1,5 +1,6 @@
 #include <runtime/DiagnosticsScene.h>
 
+#include <core/DiagnosticsOverlay.h>
 #include <core/InputIntent.h>
 #include <core/TextLayoutService.h>
 #include <runtime/CantonRuntime.h>
@@ -23,25 +24,29 @@ namespace canton::runtime {
                 case core::LogLevel::Debug:
                     return 0xff94a3b8u;
                 case core::LogLevel::Info:
-                    return 0xff3b82f6u;
+                    return 0xff38bdf8u;
                 case core::LogLevel::Warn:
-                    return 0xfff59e0bu;
+                    return 0xfffbbf24u;
                 case core::LogLevel::Error:
-                    return 0xffef4444u;
+                    return 0xfff87171u;
             }
-            return 0xff3b82f6u;
+            return 0xff38bdf8u;
+        }
+
+        std::uint32_t withAlpha(std::uint32_t argb, std::uint8_t alpha) noexcept {
+            return (static_cast<std::uint32_t>(alpha) << 24) | (argb & 0x00ffffffu);
         }
 
         DiagnosticsBadgeModel sourceBadgeModel(PackageSource source, bool liveUnavailable) {
             switch (source) {
                 case PackageSource::Live:
-                    return {"LIVE", 0xff22c55eu};
+                    return {"LIVE", 0xff34d399u};
                 case PackageSource::Dist:
-                    return liveUnavailable ? DiagnosticsBadgeModel{"DIST FALLBACK", 0xfff59e0bu} : DiagnosticsBadgeModel{"DIST", 0xff3b82f6u};
+                    return liveUnavailable ? DiagnosticsBadgeModel{"DIST FALLBACK", 0xfffbbf24u} : DiagnosticsBadgeModel{"DIST", 0xff60a5fau};
                 case PackageSource::None:
                     break;
             }
-            return {"NO APP", 0xffef4444u};
+            return {"NO APP", 0xfff87171u};
         }
 
         void replaceHudOps(std::vector<canton::core::DrawOp>& target, std::vector<canton::core::DrawOp> source) {
@@ -63,30 +68,66 @@ namespace canton::runtime {
         if (!diagnosticVisibilityEnabled(visibility) || model.text.empty()) return ops;
 
         const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
-        const float textWidth = std::round((static_cast<float>(model.text.size()) * 7.0f + 26.0f) * s);
-        const float x = std::round(std::max(editorBounds.x + 8.0f * s, editorBounds.x + editorBounds.width - 8.0f * s - textWidth));
-        const float y = editorBounds.y + 20.0f * s;
-        const canton::core::Rect badge{x, y, textWidth, 20.0f * s};
-        ops.push_back(fill(badge, 0xcc111827u, 6.0f * s));
-        ops.push_back(stroke(badge, 0x664b5563u, 1.0f * s, 6.0f * s));
-        ops.push_back(fill({badge.x + 8.0f * s, badge.y + 7.0f * s, 6.0f * s, 6.0f * s}, model.dot, 3.0f * s));
-        ops.push_back(badgeText({badge.x + 20.0f * s, badge.y, badge.width - 20.0f * s, badge.height}, model.text, textLayout, s));
+        const float height = std::round(22.0f * s);
+        const float radius = height * 0.5f;
+        auto labelOp = badgeText({0.0f, 0.0f, 240.0f * s, height}, model.text, textLayout, s);
+        const float labelWidth = labelOp.textLayout ? std::ceil(labelOp.textLayout->width) : std::round(static_cast<float>(model.text.size()) * 6.5f * s);
+        const float badgeWidth = std::round(std::max(56.0f * s, 24.0f * s + labelWidth + 11.0f * s));
+        const float x = std::round(std::max(editorBounds.x + 12.0f * s, editorBounds.x + editorBounds.width - 12.0f * s - badgeWidth));
+        const float y = std::round(editorBounds.y + 12.0f * s);
+        const canton::core::Rect badge{x, y, badgeWidth, height};
+        const canton::core::Rect shadow{x - 1.0f * s, y + 1.5f * s, badgeWidth + 2.0f * s, height + 1.0f * s};
+
+        ops.push_back(fill(shadow, 0x30000000u, radius + 1.0f * s));
+        ops.push_back(fill(badge, 0xe0121620u, radius));
+        ops.push_back(stroke(badge, 0x26ffffffu, 1.0f * s, radius));
+
+        const float dotCenterX = badge.x + 12.5f * s;
+        const float dotCenterY = badge.y + height * 0.5f;
+        ops.push_back(fill({dotCenterX - 5.0f * s, dotCenterY - 5.0f * s, 10.0f * s, 10.0f * s}, withAlpha(model.dot, 0x38u), 5.0f * s));
+        ops.push_back(fill({dotCenterX - 2.75f * s, dotCenterY - 2.75f * s, 5.5f * s, 5.5f * s}, model.dot, 2.75f * s));
+
+        labelOp.rect.x = std::round(badge.x + 22.0f * s);
+        labelOp.rect.width = std::max(0.0f, badge.width - 31.0f * s);
+        const auto& ink = labelOp.textLayout->inkBounds;
+        labelOp.rect.y = badge.y + height * 0.5f - (ink.y + ink.height * 0.5f);
+        ops.push_back(std::move(labelOp));
         return ops;
     }
 
     std::vector<canton::core::DrawOp> DiagnosticsScene::buildFpsBadge(core::Rect editorBounds, int fps, const canton::core::TextLayoutService& textLayout, float dpiScale) const {
         const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
-        const canton::core::Rect badge{editorBounds.x + 8.0f * s, editorBounds.y + 20.0f * s, 78.0f * s, 20.0f * s};
+        const float height = std::round(22.0f * s);
+        const float radius = height * 0.5f;
+        const std::string label = fps == 0 ? "UI IDLE" : std::to_string(fps) + " FPS";
+        const std::uint32_t dot = fps == 0 ? 0xff64748bu : 0xff34d399u;
+        auto labelOp = badgeText({0.0f, 0.0f, 160.0f * s, height}, label, textLayout, s);
+        const float labelWidth = labelOp.textLayout ? std::ceil(labelOp.textLayout->width) : std::round(static_cast<float>(label.size()) * 6.5f * s);
+        const float badgeWidth = std::round(std::max(72.0f * s, 24.0f * s + labelWidth + 11.0f * s));
+        const canton::core::Rect badge{std::round(editorBounds.x + 12.0f * s), std::round(editorBounds.y + 12.0f * s), badgeWidth, height};
+        const canton::core::Rect shadow{badge.x - 1.0f * s, badge.y + 1.5f * s, badgeWidth + 2.0f * s, height + 1.0f * s};
+
+        const float dotCenterX = badge.x + 12.5f * s;
+        const float dotCenterY = badge.y + height * 0.5f;
+        labelOp.rect.x = std::round(badge.x + 22.0f * s);
+        labelOp.rect.width = std::max(0.0f, badge.width - 31.0f * s);
+        const auto& ink = labelOp.textLayout->inkBounds;
+        labelOp.rect.y = badge.y + height * 0.5f - (ink.y + ink.height * 0.5f);
+
         return {
-            fill(badge, 0xcc111827u, 6.0f * s),
-            stroke(badge, 0x664b5563u, 1.0f * s, 6.0f * s),
-            badgeText({badge.x + 8.0f * s, badge.y, badge.width - 16.0f * s, badge.height}, fps == 0 ? "UI idle" : "UI " + std::to_string(fps) + " FPS", textLayout, s),
+            fill(shadow, 0x30000000u, radius + 1.0f * s),
+            fill(badge, 0xe0121620u, radius),
+            stroke(badge, 0x26ffffffu, 1.0f * s, radius),
+            fill({dotCenterX - 5.0f * s, dotCenterY - 5.0f * s, 10.0f * s, 10.0f * s}, withAlpha(dot, 0x30u), 5.0f * s),
+            fill({dotCenterX - 2.75f * s, dotCenterY - 2.75f * s, 5.5f * s, 5.5f * s}, dot, 2.75f * s),
+            std::move(labelOp),
         };
     }
 
     canton::core::DrawOp DiagnosticsScene::badgeText(canton::core::Rect area, std::string value, const canton::core::TextLayoutService& textLayout, float dpiScale) {
         const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
-        auto op = text(area, std::move(value), 0xffe8eaedu, 9.5f * s);
+        auto op = text(area, std::move(value), 0xfff1f5f9u, 10.0f * s);
+        op.textStyle.fontWeight = 600;
         canton::core::DrawOpsBuilder::prepareText(op, textLayout);
         // 重放从文本框顶部开始；用实际字形墨迹的中点与徽标中点对齐。
         const auto& ink = op.textLayout->inkBounds;
@@ -94,27 +135,57 @@ namespace canton::runtime {
         return op;
     }
 
-    std::vector<canton::core::DrawOp> DiagnosticsScene::buildToasts(core::Rect editorBounds, const std::vector<DiagnosticsToastModel>& toasts, DiagnosticVisibility visibility, float dpiScale) const {
+    std::vector<canton::core::DrawOp> DiagnosticsScene::buildToasts(core::Rect editorBounds, const std::vector<DiagnosticsToastModel>& toasts, DiagnosticVisibility visibility, float dpiScale, const canton::core::TextLayoutService* textLayout) const {
         std::vector<canton::core::DrawOp> ops;
         if (!diagnosticVisibilityEnabled(visibility) || toasts.empty()) return ops;
 
         const float s = dpiScale > 0.0f ? dpiScale : 1.0f;
-        const float maxToastWidth = std::clamp(editorBounds.width - 32.0f * s, 220.0f * s, 360.0f * s);
-        float y = editorBounds.y + 48.0f * s;
+        const float margin = 12.0f * s;
+        const float availWidth = std::max(140.0f * s, editorBounds.width - margin * 2.0f);
+        const float maxToastWidth = std::min(availWidth, 340.0f * s);
+        const float minToastWidth = std::min(maxToastWidth, 210.0f * s);
+        float y = std::round(editorBounds.y + 42.0f * s);
         auto drawn = 0;
+
+        const auto measureWidth = [&](const std::string& value, float fontSize, int weight) -> float {
+            if (value.empty()) return 0.0f;
+            if (textLayout) {
+                auto probe = text({0.0f, 0.0f, maxToastWidth, fontSize * 2.0f}, value, 0xffffffffu, fontSize);
+                probe.textStyle.fontWeight = weight;
+                canton::core::DrawOpsBuilder::prepareText(probe, *textLayout);
+                if (probe.textLayout) return std::ceil(probe.textLayout->width);
+            }
+            return static_cast<float>(value.size()) * fontSize * 0.62f;
+        };
+
         for (auto it = toasts.rbegin(); it != toasts.rend() && drawn < 3; ++it, ++drawn) {
-            const float titleWidth = static_cast<float>(it->title.size()) * 8.0f * s;
-            const float messageWidth = static_cast<float>(it->message.size()) * 7.0f * s;
-            const float width = std::round(std::min(maxToastWidth, std::max(180.0f * s, std::max(titleWidth, messageWidth) + 28.0f * s)));
-            const float height = std::round((it->message.empty() ? 30.0f : 48.0f) * s);
-            const float x = std::round(std::max(editorBounds.x + 12.0f * s, editorBounds.x + editorBounds.width - width - 12.0f * s));
+            const float titleSize = 11.5f * s;
+            const float messageSize = 10.5f * s;
+            const float contentWidth = std::max(measureWidth(it->title, titleSize, 600), measureWidth(it->message, messageSize, 400));
+            const float width = std::round(std::clamp(contentWidth + 36.0f * s, minToastWidth, maxToastWidth));
+            const bool hasMessage = !it->message.empty();
+            const float height = std::round((hasMessage ? 52.0f : 34.0f) * s);
+            const float x = std::round(std::max(editorBounds.x + margin, editorBounds.x + editorBounds.width - width - margin));
             const canton::core::Rect toast{x, y, width, height};
-            ops.push_back(fill(toast, 0xe6111827u, 8.0f * s));
-            ops.push_back(stroke(toast, accentColour(it->level), 1.0f * s, 8.0f * s));
-            ops.push_back(fill({toast.x, toast.y, 4.0f * s, toast.height}, accentColour(it->level), 4.0f * s));
-            ops.push_back(text({toast.x + 12.0f * s, toast.y + 6.0f * s, toast.width - 24.0f * s, 15.0f * s}, it->title, 0xfff8fafcu, 10.0f * s));
-            if (!it->message.empty()) {
-                ops.push_back(text({toast.x + 12.0f * s, toast.y + 23.0f * s, toast.width - 24.0f * s, toast.height - 29.0f * s}, it->message, 0xffcbd5e1u, 9.5f * s));
+            const canton::core::Rect shadow{x - 1.0f * s, y + 2.0f * s, width + 2.0f * s, height + 1.0f * s};
+            const auto accent = accentColour(it->level);
+
+            ops.push_back(fill(shadow, 0x36000000u, 11.0f * s));
+            ops.push_back(fill(toast, 0xf2141923u, 10.0f * s));
+            ops.push_back(stroke(toast, 0x22ffffffu, 1.0f * s, 10.0f * s));
+            ops.push_back(fill({toast.x + 8.0f * s, toast.y + 9.0f * s, 3.0f * s, std::max(8.0f * s, toast.height - 18.0f * s)}, accent, 1.5f * s));
+
+            const float textX = toast.x + 20.0f * s;
+            const float textW = std::max(0.0f, toast.width - 32.0f * s);
+            auto titleOp = text({textX, toast.y + (hasMessage ? 9.0f : 9.0f) * s, textW, 16.0f * s}, it->title, 0xfff8fafcu, titleSize);
+            titleOp.textStyle.fontWeight = 600;
+            titleOp.overflow = canton::core::TextOverflow::Ellipsis;
+            ops.push_back(std::move(titleOp));
+
+            if (hasMessage) {
+                auto msgOp = text({textX, toast.y + 27.0f * s, textW, 16.0f * s}, it->message, 0xff94a3b8u, messageSize);
+                msgOp.overflow = canton::core::TextOverflow::Ellipsis;
+                ops.push_back(std::move(msgOp));
             }
             y += height + 8.0f * s;
         }
@@ -161,12 +232,22 @@ namespace canton::runtime {
            public:
             explicit DiagnosticsHudImpl(DiagnosticsConfig config) {
                 model_.configure(std::move(config));
+                overlay_.setLayers({.frameTime = false, .status = false, .dirtyFlash = false, .bounds = false, .hit = false});
+                overlay_.setEnabled(false);
             }
 
             bool showToast(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce) override {
                 const auto visible = DiagnosticsToast::show(model_, level, tag, std::move(title), std::move(message), coalesce);
                 if (visible) invalidate();
                 return visible;
+            }
+
+            bool tickToasts(double nowMillis) override {
+                if (model_.tick(nowMillis)) {
+                    invalidate();
+                    return true;
+                }
+                return false;
             }
 
             bool tick(CantonRuntime& runtime, double nowMillis) override {
@@ -191,10 +272,7 @@ namespace canton::runtime {
                             break;
                     }
                 }
-                if (model_.tick(nowMillis)) {
-                    invalidate();
-                    changed = true;
-                }
+                if (tickToasts(nowMillis)) changed = true;
                 return changed;
             }
 
@@ -202,28 +280,29 @@ namespace canton::runtime {
                 return model_.hasActiveToasts();
             }
 
-            void setFpsEnabled(bool enabled, CantonRuntime& runtime) override {
-                if (fpsEnabled_ == enabled) return;
+            bool setFpsEnabled(bool enabled) override {
+                if (fpsEnabled_ == enabled) return false;
                 fpsEnabled_ = enabled;
                 fpsFrames_ = 0;
                 fpsWindowStart_ = 0;
                 fps_ = enabled ? std::optional<int>(0) : std::nullopt;
-                runtime.enqueueIntent(core::InputIntent::diagnostics());
+                return true;
             }
 
             bool fpsEnabled() const noexcept override {
                 return fpsEnabled_;
             }
 
-            void recordFrame(bool changed, bool ready, double nowMillis, CantonRuntime& runtime) override {
-                if (!fpsEnabled_) return;
-                if (changed) ++fpsFrames_;
+            bool recordFrame(bool appChanged, bool ready, double nowMillis) override {
+                if (!fpsEnabled_) return false;
+                if (appChanged) ++fpsFrames_;
                 if (nowMillis - fpsWindowStart_ >= 500.0) {
                     fps_ = ready ? static_cast<int>(fpsFrames_ * 1000.0 / (nowMillis - fpsWindowStart_) + 0.5) : 0;
                     fpsWindowStart_ = nowMillis;
                     fpsFrames_ = 0;
-                    runtime.enqueueIntent(core::InputIntent::diagnostics());
+                    return true;
                 }
+                return false;
             }
 
             void prepare(core::Rect bounds, bool hasError, PackageSource activeSource, bool liveUnavailable, const core::TextLayoutService& textLayout, core::PublishedFrameContent& content, float dpiScale) override {
@@ -243,7 +322,7 @@ namespace canton::runtime {
                 for (const auto& toast : toasts) sig << "|toast=" << static_cast<int>(toast.level) << ':' << toast.title << ':' << toast.message;
                 if (const auto signature = sig.str(); signature != preparedSignature_) {
                     preparedBadgeOps_ = scene_.buildBadge(bounds, badge, model_.badgeVisibility(), textLayout, s);
-                    preparedToastOps_ = scene_.buildToasts(bounds, toasts, model_.toastVisibility(), s);
+                    preparedToastOps_ = scene_.buildToasts(bounds, toasts, model_.toastVisibility(), s, &textLayout);
                     preparedSignature_ = signature;
                 }
                 replaceHudOps(content.diagnosticsBadgeDrawOps, preparedBadgeOps_);
@@ -251,7 +330,83 @@ namespace canton::runtime {
                 replaceHudOps(content.diagnosticsToastDrawOps, preparedToastOps_);
             }
 
+            void setOverlayFrameTimeEnabled(bool enabled) noexcept override {
+                auto layers = overlay_.layers();
+                layers.frameTime = enabled;
+                layers.status = enabled;
+                overlay_.setLayers(layers);
+                syncOverlayEnabled();
+            }
+
+            bool overlayFrameTimeEnabled() const noexcept override {
+                return overlay_.layers().frameTime;
+            }
+
+            void setOverlayDirtyFlashEnabled(bool enabled) noexcept override {
+                auto layers = overlay_.layers();
+                layers.dirtyFlash = enabled;
+                overlay_.setLayers(layers);
+                syncOverlayEnabled();
+            }
+
+            bool overlayDirtyFlashEnabled() const noexcept override {
+                return overlay_.layers().dirtyFlash;
+            }
+
+            void setOverlayBoundsEnabled(bool enabled) noexcept override {
+                auto layers = overlay_.layers();
+                layers.bounds = enabled;
+                layers.hit = enabled;
+                overlay_.setLayers(layers);
+                syncOverlayEnabled();
+            }
+
+            bool overlayBoundsEnabled() const noexcept override {
+                const auto& layers = overlay_.layers();
+                return layers.bounds || layers.hit;
+            }
+
+            bool overlayNeedsTimeline() const noexcept override {
+                const auto& layers = overlay_.layers();
+                return layers.frameTime || layers.status || layers.dirtyFlash;
+            }
+
+            void setOverlayPointer(std::optional<core::Point> point) noexcept override {
+                overlay_.setPointer(point);
+            }
+
+            bool updateOverlay(const core::FrameTimeline& timeline, const core::PublishedFrame& frame, const core::LayoutTree& tree, core::NodeId root, const core::TextLayoutService& textLayout, double nowMillis, float dpiScale) override {
+                const float scale = dpiScale > 0.0f ? dpiScale : 1.0f;
+                const bool scaleChanged = std::abs(overlay_.dpiScale() - scale) > 1e-4f;
+                overlay_.setDpiScale(scale);
+                const auto damage = overlay_.update(timeline, frame, tree, root, nowMillis);
+                const auto fontEnv = textLayout.environment();
+                const bool changed = !damage.empty() || scaleChanged || (overlay_.enabled() && preparedOverlayFontEnv_ != fontEnv);
+                if (!changed) return false;
+                preparedOverlayFontEnv_ = fontEnv;
+                preparedOverlayOps_ = overlay_.ops();
+                for (auto& op : preparedOverlayOps_) {
+                    if (op.type == core::DrawOpType::DrawText) {
+                        core::DrawOpsBuilder::prepareText(op, textLayout);
+                    }
+                }
+                return true;
+            }
+
+            std::span<const core::DrawOp> overlayOps() const noexcept override {
+                return preparedOverlayOps_;
+            }
+
+            bool overlayAnimating() const noexcept override {
+                return overlay_.enabled() && overlay_.animating();
+            }
+
            private:
+            void syncOverlayEnabled() noexcept {
+                const auto& layers = overlay_.layers();
+                overlay_.setEnabled(layers.frameTime || layers.status || layers.dirtyFlash || layers.bounds || layers.hit);
+            }
+
             void invalidate() noexcept {
                 preparedSignature_.clear();
                 preparedBadgeOps_.clear();
@@ -260,6 +415,9 @@ namespace canton::runtime {
 
             DiagnosticsModel model_;
             DiagnosticsScene scene_;
+            core::DiagnosticsOverlay overlay_;
+            std::vector<canton::core::DrawOp> preparedOverlayOps_;
+            std::uint64_t preparedOverlayFontEnv_ = 0;
             bool fpsEnabled_ = false;
             double fpsWindowStart_ = 0;
             int fpsFrames_ = 0;
@@ -287,6 +445,8 @@ namespace canton::runtime {
             config.overlay = DiagnosticVisibility::Hidden;
             diagnostics_.setHud(createDiagnosticsHud(config));
         }
-        diagnostics_.hud()->setFpsEnabled(enabled, runtime_);
+        if (diagnostics_.hud()->setFpsEnabled(enabled)) {
+            runtime_.enqueueIntent(core::InputIntent::diagnostics());
+        }
     }
 }

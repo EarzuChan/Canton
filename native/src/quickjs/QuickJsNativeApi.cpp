@@ -207,7 +207,7 @@ namespace canton::quickjs {
                 target = JS_ToBool(context, item.get()) > 0;
                 return true;
             };
-            if (!boolField("resizable", out.resizable) || !boolField("minimizable", out.minimizable) || !boolField("maximizable", out.maximizable) || !boolField("closable", out.closable) || !boolField("alwaysOnTop", out.alwaysOnTop)) return false;
+            if (!boolField("resizable", out.resizable) || !boolField("minimizable", out.minimizable) || !boolField("maximizable", out.maximizable) || !boolField("closable", out.closable) || !boolField("alwaysOnTop", out.alwaysOnTop) || !boolField("transparent", out.transparent)) return false;
 
             ScopedValue taskbarVal(context, JS_GetPropertyStr(context, value, "showInTaskbar"));
             if (!JS_IsUndefined(taskbarVal.get()) && !JS_IsNull(taskbarVal.get())) {
@@ -243,6 +243,12 @@ namespace canton::quickjs {
                 out.cornerPreference = canton::core::WindowCornerPreference::Square;
             else {
                 JS_ThrowTypeError(context, "窗口 cornerPreference 无效: %s", corner.c_str());
+                return false;
+            }
+            using namespace canton::core;
+            if (out.transparent && (out.chrome != WindowChrome::Frameless || out.backdrop != WindowBackdrop::None ||
+                                    out.cornerPreference == WindowCornerPreference::Round || out.cornerPreference == WindowCornerPreference::RoundSmall)) {
+                JS_ThrowTypeError(context, "透明窗口要求 chrome='frameless'、无背景材质且不使用系统圆角");
                 return false;
             }
             return !JS_HasException(context);

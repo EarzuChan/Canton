@@ -83,7 +83,12 @@ namespace canton::runtime {
                   options_.painters),
               options_.live),
           fallbackPipeline_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))) {
-        if (options_.hudFactory) globalDiagnostics_.setHud(options_.hudFactory());
+        if (options_.hudFactory) {
+            globalDiagnostics_.setHud(options_.hudFactory());
+            globalDiagnostics_.setNotifySink([this](core::LogLevel level, std::string_view tag, const std::string& title, const std::string& message, bool coalesce) {
+                enqueueMirroredToast(level, tag, title, message, coalesce);
+            });
+        }
         controlRuntime_.setExternalSurfaceHost(true);
         controlRuntime_.setEventSlotValidator([this](const core::EventSlotId& slot) {
             for (const auto& [_, win] : windows_) {
@@ -118,6 +123,108 @@ namespace canton::runtime {
     void AppSession::requestReload() noexcept {
         reloadRequested_ = true;
         controlRuntime_.notifyWorkAvailable();
+    }
+
+    void AppSession::notifyToast(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce) {
+        (void)globalDiagnostics_.notify(level, tag, std::move(title), std::move(message), coalesce);
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    void AppSession::triggerSimulatedError(std::string summary, std::string detail) {
+        controlRuntime_.suspend();
+        sessionLoaded_ = false;
+        globalDiagnostics_.setError(makeErrorScreenModel(ErrorSource::ScriptRuntime, std::move(summary), std::move(detail), {}, true));
+        for (auto& [_, win] : windows_) {
+            win->pipeline.enqueueIntent(core::InputIntent::diagnostics());
+        }
+        fallbackPipeline_.enqueueIntent(core::InputIntent::diagnostics());
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    void AppSession::enqueueMirroredToast(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce) {
+        if (coalesce) {
+            for (auto& existing : pendingToasts_) {
+                if (existing.title == title) {
+                    existing.level = level;
+                    existing.tag = std::string(tag);
+                    existing.message = std::move(message);
+                    return;
+                }
+            }
+        }
+        pendingToasts_.push_back({level, std::string(tag), std::move(title), std::move(message), coalesce});
+        while (pendingToasts_.size() > 6) pendingToasts_.erase(pendingToasts_.begin());
+    }
+
+    namespace {
+        bool isHudFriendlyWindow(const WindowSurfaceState& win, const core::WindowConfigSpec& cfg) noexcept {
+            if (!cfg.visible || cfg.placement == core::WindowPlacement::Minimized) return false;
+            if (cfg.transparent || cfg.role != core::WindowRole::Standard) return false;
+            const double scale = win.dpiScale > 0.0 ? win.dpiScale : 1.0;
+            return (static_cast<double>(win.widthPx) / scale) >= 300.0 && (static_cast<double>(win.heightPx) / scale) >= 180.0;
+        }
+    }
+
+    core::WindowId AppSession::selectToastTargetWindow(const std::vector<core::WindowId>& order,
+        const std::function<const WindowSurfaceState&(core::WindowId)>& resolveWindow,
+        const std::function<const core::WindowConfigSpec&(const WindowSurfaceState&)>& resolveConfig) const {
+        if (order.empty()) return 0;
+        for (const auto id : order) {
+            const auto& win = resolveWindow(id);
+            if (win.focused && isHudFriendlyWindow(win, resolveConfig(win))) return id;
+        }
+        if (lastFocusedWindowId_ != 0 && std::find(order.begin(), order.end(), lastFocusedWindowId_) != order.end()) {
+            const auto& win = resolveWindow(lastFocusedWindowId_);
+            if (isHudFriendlyWindow(win, resolveConfig(win))) return lastFocusedWindowId_;
+        }
+        for (const auto id : order) {
+            const auto& win = resolveWindow(id);
+            if (isHudFriendlyWindow(win, resolveConfig(win))) return id;
+        }
+        for (const auto id : order) {
+            const auto& win = resolveWindow(id);
+            const auto& cfg = resolveConfig(win);
+            if (cfg.visible && cfg.placement != core::WindowPlacement::Minimized && !cfg.transparent) return id;
+        }
+        for (const auto id : order) {
+            const auto& win = resolveWindow(id);
+            if (resolveConfig(win).visible) return id;
+        }
+        return 0;
+    }
+
+    core::WindowId AppSession::selectPrimaryErrorWindowId() const {
+        if (windowOrder_.empty()) return 0;
+        for (const auto id : windowOrder_) {
+            const auto& win = *windows_.at(id);
+            if (win.focused && isHudFriendlyWindow(win, win.config)) return id;
+        }
+        if (lastFocusedWindowId_ != 0 && windows_.contains(lastFocusedWindowId_)) {
+            const auto& win = *windows_.at(lastFocusedWindowId_);
+            if (isHudFriendlyWindow(win, win.config)) return lastFocusedWindowId_;
+        }
+        core::WindowId bestFriendly = 0;
+        std::int64_t bestFriendlyArea = -1;
+        core::WindowId bestOpaque = 0;
+        std::int64_t bestOpaqueArea = -1;
+        core::WindowId firstVisible = 0;
+        for (const auto id : windowOrder_) {
+            const auto& win = *windows_.at(id);
+            if (!win.config.visible || win.config.placement == core::WindowPlacement::Minimized) continue;
+            if (firstVisible == 0) firstVisible = id;
+            const auto area = static_cast<std::int64_t>(win.widthPx) * static_cast<std::int64_t>(win.heightPx);
+            if (isHudFriendlyWindow(win, win.config) && area > bestFriendlyArea) {
+                bestFriendly = id;
+                bestFriendlyArea = area;
+            }
+            if (!win.config.transparent && area > bestOpaqueArea) {
+                bestOpaque = id;
+                bestOpaqueArea = area;
+            }
+        }
+        if (bestFriendly != 0) return bestFriendly;
+        if (bestOpaque != 0) return bestOpaque;
+        return firstVisible != 0 ? firstVisible : windowOrder_.front();
     }
 
     void AppSession::shutdownSession() {
@@ -160,6 +267,7 @@ namespace canton::runtime {
             windows_.erase(id);
         }
         windowOrder_.clear();
+        lastFocusedWindowId_ = 0;
     }
 
     void AppSession::applyLoadOutcome(PackageLoadOutcome outcome) {
@@ -200,90 +308,69 @@ namespace canton::runtime {
         globalDiagnostics_.setError(makeErrorScreenModel(src, message, {}, related));
         (void)globalDiagnostics_.notify(core::LogLevel::Error, TAG, "运行时执行失败", message);
         for (auto& [_, win] : windows_) {
-            win->diagnostics.setError(*globalDiagnostics_.error());
             win->pipeline.enqueueIntent(core::InputIntent::diagnostics());
         }
         fallbackPipeline_.enqueueIntent(core::InputIntent::diagnostics());
     }
 
-    void AppSession::syncAppAndWindowMutations(bool& hadWindowChanges) {
-        auto* host = controlRuntime_.scriptHost();
-        if (!host) return;
+    std::unique_ptr<WindowSurfaceState> AppSession::makeWindowSurface(const quickjs::WindowMutation& mutation) {
+        auto surface = std::make_unique<WindowSurfaceState>(textLayout_);
+        const auto windowId = mutation.windowId;
+        surface->windowId = windowId;
+        surface->rootNodeId = mutation.rootNodeId;
+        surface->config = mutation.config;
+        surface->widthPx = std::max(1, static_cast<int>(std::lround(mutation.config.sizeDp.width)));
+        surface->heightPx = std::max(1, static_cast<int>(std::lround(mutation.config.sizeDp.height)));
+        if (options_.hudFactory) surface->diagnostics.setHud(options_.hudFactory());
+        surface->text.setCancelCompositionHook([this, windowId] {
+            if (options_.platform.onCancelPlatformIme) options_.platform.onCancelPlatformIme(windowId);
+        });
+        return surface;
+    }
 
-        if (auto appSpec = host->takeAppConfig()) {
-            const auto iconChanged = appSpec->icon != appConfig_.icon;
-            appConfig_ = std::move(*appSpec);
-            if (!appConfig_.appId.empty() && appConfig_.appId != appliedAppId_) {
-                appliedAppId_ = appConfig_.appId;
-            }
+    void AppSession::commitWindowChanges(const std::optional<core::AppConfigSpec>& appSpec,
+        const std::vector<quickjs::WindowMutation>& mutations,
+        std::unordered_map<core::WindowId, std::unique_ptr<WindowSurfaceState>>& newWindows,
+        const std::vector<core::WindowId>& destroyOrder) {
+        const bool appIconChanged = appSpec && appSpec->icon != appConfig_.icon;
+        if (appSpec) {
+            appConfig_ = *appSpec;
             if (options_.platform.onAppConfigChanged) options_.platform.onAppConfigChanged(appConfig_);
-            if (iconChanged) {
-                for (auto& [_, win] : windows_) requestIconIfNeeded(*win);
-            }
         }
-
-        if (host->consumeAppExitRequest()) {
-            exitRequested_ = true;
-            if (options_.platform.onRequestExit) options_.platform.onRequestExit();
-            return;
-        }
-
-        const auto mutations = host->takeWindowMutations();
-        if (!mutations.empty()) {
-            hadWindowChanges = true;
-            std::unordered_map<core::WindowId, std::optional<core::WindowId>> owners;
-            for (const auto& [id, win] : windows_) owners[id] = win->config.ownerWindowId;
-            std::vector<core::WindowId> pendingDestroys;
-
-            for (const auto& mutation : mutations) {
-                if (mutation.kind == quickjs::WindowMutationKind::Create) {
-                    std::erase(pendingDestroys, mutation.windowId);
-                    auto surface = std::make_unique<WindowSurfaceState>(textLayout_);
-                    surface->windowId = mutation.windowId;
-                    surface->rootNodeId = mutation.rootNodeId;
-                    surface->config = mutation.config;
-                    surface->widthPx = std::max(1, static_cast<int>(std::lround(mutation.config.sizeDp.width)));
-                    surface->heightPx = std::max(1, static_cast<int>(std::lround(mutation.config.sizeDp.height)));
-                    if (options_.hudFactory) surface->diagnostics.setHud(options_.hudFactory());
-                    const auto windowId = mutation.windowId;
-                    surface->text.setCancelCompositionHook([this, windowId] {
-                        if (options_.platform.onCancelPlatformIme) options_.platform.onCancelPlatformIme(windowId);
-                    });
-                    owners[windowId] = mutation.config.ownerWindowId;
-                    auto* raw = surface.get();
-                    windows_[windowId] = std::move(surface);
-                    if (std::find(windowOrder_.begin(), windowOrder_.end(), windowId) == windowOrder_.end()) {
-                        windowOrder_.push_back(windowId);
-                    }
-                    everOpenedWindow_ = true;
-                    if (options_.platform.onWindowCreated) options_.platform.onWindowCreated(windowId, raw->config);
-                    requestIconIfNeeded(*raw);
-                } else if (mutation.kind == quickjs::WindowMutationKind::Update) {
-                    if (auto it = windows_.find(mutation.windowId); it != windows_.end()) {
-                        it->second->config = mutation.config;
-                        owners[mutation.windowId] = mutation.config.ownerWindowId;
-                        if (options_.platform.onWindowUpdated) options_.platform.onWindowUpdated(mutation.windowId, it->second->config);
-                        requestIconIfNeeded(*it->second);
-                    }
-                } else if (mutation.kind == quickjs::WindowMutationKind::Destroy) {
-                    if (windows_.contains(mutation.windowId) && std::find(pendingDestroys.begin(), pendingDestroys.end(), mutation.windowId) == pendingDestroys.end()) {
-                        pendingDestroys.push_back(mutation.windowId);
-                    }
-                }
-            }
-
-            if (!pendingDestroys.empty()) {
-                const auto ordered = sortDestroyOrder(pendingDestroys, owners);
-                for (const auto id : ordered) {
-                    host->unpublishWindowScene(id);
-                    if (options_.platform.onWindowDestroyed) options_.platform.onWindowDestroyed(id);
-                    windows_.erase(id);
-                    std::erase(windowOrder_, id);
+        for (const auto& mutation : mutations) {
+            const auto id = mutation.windowId;
+            if (mutation.kind == quickjs::WindowMutationKind::Create) {
+                auto pending = newWindows.extract(id);
+                if (pending.empty()) continue;
+                auto& win = *pending.mapped();
+                windows_.insert(std::move(pending));
+                windowOrder_.push_back(id);
+                everOpenedWindow_ = true;
+                if (options_.platform.onWindowCreated) options_.platform.onWindowCreated(id, win.config);
+                requestIconIfNeeded(win);
+            } else if (mutation.kind == quickjs::WindowMutationKind::Update) {
+                if (auto* win = window(id)) {
+                    win->config = mutation.config;
+                    if (options_.platform.onWindowUpdated) options_.platform.onWindowUpdated(id, win->config);
+                    requestIconIfNeeded(*win);
                 }
             }
         }
+        auto* host = controlRuntime_.scriptHost();
+        for (const auto id : destroyOrder) {
+            host->unpublishWindowScene(id);
+            if (options_.platform.onWindowDestroyed) options_.platform.onWindowDestroyed(id);
+            windows_.erase(id);
+            std::erase(windowOrder_, id);
+            if (lastFocusedWindowId_ == id) lastFocusedWindowId_ = 0;
+        }
+        if (appIconChanged) {
+            for (auto& [_, win] : windows_) requestIconIfNeeded(*win);
+        }
+    }
 
-        for (const auto& cmd : host->takeWindowCommands()) {
+    void AppSession::dispatchWindowCommands() {
+        for (const auto& cmd : controlRuntime_.scriptHost()->takeWindowCommands()) {
             if (!windows_.contains(cmd.windowId)) continue;
             if (cmd.kind == core::WindowCommandKind::RequestClose) {
                 notifyWindowCloseRequest(cmd.windowId);
@@ -409,23 +496,49 @@ namespace canton::runtime {
 
         if (!sessionLoaded_ || globalDiagnostics_.hasError()) {
             if (!windows_.empty()) {
+                const auto primaryErrorId = selectPrimaryErrorWindowId();
+                if (!pendingToasts_.empty() && primaryErrorId != 0) {
+                    auto& target = *windows_.at(primaryErrorId);
+                    if (!target.config.transparent) {
+                        for (const auto& toast : pendingToasts_) {
+                            if (target.diagnostics.notify(toast.level, toast.tag, toast.title, toast.message, toast.coalesce)) {
+                                target.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+                            }
+                        }
+                    }
+                    pendingToasts_.clear();
+                }
                 for (const auto windowId : windowOrder_) {
                     auto& win = *windows_.at(windowId);
-                    if (globalDiagnostics_.hasError()) win.diagnostics.setError(*globalDiagnostics_.error());
                     const auto prevRev = win.pipeline.publishedFrame().revision;
                     const core::Rect bounds{0.0f, 0.0f, static_cast<float>(win.widthPx), static_cast<float>(win.heightPx)};
                     const float scale = static_cast<float>(win.dpiScale > 0.0 ? win.dpiScale : 1.0);
-                    (void)win.diagnostics.tick(controlRuntime_, nowMillis);
+                    if (win.diagnostics.tickToasts(nowMillis)) {
+                        win.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+                    }
+                    const bool isPrimary = windowId == primaryErrorId;
+                    const auto* appErr = globalDiagnostics_.error();
                     (void)win.pipeline.publishRetained([&](const core::NativeScene&, core::PublishedFrame& frame) {
                         frame.content.viewport = {bounds.width, bounds.height};
-                        win.diagnostics.prepareFrame(bounds, options_.detailedErrorScreen, source_.activeSource(), source_.liveUnavailable(), textLayout_, frame.content, scale);
-                        frame.content.errorFrame = win.diagnostics.hasError() ? std::optional<std::string>(win.diagnostics.error()->summary) : std::nullopt;
+                        win.diagnostics.prepareFrame(bounds, options_.detailedErrorScreen, source_.activeSource(), source_.liveUnavailable(), textLayout_, frame.content, scale, isPrimary, appErr);
+                        if (win.config.transparent) {
+                            frame.content.diagnosticsBadgeDrawOps.clear();
+                            frame.content.diagnosticsFpsDrawOps.clear();
+                            frame.content.diagnosticsToastDrawOps.clear();
+                        }
+                        frame.content.errorFrame = appErr ? std::optional<std::string>(appErr->summary) : std::nullopt;
                         prepareDiagnosticsTextOps(frame);
                     });
-                    if (win.pipeline.publishedFrame().revision != prevRev) changedWindows.push_back(windowId);
+                    bool overlayChanged = false;
+                    if (auto* hud = win.diagnostics.hud()) {
+                        overlayChanged = hud->updateOverlay(win.pipeline.timeline(), win.pipeline.publishedFrame(), win.pipeline.scene().tree(), win.rootNodeId, textLayout_, nowMillis, scale);
+                        win.overlayDirty = false;
+                    }
+                    if (win.pipeline.publishedFrame().revision != prevRev || overlayChanged) changedWindows.push_back(windowId);
                 }
             }
             if (needsFallbackWindow()) {
+                pendingToasts_.clear();
                 const auto prevRev = fallbackPipeline_.publishedFrame().revision;
                 pumpFallbackFrame(nowMillis);
                 if (fallbackPipeline_.publishedFrame().revision != prevRev) changedWindows.push_back(0);
@@ -457,10 +570,6 @@ namespace canton::runtime {
             fontChanged = true;
         }
 
-        bool hadWindowChanges = false;
-        syncAppAndWindowMutations(hadWindowChanges);
-        if (exitRequested_) return changedWindows;
-
         bool needsScriptVisual = host->hasPendingVisualWork() || host->hasPendingFocusCommands() || host->hasPendingWindowWork();
         for (const auto& [_, win] : windows_) {
             if (win->pipeline.scene().tree().activeAnimationCount() > 0) needsScriptVisual = true;
@@ -478,9 +587,46 @@ namespace canton::runtime {
                 return changedWindows;
             }
             rearrangeSubmission = host->pendingRearrangeSubmission();
-            syncAppAndWindowMutations(hadWindowChanges);
-            if (exitRequested_) return changedWindows;
         }
+
+        const auto appSpec = host->takeAppConfig();
+        const auto mutations = host->takeWindowMutations();
+        auto frameOrder = windowOrder_;
+        std::unordered_map<core::WindowId, std::unique_ptr<WindowSurfaceState>> newWindows;
+        std::unordered_map<core::WindowId, const core::WindowConfigSpec*> updatedConfigs;
+        std::vector<core::WindowId> destroyOrder;
+        if (!mutations.empty()) {
+            std::unordered_map<core::WindowId, std::optional<core::WindowId>> owners;
+            for (const auto& [id, win] : windows_) owners[id] = win->config.ownerWindowId;
+            for (const auto& mutation : mutations) {
+                const auto id = mutation.windowId;
+                switch (mutation.kind) {
+                    case quickjs::WindowMutationKind::Create:
+                        newWindows.emplace(id, makeWindowSurface(mutation));
+                        frameOrder.push_back(id);
+                        owners[id] = mutation.config.ownerWindowId;
+                        break;
+                    case quickjs::WindowMutationKind::Update:
+                        updatedConfigs[id] = &mutation.config;
+                        owners[id] = mutation.config.ownerWindowId;
+                        break;
+                    case quickjs::WindowMutationKind::Destroy:
+                        std::erase(frameOrder, id);
+                        if (windows_.contains(id)) destroyOrder.push_back(id);
+                        newWindows.erase(id);
+                        break;
+                }
+            }
+            destroyOrder = sortDestroyOrder(destroyOrder, owners);
+        }
+        const auto frameWindow = [&](core::WindowId id) -> WindowSurfaceState& {
+            if (const auto found = newWindows.find(id); found != newWindows.end()) return *found->second;
+            return *windows_.at(id);
+        };
+        const auto frameConfig = [&](const WindowSurfaceState& win) -> const core::WindowConfigSpec& {
+            const auto found = updatedConfigs.find(win.windowId);
+            return found == updatedConfigs.end() ? win.config : *found->second;
+        };
 
         // 分发焦点命令到所属窗口（未带窗口身份的命令按请求器匹配各窗口）
         const auto focusCommands = host->takeScopedFocusCommands();
@@ -489,68 +635,97 @@ namespace canton::runtime {
             if (scoped.windowId != 0) {
                 focusByWindow[scoped.windowId].push_back(scoped.command);
             } else {
-                for (const auto id : windowOrder_) focusByWindow[id].push_back(scoped.command);
+                for (const auto id : frameOrder) focusByWindow[id].push_back(scoped.command);
             }
         }
 
         // 将候选事务入队至对应窗口
         for (const auto id : host->pendingTransactionWindows()) {
             auto tx = host->takeWindowTransaction(id);
-            if (tx && windows_.contains(id)) windows_.at(id)->pipeline.enqueue(std::move(*tx));
+            if (tx && std::find(frameOrder.begin(), frameOrder.end(), id) != frameOrder.end()) frameWindow(id).pipeline.enqueue(std::move(*tx));
         }
 
-        // 分发诊断气泡与动作
-        const auto toasts = controlRuntime_.takeDiagnosticToasts();
+        // 分发诊断气泡与动作（统一路由至最近聚焦的合适常规窗）
+        const auto scriptToasts = controlRuntime_.takeDiagnosticToasts();
         const auto actions = controlRuntime_.takeDiagnosticActions();
         for (const auto& action : actions) {
             if (action.kind == quickjs::QuickJsDiagnosticActionKind::RequestReload) reloadRequested_ = true;
         }
-        if (!toasts.empty() && !windowOrder_.empty()) {
-            auto& primary = *windows_.at(windowOrder_.front());
-            for (const auto& toast : toasts) {
-                if (primary.diagnostics.notify(toast.level, toast.tag, toast.title, toast.content, toast.coalesce)) {
-                    primary.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+        if ((!pendingToasts_.empty() || !scriptToasts.empty()) && !frameOrder.empty()) {
+            const auto targetId = selectToastTargetWindow(
+                frameOrder,
+                [&](core::WindowId id) -> const WindowSurfaceState& { return frameWindow(id); },
+                [&](const WindowSurfaceState& win) -> const core::WindowConfigSpec& { return frameConfig(win); });
+            if (targetId != 0) {
+                auto& target = frameWindow(targetId);
+                for (const auto& toast : pendingToasts_) {
+                    if (target.diagnostics.notify(toast.level, toast.tag, toast.title, toast.message, toast.coalesce)) {
+                        target.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+                    }
                 }
+                for (const auto& toast : scriptToasts) {
+                    if (target.diagnostics.notify(toast.level, toast.tag, toast.title, toast.content, toast.coalesce)) {
+                        target.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+                    }
+                }
+                pendingToasts_.clear();
             }
         }
 
-        std::optional<std::string> pipelineFailure;
+        struct PreparedWindow {
+            WindowSurfaceState& window;
+            std::uint64_t previousRevision;
+            std::optional<core::InputSession> input;
+            std::optional<InputTextSession> text;
+            bool cancelIme = false;
+            bool transparencyChanged = false;
+        };
+        std::vector<PreparedWindow> candidates;
+        candidates.reserve(frameOrder.size());
+        struct DiscardCandidates {
+            std::vector<PreparedWindow>& candidates;
+            void discard() {
+                for (auto& candidate : candidates) candidate.window.pipeline.discard();
+            }
+            ~DiscardCandidates() { discard(); }
+        } rollback{candidates};
         std::vector<std::pair<core::EventSlotId, core::ScrollResult>> scrollFeedbacks;
-        std::vector<core::WindowId> publishedWindows;
+        const auto prepareDiagnostics = [&](WindowSurfaceState& win, core::PublishedFrame& frame) {
+            const float scale = static_cast<float>(win.dpiScale > 0.0 ? win.dpiScale : 1.0);
+            const float topSafe = frameConfig(win).chrome == core::WindowChrome::CustomTitleBar ? 32.0f * scale : 0.0f;
+            const core::Rect hudBounds{0.0f, topSafe, static_cast<float>(win.widthPx), std::max(0.0f, static_cast<float>(win.heightPx) - topSafe)};
+            win.diagnostics.prepareFrame(hudBounds, options_.detailedErrorScreen, source_.activeSource(), source_.liveUnavailable(), textLayout_, frame.content, scale);
+            if (frameConfig(win).transparent) {
+                frame.content.diagnosticsBadgeDrawOps.clear();
+                frame.content.diagnosticsFpsDrawOps.clear();
+                frame.content.diagnosticsToastDrawOps.clear();
+            }
+            frame.content.errorFrame = std::nullopt;
+            prepareDiagnosticsTextOps(frame);
+        };
 
-        for (const auto windowId : windowOrder_) {
-            auto& win = *windows_.at(windowId);
+        for (const auto windowId : frameOrder) {
+            auto& win = frameWindow(windowId);
             win.pipeline.setFrameTime(nowMillis);
-
-            // 推进滚轮平滑器
             while (const auto step = win.wheelSmoother.tick(nowMillis)) {
                 dispatchWheelSample(win, step->first, step->second);
             }
-
-            if (fontChanged || win.pipeline.scene().tree().activeAnimationCount() > 0 || !focusByWindow[windowId].empty()) {
-                win.pipeline.enqueueIntent(core::InputIntent::animationFrame());
+            const bool forceRun = fontChanged || win.pipeline.scene().tree().activeAnimationCount() > 0 || !focusByWindow[windowId].empty();
+            if (win.diagnostics.tickToasts(nowMillis)) {
+                win.pipeline.enqueueIntent(core::InputIntent::diagnostics());
             }
-            (void)win.diagnostics.tick(controlRuntime_, nowMillis);
 
-            const auto prevRevision = win.pipeline.publishedFrame().revision;
+            auto& candidate = candidates.emplace_back(PreparedWindow{win, win.pipeline.publishedFrame().revision, {}, {}});
+            candidate.transparencyChanged = frameConfig(win).transparent != win.config.transparent;
             const core::Constraints constraints{0.0f, static_cast<float>(win.widthPx), 0.0f, static_cast<float>(win.heightPx)};
-            const float scale = static_cast<float>(win.dpiScale > 0.0 ? win.dpiScale : 1.0);
-            const float topSafe = (!win.diagnostics.hasError() && win.config.chrome == core::WindowChrome::CustomTitleBar) ? 32.0f * scale : 0.0f;
-            const core::Rect hudBounds{0.0f, topSafe, static_cast<float>(win.widthPx), std::max(0.0f, static_cast<float>(win.heightPx) - topSafe)};
-
-            core::InputSession candidateInput = win.input;
-            InputTextSession candidateText = win.text;
-            bool candidatePrepared = false;
-
             const auto finalize = [&](const core::NativeScene& scene, core::PublishedFrame& frame) {
-                candidateInput.synchronizePublishedInput(scene.tree(), true, candidateText);
-                candidateInput.synchronizePublishedFocus(scene.tree(), true, candidateText, focusByWindow[windowId]);
-                candidateText.populatePublishedFrame(scene.tree(), true, frame.content);
-                candidatePrepared = true;
-
-                win.diagnostics.prepareFrame(hudBounds, options_.detailedErrorScreen, source_.activeSource(), source_.liveUnavailable(), textLayout_, frame.content, scale);
-                frame.content.errorFrame = std::nullopt;
-                prepareDiagnosticsTextOps(frame);
+                auto& input = candidate.input.emplace(win.input);
+                auto& text = candidate.text.emplace(win.text);
+                text.setCancelCompositionHook([&candidate] { candidate.cancelIme = true; });
+                input.synchronizePublishedInput(scene.tree(), true, text);
+                input.synchronizePublishedFocus(scene.tree(), true, text, focusByWindow[windowId]);
+                text.populatePublishedFrame(scene.tree(), true, frame.content);
+                prepareDiagnostics(win, frame);
             };
 
             const core::FramePreparation preparation{
@@ -570,65 +745,62 @@ namespace canton::runtime {
                 },
             };
 
-            const bool forceRun = fontChanged || !focusByWindow[windowId].empty();
-            const auto result = win.pipeline.run(win.rootNodeId, constraints, forceRun, finalize, preparation);
+            const auto result = win.pipeline.prepare(win.rootNodeId, constraints, forceRun, finalize, preparation);
+            if (!rearrangeSubmission) rearrangeSubmission = result.rearrange;
             if (result.error) {
-                pipelineFailure = *result.error;
-                break;
-            }
-
-            if (result.ran) {
-                if (candidatePrepared) {
-                    win.input.commitState(std::move(candidateInput));
-                    win.text.commitState(std::move(candidateText));
-                    auto callbacks = makeInputCallbacks(windowId);
-                    win.input.dispatchCommittedFocus(win.pipeline.scene().tree(), win.text, callbacks);
-                    syncWindowImeState(win);
-                }
-                publishedWindows.push_back(windowId);
-                for (const auto& snapshot : result.scrollUpdates) {
-                    if (snapshot.eventSlot.valid()) scrollFeedbacks.emplace_back(snapshot.eventSlot, snapshot);
-                }
-            } else {
-                // 仅叠层或诊断浮层变化时走保留发布
-                (void)win.pipeline.publishRetained([&](const core::NativeScene& scene, core::PublishedFrame& frame) {
-                    win.text.populatePublishedFrame(scene.tree(), true, frame.content);
-                    win.diagnostics.prepareFrame(hudBounds, options_.detailedErrorScreen, source_.activeSource(), source_.liveUnavailable(), textLayout_, frame.content, scale);
-                    frame.content.errorFrame = std::nullopt;
-                    prepareDiagnosticsTextOps(frame);
-                });
-                syncWindowImeState(win);
-            }
-
-            const bool changed = win.pipeline.publishedFrame().revision != prevRevision;
-            if (changed) changedWindows.push_back(windowId);
-            win.diagnostics.recordFrame(changed, win.pipeline.publishedFrame().revision > 0, nowMillis, controlRuntime_);
-        }
-
-        if (pipelineFailure) {
-            if (rearrangeSubmission) (void)host->completeRearrange(rearrangeSubmission, *pipelineFailure);
-            (void)host->completeVisualFrame(false);
-            applyRuntimeFailure(*pipelineFailure, RuntimeFrameErrorPhase::Pipeline);
-            if (needsFallbackWindow()) {
-                pumpFallbackFrame(nowMillis);
-                changedWindows.push_back(0);
-            }
-            return changedWindows;
-        }
-
-        for (const auto windowId : publishedWindows) {
-            if (windows_.contains(windowId)) host->publishWindowScene(windowId, windows_.at(windowId)->pipeline.scene());
-        }
-
-        for (const auto& [slot, snapshot] : scrollFeedbacks) {
-            const auto feedback = host->invokeEventSlot(slot, snapshot);
-            if (!feedback.ok) {
-                if (rearrangeSubmission) (void)host->completeRearrange(rearrangeSubmission, feedback.error);
+                rollback.discard();
+                if (rearrangeSubmission) (void)host->completeRearrange(rearrangeSubmission, *result.error);
                 (void)host->completeVisualFrame(false);
-                applyRuntimeFailure(feedback.error, RuntimeFrameErrorPhase::Event);
+                applyRuntimeFailure(*result.error, RuntimeFrameErrorPhase::Pipeline);
+                if (needsFallbackWindow()) {
+                    pumpFallbackFrame(nowMillis);
+                    changedWindows.push_back(0);
+                }
                 return changedWindows;
             }
+            for (const auto& snapshot : result.scrollUpdates) {
+                if (snapshot.eventSlot.valid()) scrollFeedbacks.emplace_back(snapshot.eventSlot, snapshot);
+            }
         }
+
+        // 所有候选已通过。先一起发布场景与输入，再让 HWND、IME 与脚本观察到新状态。
+        for (auto& candidate : candidates) {
+            auto& win = candidate.window;
+            win.pipeline.commit();
+            if (candidate.input) {
+                win.input.commitState(std::move(*candidate.input));
+                win.text.commitState(std::move(*candidate.text));
+                host->publishWindowScene(win.windowId, win.pipeline.scene());
+            } else {
+                (void)win.pipeline.publishRetained([&](const core::NativeScene& scene, core::PublishedFrame& frame) {
+                    win.text.populatePublishedFrame(scene.tree(), true, frame.content);
+                    prepareDiagnostics(win, frame);
+                });
+            }
+        }
+        commitWindowChanges(appSpec, mutations, newWindows, destroyOrder);
+        for (auto& candidate : candidates) {
+            auto& win = candidate.window;
+            if (candidate.input) {
+                if (candidate.cancelIme && options_.platform.onCancelPlatformIme) options_.platform.onCancelPlatformIme(win.windowId);
+                win.input.dispatchCommittedFocus(win.pipeline.scene().tree(), win.text, makeInputCallbacks(win.windowId));
+            }
+            syncWindowImeState(win);
+            const auto& published = win.pipeline.publishedFrame();
+            const bool publishedChanged = candidate.transparencyChanged || published.revision != candidate.previousRevision;
+            const bool appChanged = publishedChanged && !published.changes.appRepaint.empty();
+            if (win.diagnostics.recordWindowFrame(appChanged, published.revision > 0, nowMillis)) {
+                win.pipeline.enqueueIntent(core::InputIntent::diagnostics());
+            }
+            bool overlayChanged = false;
+            if (auto* hud = win.diagnostics.hud()) {
+                const float scale = static_cast<float>(win.dpiScale > 0.0 ? win.dpiScale : 1.0);
+                overlayChanged = hud->updateOverlay(win.pipeline.timeline(), published, win.pipeline.scene().tree(), win.rootNodeId, textLayout_, nowMillis, scale);
+                win.overlayDirty = false;
+            }
+            if (publishedChanged || overlayChanged) changedWindows.push_back(win.windowId);
+        }
+        candidates.clear();
 
         if (rearrangeSubmission) {
             const auto completed = host->completeRearrange(rearrangeSubmission);
@@ -643,9 +815,15 @@ namespace canton::runtime {
             applyRuntimeFailure(frameCompleted.error, RuntimeFrameErrorPhase::Animation);
             return changedWindows;
         }
-
-        // 末窗自动退出：仅在完整重排提交收尾后、本次会话曾成功打开过窗口且当前活跃窗口数降为 0 时触发
-        if (hadWindowChanges && appConfig_.exitOnLastWindowClosed && everOpenedWindow_ && windows_.empty() && !globalDiagnostics_.hasError()) {
+        for (const auto& [slot, snapshot] : scrollFeedbacks) {
+            const auto feedback = host->invokeEventSlot(slot, snapshot);
+            if (!feedback.ok) {
+                applyRuntimeFailure(feedback.error, RuntimeFrameErrorPhase::Event);
+                return changedWindows;
+            }
+        }
+        dispatchWindowCommands();
+        if (host->consumeAppExitRequest() || (!mutations.empty() && appConfig_.exitOnLastWindowClosed && everOpenedWindow_ && windows_.empty())) {
             exitRequested_ = true;
             if (options_.platform.onRequestExit) options_.platform.onRequestExit();
         }
@@ -655,7 +833,7 @@ namespace canton::runtime {
 
     bool AppSession::wantsFrame() const {
         if (exitRequested_) return false;
-        if (reloadRequested_ || globalDiagnostics_.hasActiveToasts() || !pendingWindowEvents_.empty()) return true;
+        if (reloadRequested_ || globalDiagnostics_.hasActiveToasts() || !pendingWindowEvents_.empty() || !pendingToasts_.empty()) return true;
         if (sessionLoaded_ && !globalDiagnostics_.hasError()) {
             if (controlRuntime_.hasPendingEvents() || controlRuntime_.awaitingFontPreload()) return true;
             if (const auto* host = const_cast<CantonRuntime&>(controlRuntime_).scriptHost()) {
@@ -664,7 +842,8 @@ namespace canton::runtime {
             if (fonts_ && fonts_->generation() != fontGeneration_) return true;
         }
         for (const auto& [_, win] : windows_) {
-            if (win->pipeline.hasPendingIntents() || win->pipeline.hasPendingTransactions() || win->pipeline.scene().tree().activeAnimationCount() > 0 || win->wheelSmoother.active() || win->diagnostics.hasActiveToasts() || win->diagnostics.fpsEnabled()) {
+            const bool overlayActive = win->overlayDirty || (win->diagnostics.hud() && win->diagnostics.hud()->overlayAnimating());
+            if (win->pipeline.hasPendingIntents() || win->pipeline.hasPendingTransactions() || win->pipeline.scene().tree().activeAnimationCount() > 0 || win->wheelSmoother.active() || win->diagnostics.hasActiveToasts() || win->diagnostics.fpsEnabled() || overlayActive) {
                 return true;
             }
         }
@@ -795,6 +974,7 @@ namespace canton::runtime {
         auto* win = window(windowId);
         if (!win) return;
         win->focused = focused;
+        if (focused) lastFocusedWindowId_ = windowId;
         if (!focused && sessionLoaded_ && !globalDiagnostics_.hasError()) {
             auto callbacks = makeInputCallbacks(windowId);
             auto& tree = win->pipeline.scene().tree();
@@ -869,7 +1049,7 @@ namespace canton::runtime {
     core::WindowHitResult AppSession::hitTestWindowChrome(core::WindowId windowId, core::Point pointPx, float resizeBorderPx) const {
         const auto* win = window(windowId);
         if (!win) return core::WindowHitResult::Client;
-        if (globalDiagnostics_.hasError() || win->diagnostics.hasError()) return core::WindowHitResult::Client;
+        if (globalDiagnostics_.hasError()) return core::WindowHitResult::Client;
         const auto& hitSnapshot = win->pipeline.publishedFrame().content.hitTest;
         if (!hitSnapshot) return core::WindowHitResult::Client;
         const core::WindowCapabilities caps{
@@ -896,7 +1076,15 @@ namespace canton::runtime {
 
     void AppSession::pointerMove(core::WindowId windowId, const core::PointerSample& sample) {
         auto* win = window(windowId);
-        if (!win || !sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        if (!win) return;
+        if (auto* hud = win->diagnostics.hud()) {
+            hud->setOverlayPointer(sample.point);
+            if (hud->overlayBoundsEnabled()) {
+                win->overlayDirty = true;
+                controlRuntime_.notifyWorkAvailable();
+            }
+        }
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
         auto& tree = win->pipeline.scene().tree();
         const auto& hit = win->pipeline.publishedFrame().content.hitTest;
         if (!hit) return;
@@ -916,7 +1104,15 @@ namespace canton::runtime {
 
     void AppSession::pointerExit(core::WindowId windowId) {
         auto* win = window(windowId);
-        if (!win || !sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        if (!win) return;
+        if (auto* hud = win->diagnostics.hud()) {
+            hud->setOverlayPointer(std::nullopt);
+            if (hud->overlayBoundsEnabled()) {
+                win->overlayDirty = true;
+                controlRuntime_.notifyWorkAvailable();
+            }
+        }
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
         emitGestureOutput(*win, win->input.pointerExit(win->pipeline.scene().tree()));
         controlRuntime_.notifyWorkAvailable();
     }
@@ -1063,15 +1259,66 @@ namespace canton::runtime {
     void AppSession::setWindowFpsBadgeEnabled(core::WindowId windowId, bool enabled) {
         auto* win = window(windowId);
         if (!win || !win->diagnostics.hud()) return;
-        win->fpsEnabled = enabled;
-        win->diagnostics.hud()->setFpsEnabled(enabled, controlRuntime_);
-        win->pipeline.enqueueIntent(core::InputIntent::diagnostics());
-        controlRuntime_.notifyWorkAvailable();
+        if (win->diagnostics.hud()->setFpsEnabled(enabled)) {
+            win->pipeline.enqueueIntent(core::InputIntent::diagnostics());
+            controlRuntime_.notifyWorkAvailable();
+        }
     }
 
     bool AppSession::windowFpsBadgeEnabled(core::WindowId windowId) const noexcept {
         const auto* win = window(windowId);
         return win && win->diagnostics.fpsEnabled();
+    }
+
+    void AppSession::setWindowFrameTimeEnabled(core::WindowId windowId, bool enabled) {
+        auto* win = window(windowId);
+        if (!win || !win->diagnostics.hud()) return;
+        auto* hud = win->diagnostics.hud();
+        hud->setOverlayFrameTimeEnabled(enabled);
+        win->pipeline.timeline().setEnabled(hud->overlayNeedsTimeline());
+        win->overlayDirty = true;
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    bool AppSession::windowFrameTimeEnabled(core::WindowId windowId) const noexcept {
+        const auto* win = window(windowId);
+        return win && win->diagnostics.hud() && win->diagnostics.hud()->overlayFrameTimeEnabled();
+    }
+
+    void AppSession::setWindowDirtyFlashEnabled(core::WindowId windowId, bool enabled) {
+        auto* win = window(windowId);
+        if (!win || !win->diagnostics.hud()) return;
+        auto* hud = win->diagnostics.hud();
+        hud->setOverlayDirtyFlashEnabled(enabled);
+        win->pipeline.timeline().setEnabled(hud->overlayNeedsTimeline());
+        win->overlayDirty = true;
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    bool AppSession::windowDirtyFlashEnabled(core::WindowId windowId) const noexcept {
+        const auto* win = window(windowId);
+        return win && win->diagnostics.hud() && win->diagnostics.hud()->overlayDirtyFlashEnabled();
+    }
+
+    void AppSession::setWindowBoundsOverlayEnabled(core::WindowId windowId, bool enabled) {
+        auto* win = window(windowId);
+        if (!win || !win->diagnostics.hud()) return;
+        auto* hud = win->diagnostics.hud();
+        hud->setOverlayBoundsEnabled(enabled);
+        win->pipeline.timeline().setEnabled(hud->overlayNeedsTimeline());
+        win->overlayDirty = true;
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    bool AppSession::windowBoundsOverlayEnabled(core::WindowId windowId) const noexcept {
+        const auto* win = window(windowId);
+        return win && win->diagnostics.hud() && win->diagnostics.hud()->overlayBoundsEnabled();
+    }
+
+    std::span<const core::DrawOp> AppSession::windowOverlayOps(core::WindowId windowId) const noexcept {
+        const auto* win = window(windowId);
+        if (!win || !win->diagnostics.hud()) return {};
+        return win->diagnostics.hud()->overlayOps();
     }
 
     std::vector<core::WindowId> AppSession::windowIds() const {

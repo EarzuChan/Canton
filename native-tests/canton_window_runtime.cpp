@@ -2,9 +2,11 @@
 // 全程使用 visible=false 的真实隐藏 Win32 HWND，零屏幕闪烁。
 #include "RenderSupport.h"
 
+#include <core/Clock.h>
 #include <core/HitTest.h>
 #include <core/Version.h>
 #include <runtime/AppSession.h>
+#include <runtime/DiagnosticsScene.h>
 #include <runtime/Digest.h>
 #include <runtime/UiPackage.h>
 #include <win32/Window.h>
@@ -82,6 +84,11 @@ namespace {
         check(modalMgr.modalLockCount(10) == 1 && !mMain.isEnabled(), "Owner 模态未锁定宿主窗口");
         check(modalMgr.modalLockCount(11) == 0 && mSibling.isEnabled(), "Owner 模态不应误锁无关兄弟顶层窗口");
         check(mModal1.isEnabled(), "模态窗自身必须保持启用");
+
+        auto& peerModal = modalMgr.createWindow(15, modal1Spec);
+        check(modalMgr.modalLockCount(10) == 2 && !mMain.isEnabled() && mModal1.isEnabled() && peerModal.isEnabled(), "同级 Owner 模态窗不得互锁");
+        modalMgr.destroyWindow(15);
+        check(modalMgr.modalLockCount(10) == 1 && !mMain.isEnabled() && mModal1.isEnabled(), "关闭同级模态窗不应提前解锁 Owner");
 
         // 二级嵌套 Owner 模态窗（owner=12）：10 锁计数保持 >=1，12 锁计数变为 1 并禁用，二级模态 13 自身启用
         core::WindowConfigSpec modal2Spec = offscreen({});
@@ -239,7 +246,7 @@ namespace {
     }
 
     // 3. AppSession 端到端：onCloseRequest 拦截、同帧切窗不误退、末窗关闭退出、销毁逆序与 DPI 独立驱动
-    void verifyAppSessionLifecycleAndDpi() {
+    void verifyAppSessionLifecycleAndDpi(bool failSecondWindow = false, bool simulateError = false) {
         const auto dir = std::filesystem::temp_directory_path() / ("canton-win-e2e-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         std::filesystem::create_directories(dir);
         struct Cleanup {
@@ -261,7 +268,7 @@ function baseConfig(title, ownerWindowId) {
     return {
         ...(ownerWindowId ? { ownerWindowId } : {}),
         title,
-        visible: false,
+        visible: true,
         sizeDp: { width: 400, height: 300 },
         position: 'platformDefault',
         placement: 'normal',
@@ -297,6 +304,9 @@ n.installWindowDriver({
         if (winId === mainId) {
             dpiA = scale
             n.requestFrame(true)
+        } else if (winId === childId) {
+            stage = 'failedFrame'
+            n.requestFrame(true)
         }
     },
 })
@@ -327,6 +337,18 @@ n.installFrameDriver(() => {
         n.createNode(5, 'Root', childId)
     } else if (stage === 'main' && mainId !== 0) {
         n.updateBinding(chainA, { elements: [{ type: 'size', value: { width: 100 * dpiA, height: 40 * dpiA } }, { type: 'clickable', value: { onClick: () => n.requestAppExit() } }] })
+    } else if (stage === 'failedFrame') {
+        n.updateWindow(mainId, baseConfig('Uncommitted title'))
+        n.updateBinding(chainA, { elements: [{ type: 'size', value: { width: 200, height: 80 } }] })
+        n.createNode(6, 'LayoutNode', childId)
+        n.insertChild(5, 6, 0)
+        n.updateBinding(n.registerBinding(6, 'measurePolicy'), { kind: 'MinSize' })
+        n.updateBinding(n.registerBinding(6, 'modifier'), { elements: [{ type: 'drawBehind', value: {
+            prepare() { throw new Error('second-window draw rejected') },
+        } }] })
+        const pending = n.allocateWindowId()
+        n.createWindow(pending, 7, baseConfig('Uncommitted window'))
+        n.createNode(7, 'Root', pending)
     } else if (stage === 'closed' && mainId !== 0) {
         // 父子同帧销毁：故意先调父再调子，验证 AppSession 按拓扑逆序先毁子再毁父
         n.deleteNode(mainRoot)
@@ -349,9 +371,19 @@ n.requestFrame(true)
         auto fonts = std::make_shared<core::FontRegistry>();
         std::vector<core::WindowId> createdIds, destroyedIds;
         int exitCount = 0;
+        int updateCount = 0;
 
         runtime::AppSessionOptions opts;
+        opts.detailedErrorScreen = true;
+        opts.hudFactory = [] {
+            runtime::DiagnosticsConfig cfg;
+            cfg.badge = runtime::DiagnosticVisibility::Always;
+            cfg.toasts = runtime::DiagnosticVisibility::Always;
+            cfg.overlay = runtime::DiagnosticVisibility::Always;
+            return runtime::createDiagnosticsHud(cfg);
+        };
         opts.platform.onWindowCreated = [&](core::WindowId id, const core::WindowConfigSpec&) { createdIds.push_back(id); };
+        opts.platform.onWindowUpdated = [&](core::WindowId, const core::WindowConfigSpec&) { ++updateCount; };
         opts.platform.onWindowDestroyed = [&](core::WindowId id) { destroyedIds.push_back(id); };
         opts.platform.onRequestExit = [&] { ++exitCount; };
 
@@ -374,6 +406,73 @@ n.requestFrame(true)
         const auto mainWinId = createdIds[1];
         const auto childWinId = createdIds[2];
         check(mainWinId > loginWinId && childWinId > mainWinId, "原生窗口身份未保持单调递增");
+
+        if (failSecondWindow) {
+            const auto& main = *session.window(mainWinId);
+            const auto published = main.pipeline.publishedFrame();
+            const auto windowIds = session.windowIds();
+            session.notifyWindowDpi(childWinId, 1.5);
+            const auto changed = session.pumpFrame(now += 16);
+            const auto* error = session.globalDiagnostics().error();
+            check(error && error->summary.find("second-window draw rejected") != std::string::npos, "测试须在第二窗准备绘制时失败");
+            check(main.pipeline.publishedFrame().revision == published.revision && main.pipeline.publishedFrame().content.hitTest == published.content.hitTest &&
+                      main.pipeline.scene().node(4).bounds.width == 100.0f && std::find(changed.begin(), changed.end(), mainWinId) == changed.end(),
+                "第二窗准备失败时第一窗不得发布场景、输入几何或帧");
+            check(session.windowIds() == windowIds && createdIds.size() == 3 && destroyedIds.size() == 1 && updateCount == 0 && main.config.title == "Main",
+                "候选失败时窗口配置与拓扑不得提交到平台");
+            return;
+        }
+
+        // 诊断气泡智能路由与多窗口主/副错误屏验证
+        {
+            const auto& mainBefore = *session.window(mainWinId);
+            const auto& childBefore = *session.window(childWinId);
+            (void)mainBefore;
+            (void)childBefore;
+        }
+        // 聚焦主窗后再失焦（模拟用户切回 IDE 保存触发热更）：Toast 仍应路由到最近聚焦的主窗
+        session.notifyWindowFocus(mainWinId, true);
+        session.notifyWindowFocus(mainWinId, false);
+        session.notifyToast(core::LogLevel::Info, "Test", "热更新已应用", "WindowInteractionApp.cta", false);
+        (void)session.pumpFrame(now += 16);
+        check(!session.window(mainWinId)->pipeline.publishedFrame().content.diagnosticsToastDrawOps.empty(), "Toast 未路由到最近聚焦的主工作窗");
+        check(session.window(childWinId)->pipeline.publishedFrame().content.diagnosticsToastDrawOps.empty(), "Toast 不应同时广播到非目标子窗");
+
+        // Toast 到期后应自动清屏（不再卡在最后一帧）
+        now = core::monotonicMillis() + 3000.0;
+        (void)session.pumpFrame(now);
+        check(session.window(mainWinId)->pipeline.publishedFrame().content.diagnosticsToastDrawOps.empty(), "Toast 到期后未自动清除");
+
+        // 窗口级 Overlay（F9 帧时间 / F10 闪红 / F11 框框）独立开关验证
+        session.setWindowFrameTimeEnabled(childWinId, true);
+        session.setWindowBoundsOverlayEnabled(mainWinId, true);
+        const auto overlayChanged = session.pumpFrame(now += 16);
+        check(std::find(overlayChanged.begin(), overlayChanged.end(), childWinId) != overlayChanged.end(), "开启子窗帧时间面板未触发该窗重绘");
+        check(std::find(overlayChanged.begin(), overlayChanged.end(), mainWinId) != overlayChanged.end(), "开启主窗布局框框未触发该窗重绘");
+        check(!session.windowOverlayOps(childWinId).empty(), "子窗帧时间面板未生成叠加绘制");
+        check(!session.windowOverlayOps(mainWinId).empty(), "主窗布局框框未生成叠加绘制");
+        check(session.windowFrameTimeEnabled(childWinId) && !session.windowFrameTimeEnabled(mainWinId), "F9 帧时间开关未按窗独立");
+        check(!session.windowBoundsOverlayEnabled(childWinId) && session.windowBoundsOverlayEnabled(mainWinId), "F11 布局框框开关未按窗独立");
+        session.setWindowFrameTimeEnabled(childWinId, false);
+        session.setWindowBoundsOverlayEnabled(mainWinId, false);
+        (void)session.pumpFrame(now += 16);
+        check(session.windowOverlayOps(mainWinId).empty() && session.windowOverlayOps(childWinId).empty(), "关闭叠加开关后未清空叠加绘制");
+
+        if (simulateError) {
+            session.triggerSimulatedError("模拟多窗错误", "详细堆栈用于验证主副错误屏分工");
+            (void)session.pumpFrame(now += 16);
+            const auto& mainOps = session.window(mainWinId)->pipeline.publishedFrame().content.diagnosticsErrorDrawOps;
+            const auto& childOps = session.window(childWinId)->pipeline.publishedFrame().content.diagnosticsErrorDrawOps;
+            const auto containsText = [](const std::vector<core::DrawOp>& ops, std::string_view needle) {
+                for (const auto& op : ops) {
+                    if (op.type == core::DrawOpType::DrawText && op.text.find(needle) != std::string::npos) return true;
+                }
+                return false;
+            };
+            check(containsText(mainOps, "详细堆栈用于验证主副错误屏分工"), "主错误窗未展示完整错误详情");
+            check(containsText(childOps, "应用运行异常") && !containsText(childOps, "详细堆栈用于验证主副错误屏分工"), "非主窗应展示极简冻结态而非完整堆栈");
+            return;
+        }
 
         // DPI 变更为 1.5x -> 驱动主窗节点尺寸重测为 150x60
         session.notifyWindowDpi(mainWinId, 1.5);
@@ -401,6 +500,8 @@ int main() {
         verifyWindowManagerTopologyAndModality();
         verifyFiveLevelNcHitTest();
         verifyAppSessionLifecycleAndDpi();
+        verifyAppSessionLifecycleAndDpi(true);
+        verifyAppSessionLifecycleAndDpi(false, true);
         std::cout << "canton_window_runtime：多窗生命周期、同帧切窗、关闭拦截、Owned 逆序销毁、嵌套模态锁计数、5 级 WM_NCHITTEST 与 DPI 联动全部通过\n";
         return 0;
     } catch (const std::exception& error) {

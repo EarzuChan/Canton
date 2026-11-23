@@ -14,16 +14,12 @@
 
 namespace canton::host {
 
-    // 窗口级开发期诊断交互控制器；仅由 DevAssembly.cpp 提供实现，Dist 宿主不链接任何相关代码与文案
-    class DevWindowController {
+    // App 级开发期诊断交互分发器；仅由 DevAssembly.cpp 提供实现，Dist 宿主不链接任何相关代码与文案
+    class DevInputHandler {
        public:
-        virtual ~DevWindowController() = default;
+        virtual ~DevInputHandler() = default;
         virtual bool handleKeyDown(int virtualKey, core::KeyModifierState modifiers, runtime::AppSession& app, core::WindowId windowId) = 0;
         virtual bool handleErrorClick(runtime::AppSession& app) = 0;
-        virtual void setPointer(std::optional<core::Point> point) noexcept = 0;
-        virtual void updateOverlay(const core::FrameTimeline& timeline, const core::PublishedFrame& frame, const core::LayoutTree& tree, core::NodeId root, const core::TextLayoutService& textLayout, double nowMillis, float dpiScale = 1.0f) = 0;
-        [[nodiscard]] virtual std::span<const core::DrawOp> overlayOps() const noexcept = 0;
-        [[nodiscard]] virtual bool animating() const noexcept = 0;
     };
 
     // 一份宿主制品的装配：应用从哪里来、带不带 Live、诊断层与调试交互露多少。
@@ -34,7 +30,7 @@ namespace canton::host {
         std::filesystem::path readyFile;
         std::string readyToken;
         std::function<std::unique_ptr<runtime::DiagnosticsHud>()> hudFactory;
-        std::function<std::unique_ptr<DevWindowController>()> devControllerFactory;
+        std::unique_ptr<DevInputHandler> devInput;
         // wake 可从任意线程调用，把所有者线程叫醒
         std::function<runtime::PackageRuntimeSource::LiveSessionFactory(std::function<void()> wake)> live;
     };

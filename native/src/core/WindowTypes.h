@@ -115,6 +115,7 @@ namespace canton::core {
         bool closable = true;
         bool alwaysOnTop = false;
         std::optional<bool> showInTaskbar;
+        bool transparent = false;
         WindowBackdrop backdrop = WindowBackdrop::None;
         WindowCornerPreference cornerPreference = WindowCornerPreference::Default;
         bool operator==(const WindowConfigSpec&) const = default;

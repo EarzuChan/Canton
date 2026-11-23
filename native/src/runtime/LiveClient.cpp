@@ -452,10 +452,21 @@ namespace canton::runtime {
                         runtime.notifyWorkAvailable();
                         if (!result.ok)
                             packet.error = result.error;
-                        else if (hotUpdateFailed_ && packet.message.type == "update") {
-                            hotUpdateFailed_ = false;
-                            diagnostics.clearError();
-                            (void)diagnostics.notify(core::LogLevel::Info, SESSION_TAG, "热更新已恢复", source.config().devServerUrl);
+                        else if (packet.message.type == "update") {
+                            std::string detail;
+                            if (!packet.message.updates.empty()) {
+                                const auto& first = packet.message.updates.front().path;
+                                const auto slash = first.find_last_of('/');
+                                detail = slash == std::string::npos ? first : first.substr(slash + 1);
+                                if (packet.message.updates.size() > 1) detail += " 等 " + std::to_string(packet.message.updates.size()) + " 项";
+                            }
+                            if (hotUpdateFailed_) {
+                                hotUpdateFailed_ = false;
+                                diagnostics.clearError();
+                                (void)diagnostics.notify(core::LogLevel::Info, SESSION_TAG, "热更新已恢复", detail.empty() ? source.config().devServerUrl : detail);
+                            } else {
+                                (void)diagnostics.notify(core::LogLevel::Info, SESSION_TAG, "热更新已应用", detail.empty() ? source.config().devServerUrl : detail);
+                            }
                             runtime.enqueueIntent(core::InputIntent::diagnostics());
                         }
                     }

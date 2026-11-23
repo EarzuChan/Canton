@@ -16,6 +16,7 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -74,7 +75,7 @@ namespace canton::runtime {
         bool focused = false;
         bool imeEnabled = false;
         std::optional<core::Rect> lastCaretBounds;
-        bool fpsEnabled = false;
+        bool overlayDirty = false;
 
         explicit WindowSurfaceState(const core::TextLayoutService& textLayout)
             : pipeline(core::SceneFramePipeline(core::LayoutEngine(textLayout))), text(textLayout) {}
@@ -93,6 +94,8 @@ namespace canton::runtime {
         void configure(AppSourceConfig config);
         void setStartupError(const std::string& message);
         void requestReload() noexcept;
+        void notifyToast(core::LogLevel level, std::string_view tag, std::string title, std::string message = {}, bool coalesce = true);
+        void triggerSimulatedError(std::string summary, std::string detail = {});
         // 无条件有序卸载（用于 exitApplication 与 WM_ENDSESSION），不触发各窗口 onCloseRequest
         void shutdownSession();
 
@@ -135,6 +138,13 @@ namespace canton::runtime {
 
         void setWindowFpsBadgeEnabled(core::WindowId windowId, bool enabled);
         [[nodiscard]] bool windowFpsBadgeEnabled(core::WindowId windowId) const noexcept;
+        void setWindowFrameTimeEnabled(core::WindowId windowId, bool enabled);
+        [[nodiscard]] bool windowFrameTimeEnabled(core::WindowId windowId) const noexcept;
+        void setWindowDirtyFlashEnabled(core::WindowId windowId, bool enabled);
+        [[nodiscard]] bool windowDirtyFlashEnabled(core::WindowId windowId) const noexcept;
+        void setWindowBoundsOverlayEnabled(core::WindowId windowId, bool enabled);
+        [[nodiscard]] bool windowBoundsOverlayEnabled(core::WindowId windowId) const noexcept;
+        [[nodiscard]] std::span<const core::DrawOp> windowOverlayOps(core::WindowId windowId) const noexcept;
 
         [[nodiscard]] std::vector<core::WindowId> windowIds() const;
         [[nodiscard]] const WindowSurfaceState* window(core::WindowId windowId) const noexcept;
@@ -166,7 +176,12 @@ namespace canton::runtime {
 
         void applyLoadOutcome(PackageLoadOutcome outcome);
         void teardownAllWindows();
-        void syncAppAndWindowMutations(bool& hadWindowChanges);
+        [[nodiscard]] std::unique_ptr<WindowSurfaceState> makeWindowSurface(const quickjs::WindowMutation& mutation);
+        void commitWindowChanges(const std::optional<core::AppConfigSpec>& appSpec,
+            const std::vector<quickjs::WindowMutation>& mutations,
+            std::unordered_map<core::WindowId, std::unique_ptr<WindowSurfaceState>>& newWindows,
+            const std::vector<core::WindowId>& destroyOrder);
+        void dispatchWindowCommands();
         void applyRuntimeFailure(const std::string& message, RuntimeFrameErrorPhase phase);
         core::InputCallbacks makeInputCallbacks(core::WindowId windowId);
         void emitGestureOutput(WindowSurfaceState& win, const core::PointerGestureOutput& output);
@@ -187,7 +202,6 @@ namespace canton::runtime {
         core::PainterLoader activePainterLoader_;
 
         core::AppConfigSpec appConfig_;
-        std::string appliedAppId_;
         bool sessionLoaded_ = false;
         bool everOpenedWindow_ = false;
         bool exitRequested_ = false;
@@ -205,8 +219,24 @@ namespace canton::runtime {
 
         void drainPendingWindowEvents();
 
+        struct QueuedToast {
+            core::LogLevel level = core::LogLevel::Info;
+            std::string tag;
+            std::string title;
+            std::string message;
+            bool coalesce = true;
+        };
+
+        void enqueueMirroredToast(core::LogLevel level, std::string_view tag, std::string title, std::string message, bool coalesce);
+        [[nodiscard]] core::WindowId selectToastTargetWindow(const std::vector<core::WindowId>& order,
+            const std::function<const WindowSurfaceState&(core::WindowId)>& resolveWindow,
+            const std::function<const core::WindowConfigSpec&(const WindowSurfaceState&)>& resolveConfig) const;
+        [[nodiscard]] core::WindowId selectPrimaryErrorWindowId() const;
+
         bool pumpingFrame_ = false;
         std::vector<PendingWindowEvent> pendingWindowEvents_;
+        std::vector<QueuedToast> pendingToasts_;
+        core::WindowId lastFocusedWindowId_ = 0;
 
         std::vector<core::WindowId> windowOrder_;
         std::unordered_map<core::WindowId, std::unique_ptr<WindowSurfaceState>> windows_;

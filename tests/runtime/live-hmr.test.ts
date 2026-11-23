@@ -149,6 +149,27 @@ test('CTA 模板更新保留 <Window> 身份、WindowState、ref、setup 生命�
     app.unmount()
 })
 
+
+test('CTA 结构热更新在打开的子 <Window> 前插入同级 <Window> 时平滑交接 WindowState', () => {
+    const id = 'hmr-structural-window.cta'
+    const script = `<script>import {ref, createWindowState} from '@canton/framework'\nconst mainState = createWindowState({ size: { width: 800.dp, height: 500.dp } })\nconst childState = createWindowState({ size: { width: 300.dp, height: 200.dp } })\nconst showExtra = ref(false)\nconst showChild = ref(true)</script>`
+    const initialRoot = evaluate(script + '<template><App &app-handle><Window key="main" :state="mainState" :onCloseRequest="appHandle.exitApplication"><Window c-if="showChild" key="child" title="子窗" :state="childState" :onCloseRequest="appHandle.exitApplication"><Text text="旧子窗" /></Window></Window></App></template>', id)
+    const native = recordingNative()
+    const app = mountFrame(appBuilder(initialRoot).build(), native.target)
+    assert.equal(native.windows.size, 2)
+    const [mainId, oldChildId] = [...native.windows.keys()]
+
+    // 在已有打开的子 <Window> 前面插入同级 <Window>，改变其编译期调用位置
+    const updatedRoot = evaluate(script + '<template><App &app-handle><Window key="main" :state="mainState" :onCloseRequest="appHandle.exitApplication"><Window c-if="showExtra" key="extra" title="新插入" :onCloseRequest="appHandle.exitApplication" /><Window c-if="showChild" key="child" title="子窗" :state="childState" :onCloseRequest="appHandle.exitApplication"><Text text="新子窗" /></Window></Window></App></template>', id)
+    applyArrangableHmr(id, updatedRoot)
+    advanceFrames()
+    assert.equal(native.windows.size, 2)
+    assert.ok(native.windows.has(mainId), '主窗身份应保持不变')
+    assert.ok(!native.windows.has(oldChildId), '旧调用位置的子窗应已销毁')
+    assert.deepEqual(native.textNodes().map(node => node.text), ['新子窗'])
+    app.unmount()
+})
+
 test('CTA 模板更新会刷新静态参数且复用 native 节点', () => {
     const id = 'hmr-static-prop.cta'
     const Page = evaluate('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text text="旧文案" /></Window></App></template>', id)
@@ -263,3 +284,4 @@ test('CTA 模板热更新增删槽位参数绑定与出口实参，保留 ref、
     assert.equal(setups, 1)
     app.unmount()
 })
+

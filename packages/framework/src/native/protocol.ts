@@ -80,6 +80,7 @@ export type NativeWindowConfig = Readonly<{
     closable: boolean
     alwaysOnTop: boolean
     showInTaskbar?: boolean
+    transparent?: boolean
     backdrop: WindowBackdrop
     cornerPreference: WindowCornerPreference
 }>

@@ -136,13 +136,19 @@ export function createWindowState(init: WindowStateInit = {}): WindowState {
     stateInternals.set(state, {
         nativeGeometry,
         bind(owner, windowId, handle, command) {
-            if (boundOwner && boundOwner !== owner) throw new Error('同一 WindowState 不能同时绑定多个活跃 <Window>')
+            if (boundOwner && boundOwner !== owner) {
+                nativeGeometry.size = undefined
+                nativeGeometry.position = undefined
+                nativeGeometry.placement = undefined
+                backing.focused = false
+            }
             boundOwner = owner
             sendCommand = command
             privateWindowIds.set(state, windowId)
             privateWindowIds.set(handle, windowId)
         },
         unbind(owner, handle) {
+            privateWindowIds.delete(handle)
             if (boundOwner !== owner) return
             boundOwner = undefined
             sendCommand = undefined
@@ -151,7 +157,6 @@ export function createWindowState(init: WindowStateInit = {}): WindowState {
             nativeGeometry.placement = undefined
             backing.focused = false
             privateWindowIds.delete(state)
-            privateWindowIds.delete(handle)
         },
         applyNativeGeometry(size, position, placement) {
             if (size) {

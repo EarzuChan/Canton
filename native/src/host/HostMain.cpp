@@ -69,7 +69,6 @@ namespace canton::host {
 
         struct HostWindowRenderBinding {
             std::unique_ptr<d3d11::RenderTarget> target;
-            std::unique_ptr<DevWindowController> dev;
             bool failed = false;
         };
     }
@@ -93,7 +92,7 @@ namespace canton::host {
 
         std::unique_ptr<win32::Window> fallbackWindow;
         std::unique_ptr<d3d11::RenderTarget> fallbackTarget;
-        std::unique_ptr<DevWindowController> fallbackDev;
+        auto devInput = std::move(assembly.devInput);
 
         runtime::AppSession* appPtr = nullptr;
         std::function<void(double)> runFrameTick;
@@ -111,13 +110,10 @@ namespace canton::host {
             auto& binding = bindingIt->second;
             win->applyPointerEffects(appPtr->takePointerEffects(windowId));
             try {
-                if (binding.dev) {
-                    binding.dev->updateOverlay(surface->pipeline.timeline(), surface->pipeline.publishedFrame(), surface->pipeline.scene().tree(), surface->rootNodeId, appPtr->textLayout(), core::monotonicMillis(), static_cast<float>(surface->dpiScale));
-                }
                 const d3d11::FrameInput input{
                     &surface->pipeline.publishedFrame().content,
-                    binding.dev ? binding.dev->overlayOps() : std::span<const core::DrawOp>{},
-                    win->backdropActive() ? kTransparentBackground : kDefaultBackground,
+                    appPtr->windowOverlayOps(windowId),
+                    (surface->config.transparent || win->backdropActive()) ? kTransparentBackground : kDefaultBackground,
                 };
                 renderer.render(*binding.target, input);
             } catch (const std::exception& error) {
@@ -143,7 +139,6 @@ namespace canton::host {
                     spec.title = "Canton";
                     spec.sizeDp = {960.0f, 640.0f};
                     spec.visible = true;
-                    if (assembly.devControllerFactory) fallbackDev = assembly.devControllerFactory();
                     win32::WindowCallbacks cb;
                     cb.resized = [&](int w, int h) {
                         if (!appPtr || !fallbackTarget || !fallbackWindow) return;
@@ -170,10 +165,10 @@ namespace canton::host {
                         win32::MessageDispatcher::quitMessageLoop(0);
                     };
                     cb.pointerDown = [&](const core::PointerSample&, core::PointerDownOptions) {
-                        if (fallbackDev && appPtr && fallbackDev->handleErrorClick(*appPtr)) scheduleIfNeeded();
+                        if (devInput && appPtr && devInput->handleErrorClick(*appPtr)) scheduleIfNeeded();
                     };
                     cb.keyDown = [&](int vk, const core::KeyInput& key) {
-                        if (fallbackDev && appPtr && fallbackDev->handleKeyDown(vk, key.modifiers, *appPtr, 0)) {
+                        if (devInput && appPtr && devInput->handleKeyDown(vk, key.modifiers, *appPtr, 0)) {
                             scheduleIfNeeded();
                             return true;
                         }
@@ -187,7 +182,6 @@ namespace canton::host {
                 }
             } else if (fallbackWindow) {
                 fallbackTarget.reset();
-                fallbackDev.reset();
                 fallbackWindow.reset();
             }
         };
@@ -250,24 +244,18 @@ namespace canton::host {
             };
             cb.pointerMove = [&, windowId](const core::PointerSample& sample) {
                 if (!appPtr) return;
-                if (auto it = windowBindings.find(windowId); it != windowBindings.end() && it->second.dev) {
-                    it->second.dev->setPointer(sample.point);
-                }
                 appPtr->pointerMove(windowId, sample);
                 scheduleIfNeeded();
             };
             cb.pointerExit = [&, windowId] {
                 if (!appPtr) return;
-                if (auto it = windowBindings.find(windowId); it != windowBindings.end() && it->second.dev) {
-                    it->second.dev->setPointer(std::nullopt);
-                }
                 appPtr->pointerExit(windowId);
                 scheduleIfNeeded();
             };
             cb.pointerDown = [&, windowId](const core::PointerSample& sample, core::PointerDownOptions opts) {
                 if (!appPtr) return;
                 if (appPtr->globalDiagnostics().hasError()) {
-                    if (auto it = windowBindings.find(windowId); it != windowBindings.end() && it->second.dev && it->second.dev->handleErrorClick(*appPtr)) {
+                    if (devInput && devInput->handleErrorClick(*appPtr)) {
                         scheduleIfNeeded();
                         return;
                     }
@@ -297,11 +285,9 @@ namespace canton::host {
             };
             cb.keyDown = [&, windowId](int vk, const core::KeyInput& key) {
                 if (!appPtr) return false;
-                if (auto it = windowBindings.find(windowId); it != windowBindings.end() && it->second.dev) {
-                    if (it->second.dev->handleKeyDown(vk, key.modifiers, *appPtr, windowId)) {
-                        scheduleIfNeeded();
-                        return true;
-                    }
+                if (devInput && devInput->handleKeyDown(vk, key.modifiers, *appPtr, windowId)) {
+                    scheduleIfNeeded();
+                    return true;
                 }
                 const bool consumed = appPtr->keyDown(windowId, key);
                 scheduleIfNeeded();
@@ -358,7 +344,6 @@ namespace canton::host {
             auto& win = windowManager.createWindow(windowId, spec, makeWindowCallbacks(windowId));
             HostWindowRenderBinding binding;
             binding.target = renderer.createWindowTarget(win.handle());
-            if (assembly.devControllerFactory) binding.dev = assembly.devControllerFactory();
             int cw = 0, ch = 0;
             win.clientSize(cw, ch);
             renderer.resize(*binding.target, cw, ch);
@@ -415,7 +400,6 @@ namespace canton::host {
         const auto anyExtraTickWork = [&] {
             for (const auto id : windowManager.windowIds()) {
                 if (const auto* win = windowManager.find(id); win && win->needsPrecisionWheelTicks()) return true;
-                if (const auto it = windowBindings.find(id); it != windowBindings.end() && it->second.dev && it->second.dev->animating()) return true;
             }
             return false;
         };
@@ -440,10 +424,7 @@ namespace canton::host {
             syncFallbackWindow();
 
             for (const auto id : windowManager.windowIds()) {
-                const bool publishedChanged = std::find(changed.begin(), changed.end(), id) != changed.end();
-                const auto bindIt = windowBindings.find(id);
-                const bool overlayAnimating = bindIt != windowBindings.end() && bindIt->second.dev && bindIt->second.dev->animating();
-                if (publishedChanged || overlayAnimating) {
+                if (std::find(changed.begin(), changed.end(), id) != changed.end()) {
                     renderWindow(id);
                 }
             }
@@ -506,7 +487,6 @@ namespace canton::host {
         app.setWorkAvailable({});
         app.shutdownSession();
         fallbackTarget.reset();
-        fallbackDev.reset();
         fallbackWindow.reset();
         windowBindings.clear();
         windowManager.destroyAll();

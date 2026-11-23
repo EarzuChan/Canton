@@ -1,17 +1,21 @@
 <template>
-    <App appId="Canton.M4.WindowInteraction" &app-handle>
+    <App appId="Canton.WindowInteraction" &app-handle>
         // 登录窗 <-> 主工作台同帧切窗演练（活跃窗口数 1 -> 1，不误触发末窗退出）
         <Window c-if="stage === 'login'" key="login" title="Canton 登录" chrome="customTitleBar" backdrop="micaAlt" :state="loginState" :resizable="false" :maximizable="false" :onCloseRequest="appHandle.exitApplication" &window-handle>
             <Column :modifier="M.fillMaxSize().background(Color(0xdd141923))">
                 <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(38.dp).background(Color(0x661e2636)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" &row-handle>
                     <Text text="Canton 登录入口（同帧切窗演练）" :style="{ fontSize: 13.sp, color: Color(0xffe2e8f0) }" :modifier="rowHandle.weight(1)" />
+
                     <Box :modifier="windowHandle.captionButton('close', { interactionState: loginCloseState }).size(44.dp, 38.dp).background(loginCloseState.hovered ? Color(0xffe81123) : Color(0x00000000))" contentAlignment="Center">
                         <Text text="×" :style="{ fontSize: 16.sp, color: Color(0xffffffff) }" />
                     </Box>
                 </Row>
+
                 <Column :modifier="M.fillMaxSize().padding(24.dp)" :verticalArrangement="Arrangement.spacedBy(14.dp)">
                     <Text :text="'跨窗共享计数：' + sharedCount" :style="{ fontSize: 15.sp, color: Color(0xff93c5fd) }" />
+
                     <Input :value="sharedNote" placeholder="输入跨窗共享备注（支持中文 IME）" :onValueChange="updateSharedNote" :onSubmit="enterWorkbench" :modifier="M.fillMaxWidth().height(36.dp).background(Color(0xff1e293b)).padding({ horizontal: 10.dp, vertical: 8.dp })" :textStyle="{ fontSize: 14.sp, color: Color(0xfff8fafc) }" />
+
                     <Box :modifier="M.fillMaxWidth().height(38.dp).background(Color(0xff2563eb), rounded(6.dp)).pointerIcon('hand').clickable(enterWorkbench)" contentAlignment="Center">
                         <Text text="进入主工作台（同帧销毁登录窗并打开主窗）" :style="{ fontSize: 13.sp, color: Color(0xffffffff) }" />
                     </Box>
@@ -19,21 +23,27 @@
             </Column>
         </Window>
 
-        <Window c-else key="workbench" title="Canton M4 窗口与交互工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :minSize="{ width: 720.dp, height: 500.dp }" :onCloseRequest="requestMainClose" &window-handle>
+        <Window c-else key="workbench" title="顶豪工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :minSize="{ width: 720.dp, height: 500.dp }" :onCloseRequest="requestMainClose" &window-handle>
             <Column :modifier="M.fillMaxSize().background(Color(0xd8111621))">
                 // 自绘标题栏：拖拽区 + 自动让位的内嵌搜索框 + 自绘三键
                 <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(40.dp).background(Color(0x881a2234)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
-                    <Text text="Canton M4 工作台" :style="{ fontSize: 13.sp, fontWeight: 600, color: Color(0xfff1f5f9) }" />
+                    <Text text="Canton 真豪工作台" :style="{ fontSize: 13.sp, fontWeight: 600, color: Color(0xfff1f5f9) }" />
+
                     <Input :value="searchQuery" placeholder="标题栏搜索（自动 HTCLIENT 让位）" :onValueChange="updateSearch" :modifier="M.width(230.dp).height(26.dp).background(Color(0xff0f172a), rounded(5.dp)).padding({ horizontal: 8.dp, vertical: 4.dp })" :textStyle="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
+
                     <Spacer :modifier="rowHandle.weight(1)" />
+
                     <Text :text="`DPI ${mainState.dpiScale.toFixed(2)}x · ${mainState.focused ? '聚焦' : '失焦'}`" :style="{ fontSize: 11.sp, color: Color(0xff94a3b8) }" />
+
                     <Row>
                         <Box :modifier="windowHandle.captionButton('minimize', { interactionState: minBtnState }).size(46.dp, 40.dp).background(minBtnState.pressed ? Color(0x44ffffff) : minBtnState.hovered ? Color(0x22ffffff) : Color(0x00000000))" contentAlignment="Center">
                             <Text text="—" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
                         </Box>
+
                         <Box :modifier="windowHandle.captionButton('maximize', { interactionState: maxBtnState }).size(46.dp, 40.dp).background(maxBtnState.pressed ? Color(0x44ffffff) : maxBtnState.hovered ? Color(0x22ffffff) : Color(0x00000000))" contentAlignment="Center">
                             <Text :text="mainState.placement === 'maximized' ? '❐' : '□'" :style="{ fontSize: 13.sp, color: Color(0xffe2e8f0) }" />
                         </Box>
+
                         <Box :modifier="windowHandle.captionButton('close', { interactionState: closeBtnState }).size(46.dp, 40.dp).background(closeBtnState.pressed ? Color(0xffb91c1c) : closeBtnState.hovered ? Color(0xffe81123) : Color(0x00000000))" contentAlignment="Center">
                             <Text text="×" :style="{ fontSize: 16.sp, color: Color(0xffffffff) }" />
                         </Box>
@@ -45,34 +55,51 @@
                     // 左栏：窗口拓扑控制与 WindowState 实时面板
                     <Column :modifier="bodyRow.weight(1).fillMaxHeight().background(Color(0x99192231), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
                         <Text text="多窗口拓扑与状态面板" :style="{ fontSize: 14.sp, fontWeight: 600, color: Color(0xfff8fafc) }" />
+
                         <Text :text="`尺寸：${Math.round(mainState.size.width)} × ${Math.round(mainState.size.height)} dp  |  形态：${mainState.placement}`" :style="{ fontSize: 12.sp, color: Color(0xffcbd5e1) }" />
+
                         <Text :text="`共享计数：${sharedCount}  |  关闭拦截次数：${closeIntercepts}`" :style="{ fontSize: 12.sp, color: Color(0xff60a5fa) }" />
 
                         <FlowRow :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
                             <Box :modifier="M.background(Color(0xff2563eb), rounded(6.dp)).pointerIcon('hand').clickable(incrementShared).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text text="共享计数 +1" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                             </Box>
+
                             <Box :modifier="M.background(Color(0xff7c3aed), rounded(6.dp)).pointerIcon('hand').clickable(openModal).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text text="打开 Owner 模态窗" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                             </Box>
+
                             <Box :modifier="M.background(Color(0xff0d9488), rounded(6.dp)).pointerIcon('hand').clickable(toggleUtility).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text :text="showUtility ? '关闭工具面板' : '打开置顶工具窗'" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                             </Box>
+
                             <Box :modifier="M.background(Color(0xffd97706), rounded(6.dp)).pointerIcon('hand').clickable(togglePopup).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text :text="showPopup ? '关闭圆角浮层' : '打开无框圆角浮层'" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                             </Box>
+
+                            <Box :modifier="M.background(Color(0xff475569), rounded(6.dp)).pointerIcon('hand').clickable(toggleSquare).padding({ horizontal: 12.dp, vertical: 7.dp })">
+                                <Text :text="showSquare ? '收起方角无框窗' : '打开方角无框窗'" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
+                            </Box>
+
+                            <Box :modifier="M.background(Color(0xff0369a1), rounded(6.dp)).pointerIcon('hand').clickable(toggleTransparent).padding({ horizontal: 12.dp, vertical: 7.dp })">
+                                <Text :text="showTransparent ? '收起透明浮层' : '打开透明异形浮层'" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
+                            </Box>
+
                             <Box :modifier="M.background(Color(0xff334155), rounded(6.dp)).pointerIcon('hand').clickable(toggleFullscreen).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text :text="mainState.placement === 'fullscreen' ? '退出全屏' : '切换全屏'" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
                             </Box>
+
                             <Box :modifier="M.background(Color(0xff475569), rounded(6.dp)).pointerIcon('hand').clickable(switchToLogin).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text text="同帧切回登录窗" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
                             </Box>
+
                             <Box :modifier="M.background(closeGuard ? Color(0xffb45309) : Color(0xff1e293b), rounded(6.dp)).pointerIcon('hand').clickable(toggleCloseGuard).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text :text="closeGuard ? '关闭保护：开启（拦 WM_CLOSE）' : '关闭保护：已放行'" :style="{ fontSize: 12.sp, color: Color(0xfffef3c7) }" />
                             </Box>
                         </FlowRow>
 
                         <Text text="滚轮与触控板平滑滚动列表：" :style="{ fontSize: 12.sp, color: Color(0xff94a3b8) }" />
+
                         <Column :modifier="M.fillMaxWidth().height(150.dp).background(Color(0xff0f172a), rounded(6.dp)).verticalScroll(listScroll).padding(8.dp)" :verticalArrangement="Arrangement.spacedBy(4.dp)">
                             <Row c-for="item in logItems" :key="item.id" :modifier="M.fillMaxWidth().background(Color(0xff1e293b), rounded(4.dp)).padding({ horizontal: 8.dp, vertical: 5.dp })">
                                 <Text :text="`#${item.id}  ${item.text}`" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
@@ -88,13 +115,17 @@
                     // 右栏：单行、多行、只读 Input 与中文 IME 试验场
                     <Column :modifier="bodyRow.weight(1).fillMaxHeight().background(Color(0x99192231), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
                         <Text text="文本编辑与中文 IME 试验场（纯 Win32 IMM32）" :style="{ fontSize: 14.sp, fontWeight: 600, color: Color(0xfff8fafc) }" />
+
                         <Text text="1. 单行输入（Enter 提交记录，支持长句预编辑、分段下划线与候选框跟随）：" :style="{ fontSize: 12.sp, color: Color(0xff94a3b8) }" />
+
                         <Input :value="singleLineText" placeholder="在此输入中文长句并按 Enter 提交..." :onValueChange="updateSingleLine" :onSubmit="submitSingleLine" :modifier="M.fillMaxWidth().height(34.dp).background(Color(0xff0f172a), rounded(6.dp)).border(1.dp, Color(0xff334155), rounded(6.dp)).padding({ horizontal: 10.dp, vertical: 7.dp })" :textStyle="{ fontSize: 13.sp, color: Color(0xfff8fafc) }" />
 
                         <Text text="2. 多行编辑（Enter 换行，支持上下行 preferredX、词级跳转与撤销重做）：" :style="{ fontSize: 12.sp, color: Color(0xff94a3b8) }" />
+
                         <Input :value="multiLineText" :singleLine="false" :minLines="4" :maxLines="6" placeholder="多行文本编辑区..." :onValueChange="updateMultiLine" :modifier="M.fillMaxWidth().height(110.dp).background(Color(0xff0f172a), rounded(6.dp)).border(1.dp, Color(0xff334155), rounded(6.dp)).padding(10.dp)" :textStyle="{ fontSize: 13.sp, lineHeight: 19.sp, color: Color(0xffe2e8f0) }" />
 
                         <Text text="3. 只读输入（readOnly：可聚焦、可选区、Ctrl+C 复制，自动禁用系统输入法）：" :style="{ fontSize: 12.sp, color: Color(0xff94a3b8) }" />
+
                         <Input :value="`只读状态镜像：计数=${sharedCount} | 备注=${sharedNote}`" :readOnly="true" :selectAllOnFocus="true" :modifier="M.fillMaxWidth().height(34.dp).background(Color(0xff172033), rounded(6.dp)).padding({ horizontal: 10.dp, vertical: 7.dp })" :textStyle="{ fontSize: 12.sp, color: Color(0xff93c5fd) }" />
 
                         <Text :text="`最新提交：${lastSubmitted}`" :style="{ fontSize: 12.sp, color: Color(0xff34d399) }" />
@@ -106,14 +137,18 @@
             <Window c-if="showModal" key="owner-modal" title="确认操作（Owner 模态）" modality="owner" :state="modalState" :minimizable="false" :maximizable="false" :onCloseRequest="closeModal">
                 <Column :modifier="M.fillMaxSize().background(Color(0xff161e2e)).padding(20.dp)" :verticalArrangement="Arrangement.spacedBy(12.dp)">
                     <Text text="Owner 模态对话框已锁定主工作台窗口（非阻塞消息泵，主窗动画与响应式更新照常运行）。" :style="{ fontSize: 13.sp, lineHeight: 19.sp, color: Color(0xffe2e8f0) }" />
+
                     <Text :text="`实时共享计数：${sharedCount}`" :style="{ fontSize: 13.sp, color: Color(0xff60a5fa) }" />
+
                     <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
                         <Box :modifier="M.background(Color(0xff2563eb), rounded(6.dp)).pointerIcon('hand').clickable(incrementShared).padding({ horizontal: 12.dp, vertical: 7.dp })">
                             <Text text="在模态窗内 +1" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                         </Box>
+
                         <Box :modifier="M.background(Color(0xff9333ea), rounded(6.dp)).pointerIcon('hand').clickable(openNestedModal).padding({ horizontal: 12.dp, vertical: 7.dp })">
                             <Text text="打开二级嵌套模态窗" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                         </Box>
+
                         <Box :modifier="M.background(Color(0xff475569), rounded(6.dp)).pointerIcon('hand').clickable(closeModal).padding({ horizontal: 12.dp, vertical: 7.dp })">
                             <Text text="关闭模态窗" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                         </Box>
@@ -122,6 +157,7 @@
                     <Window c-if="showNestedModal" key="nested-modal" title="二级嵌套模态" modality="owner" :state="nestedModalState" :minimizable="false" :maximizable="false" :onCloseRequest="closeNestedModal">
                         <Column :modifier="M.fillMaxSize().background(Color(0xff1e1b4b)).padding(18.dp)" :verticalArrangement="Arrangement.spacedBy(12.dp)">
                             <Text text="二级嵌套模态：关闭本窗仅解锁一级模态窗，主工作台仍保持锁定。" :style="{ fontSize: 12.sp, lineHeight: 18.sp, color: Color(0xffe0e7ff) }" />
+
                             <Box :modifier="M.background(Color(0xff4f46e5), rounded(6.dp)).pointerIcon('hand').clickable(closeNestedModal).padding({ horizontal: 12.dp, vertical: 7.dp })">
                                 <Text text="关闭二级模态并返回一级模态" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                             </Box>
@@ -134,19 +170,38 @@
             <Window c-if="showUtility" key="utility" title="浮动工具面板" role="utility" :alwaysOnTop="true" :state="utilityState" :maximizable="false" :onCloseRequest="toggleUtility">
                 <Column :modifier="M.fillMaxSize().background(Color(0xff132226)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
                     <Text text="置顶工具面板（role='utility'，不抢独立任务栏主按钮）" :style="{ fontSize: 12.sp, color: Color(0xff5eead4) }" />
+
                     <Text :text="`同步计数：${sharedCount}  |  DPI：${utilityState.dpiScale.toFixed(2)}x`" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
+
                     <Input :value="sharedNote" :onValueChange="updateSharedNote" placeholder="跨窗双向同步备注" :modifier="M.fillMaxWidth().height(30.dp).background(Color(0xff0f172a), rounded(4.dp)).padding({ horizontal: 8.dp, vertical: 5.dp })" :textStyle="{ fontSize: 12.sp, color: Color(0xfff8fafc) }" />
+
                     <Box :modifier="M.background(Color(0xff0f766e), rounded(5.dp)).pointerIcon('hand').clickable(incrementShared).padding({ horizontal: 10.dp, vertical: 6.dp })">
                         <Text text="从工具窗递增计数" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                     </Box>
                 </Column>
             </Window>
 
+            <Window c-if="showSquare" key="square" title="方角无框窗" chrome="frameless" cornerPreference="square" :resizable="false" :minimizable="false" :maximizable="false" :state="squareState" :onCloseRequest="toggleSquare" &window-handle="squareHandle">
+                <Column :modifier="squareHandle.draggableArea().fillMaxSize().background(Color(0xff1e293b)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
+                    <Text text="方角无框窗" :style="{ fontSize: 14.sp, fontWeight: 600, color: Color(0xffe2e8f0) }" />
+
+                    <Box :modifier="M.background(Color(0xff475569), rounded(5.dp)).pointerIcon('hand').clickable(toggleSquare).padding({ horizontal: 10.dp, vertical: 5.dp })">
+                        <Text text="收起" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
+                    </Box>
+                </Column>
+            </Window>
+
+            <Window c-if="showTransparent" key="transparent" title="透明异形浮层" chrome="frameless" :transparent="true" :resizable="false" :minimizable="false" :maximizable="false" :state="transparentState" :onCloseRequest="toggleTransparent" &window-handle="shapeHandle">
+                <Canvas :modifier="shapeHandle.draggableArea().fillMaxSize()" :onDraw="drawTransparentShape" />
+            </Window>
+
             // 无框圆角浮层窗（chrome="frameless" + cornerPreference="roundSmall"）
             <Window c-if="showPopup" key="popup" title="圆角浮层" chrome="frameless" cornerPreference="roundSmall" :resizable="false" :maximizable="false" :minimizable="false" :state="popupState" :onCloseRequest="togglePopup" &window-handle="popupHandle">
                 <Column :modifier="popupHandle.draggableArea().fillMaxSize().background(Color(0xff1e293b)).border(1.dp, Color(0xff475569), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
                     <Text text="无框圆角浮层（frameless + roundSmall，整卡可拖拽）" :style="{ fontSize: 12.sp, fontWeight: 600, color: Color(0xfffbbf24) }" />
+
                     <Text :text="`共享计数：${sharedCount}  |  备注：${sharedNote}`" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
+
                     <Box :modifier="M.background(Color(0xffb45309), rounded(5.dp)).pointerIcon('hand').clickable(togglePopup).padding({ horizontal: 10.dp, vertical: 5.dp })">
                         <Text text="收起浮层" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                     </Box>
@@ -157,10 +212,12 @@
             <Window c-if="showExitConfirm" key="exit-confirm" title="确认退出工作台" modality="application" :state="exitConfirmState" :minimizable="false" :maximizable="false" :onCloseRequest="cancelExit">
                 <Column :modifier="M.fillMaxSize().background(Color(0xff1f1726)).padding(20.dp)" :verticalArrangement="Arrangement.spacedBy(14.dp)">
                     <Text text="检测到主窗口关闭请求（WM_CLOSE 已拦截），是否立即退出整个应用？" :style="{ fontSize: 13.sp, lineHeight: 19.sp, color: Color(0xfff8fafc) }" />
+
                     <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
                         <Box :modifier="M.background(Color(0xffdc2626), rounded(6.dp)).pointerIcon('hand').clickable(appHandle.exitApplication).padding({ horizontal: 14.dp, vertical: 7.dp })">
                             <Text text="确认退出 (exitApplication)" :style="{ fontSize: 12.sp, color: Color(0xffffffff) }" />
                         </Box>
+
                         <Box :modifier="M.background(Color(0xff334155), rounded(6.dp)).pointerIcon('hand').clickable(cancelExit).padding({ horizontal: 14.dp, vertical: 7.dp })">
                             <Text text="取消并留在工作台" :style="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
                         </Box>
@@ -173,13 +230,13 @@
 
 <script>
 import { createDraggable2DState, createInteractionState, createScrollState, createWindowState, ref, type FocusState } from '@canton/framework'
-import { Arrangement, Color, M, rounded, type KeyEvent } from '@canton/framework/ui'
+import { Arrangement, Color, M, Path, linearGradient, rounded, type DrawScope, type KeyEvent } from '@canton/framework/ui'
 
 const stage = ref<'login' | 'workbench'>('workbench')
 const sharedCount = ref(1)
 const sharedNote = ref('跨窗实时同步')
 const searchQuery = ref('')
-const singleLineText = ref('你好 Canton M4')
+const singleLineText = ref('你好 Canton')
 const multiLineText = ref('第一行：支持纯 IMM32 中文输入\n第二行：支持词级移动与多击选词\n第三行：支持 Undo / Redo 与系统剪贴板')
 const lastSubmitted = ref('（尚未提交）')
 const lastKey = ref('无')
@@ -192,6 +249,8 @@ const showModal = ref(false)
 const showNestedModal = ref(false)
 const showUtility = ref(false)
 const showPopup = ref(false)
+const showSquare = ref(false)
+const showTransparent = ref(false)
 const showExitConfirm = ref(false)
 
 const loginState = createWindowState({ size: { width: 420.dp, height: 240.dp }, position: 'centerScreen' })
@@ -199,6 +258,8 @@ const mainState = createWindowState({ size: { width: 980.dp, height: 640.dp }, p
 const modalState = createWindowState({ size: { width: 460.dp, height: 220.dp }, position: 'centerOwner' })
 const nestedModalState = createWindowState({ size: { width: 380.dp, height: 170.dp }, position: 'centerOwner' })
 const utilityState = createWindowState({ size: { width: 320.dp, height: 210.dp }, position: 'platformDefault' })
+const squareState = createWindowState({ size: { width: 250.dp, height: 115.dp }, position: 'centerOwner' })
+const transparentState = createWindowState({ size: { width: 264.dp, height: 264.dp }, position: 'centerOwner' })
 const popupState = createWindowState({ size: { width: 300.dp, height: 140.dp }, position: 'centerOwner' })
 const exitConfirmState = createWindowState({ size: { width: 420.dp, height: 170.dp }, position: 'centerOwner' })
 
@@ -220,6 +281,8 @@ function switchToLogin() {
     showNestedModal.value = false
     showUtility.value = false
     showPopup.value = false
+    showSquare.value = false
+    showTransparent.value = false
     stage.value = 'login'
 }
 function incrementShared() { sharedCount.value++ }
@@ -240,6 +303,27 @@ function openNestedModal() { showNestedModal.value = true }
 function closeNestedModal() { showNestedModal.value = false }
 function toggleUtility() { showUtility.value = !showUtility.value }
 function togglePopup() { showPopup.value = !showPopup.value }
+function toggleSquare() { showSquare.value = !showSquare.value }
+function toggleTransparent() { showTransparent.value = !showTransparent.value }
+function drawTransparentShape(scope: DrawScope) {
+    const x = scope.size.width / 2
+    const y = scope.size.height / 2
+    const radius = Math.min(x, y) * 0.9
+    const star = new Path()
+    star.fillType = 'evenOdd'
+    for (let i = 0; i < 16; i++) {
+        const angle = i * Math.PI / 8 - Math.PI / 2
+        const r = i % 2 ? radius * 0.62 : radius
+        const px = x + Math.cos(angle) * r
+        const py = y + Math.sin(angle) * r
+        if (i === 0) star.moveTo(px, py)
+        else star.lineTo(px, py)
+    }
+    const hole = radius * 0.34
+    star.close().moveTo(x, y - hole).lineTo(x + hole, y).lineTo(x, y + hole).lineTo(x - hole, y).close()
+    scope.drawPath(star, { brush: linearGradient([0xe03b82f6, 0xe02dd4bf]) })
+    scope.drawPath(star, { color: Color(0xffc4f1ff), strokeWidth: (radius * 0.015).px, join: 'round' })
+}
 function toggleFullscreen() {
     mainState.placement = mainState.placement === 'fullscreen' ? 'normal' : 'fullscreen'
 }
@@ -248,9 +332,7 @@ function requestMainClose() {
     if (closeGuard.value) {
         closeIntercepts.value++
         showExitConfirm.value = true
-    } else {
-        stage.value = 'login'
-    }
+    } else stage.value = 'login'
 }
 function cancelExit() { showExitConfirm.value = false }
 function onKeyBoxFocus(state: FocusState) { keyBoxFocused.value = state.isFocused }
@@ -259,6 +341,7 @@ function captureKey(ev: KeyEvent) {
         const mods = [ev.modifiers.ctrl ? 'Ctrl+' : '', ev.modifiers.shift ? 'Shift+' : '', ev.modifiers.alt ? 'Alt+' : ''].join('')
         lastKey.value = `${mods}${ev.key}`
     }
+
     return false
 }
 </script>

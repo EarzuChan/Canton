@@ -138,6 +138,11 @@ namespace canton::core {
 
         [[nodiscard]] SceneFramePipelineResult run(NativeScene& scene, NodeId root, Constraints constraints, const MutationTransaction* transaction, bool framePipelineRequested, PublishedFrame& publishedFrame, const FrameFinalizer& finalize = {}, double timeMillis = 0, const FramePreparation& prepare = {});
 
+        // 候选树留在写入日志中，等待会话决定是否发布。每条流水线同一时间只准备一帧。
+        [[nodiscard]] SceneFramePipelineResult prepare(NativeScene& scene, NodeId root, Constraints constraints, const MutationTransaction* transaction, bool framePipelineRequested, const PublishedFrame& publishedFrame, const FrameFinalizer& finalize, double timeMillis, const FramePreparation& preparation);
+        void commit(NativeScene& scene, PublishedFrame& publishedFrame);
+        void discard(NativeScene& scene);
+
         // 诊断与交互可复用已保留的几何发布，无需重新执行 JS
         bool publishRetained(const NativeScene& scene, PublishedFrame& publishedFrame, const FrameFinalizer& finalize);
 
@@ -155,6 +160,16 @@ namespace canton::core {
         }
 
        private:
+        struct PreparedFrame {
+            PublishedFrame frame;
+            std::uint64_t previousFontEnvironment;
+            std::optional<FrameExecutionCounters> countersBefore;
+            std::uint64_t drawsBefore;
+            double timeMillis;
+            double elapsedMillis;
+        };
+
+        std::optional<PreparedFrame> prepared_;
         FrameExecutionCounters counters_;
         FrameTimeline timeline_;
         void recordFrame(const FrameExecutionCounters& before, std::uint64_t drawsBefore, const NativeScene& scene, const PublishedFrame& frame, PhaseSet phases, double timeMillis, double totalMillis, bool failed);

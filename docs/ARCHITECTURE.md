@@ -13,7 +13,7 @@ Canton 面向 Windows 用户态桌面。TS 和 `.cta` 以 `appBuilder(Root).buil
 | [`native/src/runtime`](../native/src/runtime) | `AppSession`（1 VM : N 窗口会话编排）与 `SceneHost`（单视口编排）、`InputTextSession`、诊断、加载策略（`lfd`/`live`/`dist`）、0 窗错误屏兜底、UI 包挂载、资源获取与解码。Live 客户端单独成库，只有 Dev 宿主链接。 |
 | [`native/src/d3d11`](../native/src/d3d11) | 单 `Renderer` 设备共享字形/路径图集与纹理缓存，派生任意个窗口或离屏 `RenderTarget`；内置着色器、路径覆盖率、DirectWrite 排版、设备丢失重建与垂直同步线程。输入只有 core 的发布帧。 |
 | [`native/src/win32`](../native/src/win32) | Win32 多窗口与平台资产：`Window` 与 `WindowManager`（Owner 拓扑逆序销毁、非阻塞模态锁计数、DWM 材质/圆角、自绘标题栏非客户区三键托管、Per-Monitor V2 DPI、鼠标/光标/键盘、DirectManipulation 触控板滚轮、纯 IMM32 输入法与剪贴板）、Owner 线程隐藏唤醒窗与控制台日志着色。 |
-| [`native/src/host`](../native/src/host) | 宿主入口：装配 `AppSession`、`Renderer`、`WindowManager` 与 VBlank。出两份制品，`canton-host-dev.exe` 读 `CANTON_DEV_*` 环境变量并注入 Live、`DiagnosticsHud` 与窗口级 `DevWindowController`（`F5`/`F8`/`F9`、`DiagnosticsOverlay`），`canton-host.exe` 写死 Dist 且物理剥离上述开发期代码；`CANTON_ENABLE_DEV` 只出现在这里和构建接线里。 |
+| [`native/src/host`](../native/src/host) | 宿主入口：装配 `AppSession`、`Renderer`、`WindowManager` 与 VBlank。出两份制品，`canton-host-dev.exe` 读 `CANTON_DEV_*` 环境变量并注入 Live、窗口级诊断插件 `DiagnosticsHud`（HUD 角标/FPS/气泡 + `DiagnosticsOverlay` 帧时间/闪红/框框）、App 级 `DevInputHandler`（`F5`–`F11`）以及未处理异常崩溃栈捕获（`CANTON_DEV_CRASH_LOG`），`canton-host.exe` 写死 Dist 且物理剥离上述开发期代码；`CANTON_ENABLE_DEV` 只出现在这里和构建接线里。 |
 | [`native-tests`](../native-tests) · [`tests`](../tests) | Native（CTest）与 TS（node:test）测试；无头回归 `canton_render_regression` 支持单视口及多窗口指定目标窗离屏出图，与 `native-tests/baselines` 比对（WARP 逐像素、硬件按容差）。 |
 | [`cli`](../cli) | Windows 工具链发现、进程和文件事务、缓存与构建工具。 |
 

@@ -182,6 +182,41 @@ test('modality="owner" 无宿主报错，同一 WindowState 同时绑定两窗�
         }),
     })
     assert.throws(() => mountFrame(appBuilder(DuplicateState).build(), recordingNative().target), /同一 WindowState/)
+
+    // 同事务替换（如 c-if / c-else 共享同一 WindowState）允许新窗口平滑交接，旧句柄失效且新窗口生效
+    const handoffState = createWindowState({ size: { width: 520, height: 340 } })
+    const branch = ref<'a' | 'b'>('a')
+    const native = recordingNative()
+    let handleA!: WindowHandle
+    let handleB!: WindowHandle
+    const Handoff = defineArrangable({
+        setup: (_p, { call }) => () => call(0, App, {}, {
+            default: ({ appHandle }) => {
+                if (branch.value === 'a') {
+                    call(0, Window, { title: () => '分支 A', state: () => handoffState, onCloseRequest: () => appHandle.exitApplication }, {
+                        default: ({ windowHandle }) => { handleA = windowHandle },
+                    })
+                } else {
+                    call(1, Window, { title: () => '分支 B', state: () => handoffState, onCloseRequest: () => appHandle.exitApplication }, {
+                        default: ({ windowHandle }) => { handleB = windowHandle },
+                    })
+                }
+            },
+        }),
+    })
+    const handoffApp = mountFrame(appBuilder(Handoff).build(), native.target)
+    const idA = lookupPrivateWindowId(handoffState)!
+    assert.equal(lookupPrivateWindowId(handleA), idA)
+
+    branch.value = 'b'
+    advanceFrames()
+    const idB = lookupPrivateWindowId(handoffState)!
+    assert.notEqual(idB, idA)
+    assert.equal(lookupPrivateWindowId(handleA), undefined)
+    assert.equal(lookupPrivateWindowId(handleB), idB)
+    assert.deepEqual([...native.windows.keys()], [idB])
+    assert.equal(native.windows.get(idB)!.config.title, '分支 B')
+    handoffApp.unmount()
 })
 
 test('窗口级 DPI 倍率独立驱动所属窗口 Density，Input readOnly 与非客户区 Modifier 正确降解', () => {

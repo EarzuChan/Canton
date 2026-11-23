@@ -37,6 +37,14 @@ namespace canton::core {
     }
 
     SceneFramePipelineResult SceneFramePipeline::run(NativeScene& scene, NodeId root, Constraints constraints, const MutationTransaction* transaction, bool framePipelineRequested, PublishedFrame& publishedFrame, const FrameFinalizer& finalize, double timeMillis, const FramePreparation& prepare) {
+        auto result = this->prepare(scene, root, constraints, transaction, framePipelineRequested, publishedFrame, finalize, timeMillis, prepare);
+        commit(scene, publishedFrame);
+        return result;
+    }
+
+    SceneFramePipelineResult SceneFramePipeline::prepare(NativeScene& scene, NodeId root, Constraints constraints, const MutationTransaction* transaction, bool framePipelineRequested, const PublishedFrame& publishedFrame, const FrameFinalizer& finalize, double timeMillis, const FramePreparation& preparation) {
+        if (prepared_) throw std::logic_error("上一候选帧尚未提交或撤销");
+        const auto previousFontEnvironment = fontEnvironment_;
         SceneFramePipelineResult result;
         const auto runStarted = std::chrono::steady_clock::now();
         // 关闭时不做任何记录准备
@@ -50,25 +58,25 @@ namespace canton::core {
         result.ran = true;
         // 所有构建原地写入 scene，写入日志保存首次写入前的原值；任一阶段失败都回滚到上次成功 scene/PublishedFrame
         scene.beginJournal();
-        auto candidateFrame = publishedFrame;
-        candidateFrame.changes = {};
-        candidateFrame.error.reset();
-        candidateFrame.content.viewport = {constraints.maxWidth, constraints.maxHeight};
-        if (transaction) ++counters_.submissions;
-        result.rearrange = transaction ? transaction->rearrange : nullptr;
-        layout_.setMaterializer(prepare.materialize ? LayoutMaterializer{[&](NodeId id, const std::vector<int>& indices) {
-            auto continuation = prepare.materialize(id, indices);
-            if (result.rearrange && continuation.rearrange != result.rearrange) throw std::runtime_error("Layout 子组合必须继续同一候选事务");
-            if (!result.rearrange) result.rearrange = continuation.rearrange;
-            scene.validateLayoutMaterialization(id, continuation);
-            scene.applyUncommitted(continuation);
-        }}
-                                                    : LayoutMaterializer{});
         try {
+            auto candidateFrame = publishedFrame;
+            candidateFrame.changes = {};
+            candidateFrame.error.reset();
+            candidateFrame.content.viewport = {constraints.maxWidth, constraints.maxHeight};
+            if (transaction) ++counters_.submissions;
+            result.rearrange = transaction ? transaction->rearrange : nullptr;
+            layout_.setMaterializer(preparation.materialize ? LayoutMaterializer{[&](NodeId id, const std::vector<int>& indices) {
+                auto continuation = preparation.materialize(id, indices);
+                if (result.rearrange && continuation.rearrange != result.rearrange) throw std::runtime_error("Layout 子组合必须继续同一候选事务");
+                if (!result.rearrange) result.rearrange = continuation.rearrange;
+                scene.validateLayoutMaterialization(id, continuation);
+                scene.applyUncommitted(continuation);
+            }}
+                                                        : LayoutMaterializer{});
             if (transaction) scene.applyUncommitted(*transaction);
             result.phases.record(FramePhase::ApplyMutations, transaction != nullptr);
             auto& tree = scene.tree();
-            if (prepare.interaction) prepare.interaction(tree);
+            if (preparation.interaction) preparation.interaction(tree);
             tree.advanceAnimations(timeMillis);
             if (const auto environment = layout_.textLayoutService().environment(); environment != fontEnvironment_) {
                 fontEnvironment_ = environment;
@@ -109,9 +117,9 @@ namespace canton::core {
                 }
                 result.phases.record(FramePhase::Layout, result.plan.layout);
                 if (result.plan.buildPaint) {
-                    if (prepare.draw) {
+                    if (preparation.draw) {
                         const auto drawStarted = std::chrono::steady_clock::now();
-                        prepare.draw(scene);
+                        preparation.draw(scene);
                         counters_.drawPrepareMillis += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - drawStarted).count();
                     }
                     const auto started = std::chrono::steady_clock::now();
@@ -139,27 +147,47 @@ namespace canton::core {
             candidateFrame.invalidation = result.invalidation;
             candidateFrame.plan = result.plan;
             candidateFrame.phases = result.phases;
-            if (result.plan.publishFrame) ++counters_.publications;
-            counters_.candidateNodesCopied += scene.tree().journaledNodes();
-            scene.commitJournal();
-            scene.clearDirty();
-            publishedFrame = std::move(candidateFrame);
             result.scrollUpdates = layout_.takeScrollUpdates();
-            if (tracing && result.plan.publishFrame) recordFrame(countersBefore, drawsBefore, scene, publishedFrame, result.phases, timeMillis, elapsed(), false);
+            prepared_.emplace(PreparedFrame{std::move(candidateFrame), previousFontEnvironment,
+                tracing ? std::optional{countersBefore} : std::nullopt, drawsBefore, timeMillis, tracing ? elapsed() : 0});
         } catch (const std::exception& exception) {
             ++counters_.failedSubmissions;
             counters_.candidateNodesCopied += scene.tree().journaledNodes();
             scene.rollbackJournal();
+            fontEnvironment_ = previousFontEnvironment;
             result.error = exception.what();
             if (tracing) recordFrame(countersBefore, drawsBefore, scene, publishedFrame, result.phases, timeMillis, elapsed(), true);
             // 错误通过结果交给宿主诊断；不覆盖先前已发布的图像或输入几何
         } catch (...) {
             scene.rollbackJournal();
+            fontEnvironment_ = previousFontEnvironment;
             layout_.setMaterializer({});
             throw;
         }
         layout_.setMaterializer({});
         return result;
+    }
+
+    void SceneFramePipeline::commit(NativeScene& scene, PublishedFrame& publishedFrame) {
+        if (!prepared_) return;
+        auto candidate = std::move(*prepared_);
+        prepared_.reset();
+        counters_.candidateNodesCopied += scene.tree().journaledNodes();
+        scene.commitJournal();
+        scene.clearDirty();
+        if (candidate.frame.plan.publishFrame) ++counters_.publications;
+        publishedFrame = std::move(candidate.frame);
+        if (candidate.countersBefore && publishedFrame.plan.publishFrame) {
+            recordFrame(*candidate.countersBefore, candidate.drawsBefore, scene, publishedFrame, publishedFrame.phases, candidate.timeMillis, candidate.elapsedMillis, false);
+        }
+    }
+
+    void SceneFramePipeline::discard(NativeScene& scene) {
+        if (!prepared_) return;
+        counters_.candidateNodesCopied += scene.tree().journaledNodes();
+        scene.rollbackJournal();
+        fontEnvironment_ = prepared_->previousFontEnvironment;
+        prepared_.reset();
     }
 
     void SceneFramePipeline::recordFrame(const FrameExecutionCounters& before, std::uint64_t drawsBefore, const NativeScene& scene, const PublishedFrame& frame, PhaseSet phases, double timeMillis, double totalMillis, bool failed) {
@@ -188,7 +216,7 @@ namespace canton::core {
         record.hitSubtreeCacheHits = after.hitWork.subtreeCacheHits - before.hitWork.subtreeCacheHits;
         record.drawRecords = scene.drawPreparations() - drawsBefore;
         record.nodes = scene.tree().size();
-        if (!failed && frame.plan.passivePaint) record.repaint = frame.changes.repaint;
+        if (!failed && frame.plan.passivePaint) record.repaint = frame.changes.appRepaint;
         timeline_.record(std::move(record));
     }
 
@@ -205,18 +233,18 @@ namespace canton::core {
             candidate.plan.passivePaint = true;
         }
         if (candidate.plan.passivePaint) {
-            const auto sampleApp = !after.diagnosticsFpsDrawOps.empty() && !after.errorFrame;
             const auto appFullRepaint = previous.revision == 0 || candidate.plan.fullFallback || before.viewport != after.viewport || before.errorFrame != after.errorFrame;
             RepaintDamage damage;
-            if (appFullRepaint || (diagnosticsFullRepaint && !sampleApp)) damage.markFull();
-            damage.compareScene(before.scenePaint, after.scenePaint);
-            // 编辑命令在 TextField 叶项原位重放，范围取新旧聚焦叶项
-            if (candidate.changes.overlayDrawOpsChanged) {
-                damage.addInputField(before.scenePaint, before.focusedInputModifier);
-                damage.addInputField(after.scenePaint, after.focusedInputModifier);
+            if (appFullRepaint) damage.markFull();
+            if (!after.errorFrame) {
+                damage.compareScene(before.scenePaint, after.scenePaint);
+                // 编辑命令在 TextField 叶项原位重放，范围取新旧聚焦叶项
+                if (candidate.changes.overlayDrawOpsChanged) {
+                    damage.addInputField(before.scenePaint, before.focusedInputModifier);
+                    damage.addInputField(after.scenePaint, after.focusedInputModifier);
+                }
             }
-            candidate.changes.repaint = damage.finish(after.viewport);
-            if (sampleApp) candidate.changes.appRepaint = candidate.changes.repaint;
+            candidate.changes.appRepaint = damage.finish(after.viewport);
             if (diagnosticsFullRepaint) {
                 candidate.changes.repaint = {true, {}};
             } else if (fpsChanged && !damage.full()) {
@@ -224,6 +252,8 @@ namespace canton::core {
                 if (!before.diagnosticsFpsDrawOps.empty()) damage.addRect(before.diagnosticsFpsDrawOps.front().rect);
                 if (!after.diagnosticsFpsDrawOps.empty()) damage.addRect(after.diagnosticsFpsDrawOps.front().rect);
                 candidate.changes.repaint = damage.finish(after.viewport);
+            } else {
+                candidate.changes.repaint = candidate.changes.appRepaint;
             }
         }
         candidate.revision = previous.revision + (candidate.plan.publishFrame ? 1 : 0);

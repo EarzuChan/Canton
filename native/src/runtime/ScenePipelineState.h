@@ -24,6 +24,10 @@ namespace canton::runtime {
 
         [[nodiscard]] canton::core::SceneFramePipelineResult run(canton::core::NodeId root, canton::core::Constraints constraints, bool framePipelineRequested, const canton::core::FrameFinalizer& finalize = {}, const canton::core::FramePreparation& preparation = {});
 
+        [[nodiscard]] canton::core::SceneFramePipelineResult prepare(canton::core::NodeId root, canton::core::Constraints constraints, bool framePipelineRequested, const canton::core::FrameFinalizer& finalize, const canton::core::FramePreparation& preparation);
+        void commit() { pipeline_.commit(scene_, publishedFrame_); }
+        void discard() { pipeline_.discard(scene_); }
+
         void setFrameTime(double timeMillis) noexcept {
             frameTimeMillis_ = timeMillis;
         }

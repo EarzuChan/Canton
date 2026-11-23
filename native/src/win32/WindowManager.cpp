@@ -90,8 +90,7 @@ namespace canton::win32 {
                 const auto ownerId = *modal.config.ownerWindowId;
                 for (const auto targetId : ownedSubtree(ownerId)) {
                     if (targetId == modalId || isOwnedDescendant(targetId, modalId)) continue;
-                    // 其他活跃模态窗自身不被外层兄弟反向锁死，仅锁定非模态窗口或直接父级链
-                    ++counts[targetId];
+                    if (targetId == ownerId || windows_.at(targetId).config.modality == core::WindowModality::None) ++counts[targetId];
                 }
             } else if (modal.config.modality == core::WindowModality::Application) {
                 for (const auto targetId : order_) {

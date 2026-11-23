@@ -28,7 +28,14 @@ namespace canton::runtime {
         std::string diagnosticText() const;
     };
 
+    enum class ErrorScreenPresentation {
+        Detailed,
+        Compact,
+        Hidden,
+    };
+
     const char* toString(ErrorSource source) noexcept;
     ErrorScreenModel makeErrorScreenModel(ErrorSource source, std::string summary, std::string detail = {}, std::filesystem::path relatedPath = {}, bool retryAvailable = true);
+    [[nodiscard]] std::vector<core::DrawOp> buildErrorScreenOps(core::Rect editorBounds, const ErrorScreenModel& error, ErrorScreenPresentation presentation, float dpiScale = 1.0f);
     [[nodiscard]] std::vector<core::DrawOp> buildErrorScreenOps(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed, float dpiScale = 1.0f);
 }

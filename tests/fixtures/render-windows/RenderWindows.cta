@@ -1,0 +1,18 @@
+<template>
+    <App &app-handle>
+        <Window :state="main" :onCloseRequest="appHandle.exitApplication">
+            <Box :modifier="M.fillMaxSize().background(Color(0xff102030))" />
+        </Window>
+        <Window :state="second" :onCloseRequest="appHandle.exitApplication">
+            <Box :modifier="M.fillMaxSize().background(Color(0xff4070a0))" />
+        </Window>
+    </App>
+</template>
+
+<script>
+import { createWindowState } from '@canton/framework'
+import { Color, M } from '@canton/framework/ui'
+
+const main = createWindowState({ size: { width: 80.dp, height: 64.dp } })
+const second = createWindowState({ size: { width: 48.dp, height: 32.dp } })
+</script>

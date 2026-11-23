@@ -79,6 +79,7 @@ export const Window = defineArrangable({
         closable: { type: Boolean, default: true },
         alwaysOnTop: { type: Boolean, default: false },
         showInTaskbar: Boolean,
+        transparent: { type: Boolean, default: false },
         backdrop: { type: String as PropType<WindowBackdrop>, default: 'none', validator: (v: unknown) => typeof v === 'string' && backdrops.has(v) },
         cornerPreference: { type: String as PropType<WindowCornerPreference>, default: 'default', validator: (v: unknown) => typeof v === 'string' && cornerPreferences.has(v) },
     },
@@ -109,6 +110,9 @@ export const Window = defineArrangable({
             if (props.modality === 'owner' && ownerWindowId === undefined) {
                 throw new Error('modality="owner" 必须存在有效宿主窗口（不能无祖先 <Window> 或设置 owner="none"）')
             }
+            if (props.transparent && (props.chrome !== 'frameless' || props.backdrop !== 'none' || props.cornerPreference === 'round' || props.cornerPreference === 'roundSmall')) {
+                throw new Error('透明 <Window> 要求 chrome="frameless"、无背景材质且不使用系统圆角')
+            }
             const minSizeDp = props.minSize ? normalizeWindowSize(props.minSize, 'minSize') : undefined
             const maxSizeDp = props.maxSize ? normalizeWindowSize(props.maxSize, 'maxSize') : undefined
             if (minSizeDp && maxSizeDp && (minSizeDp.width > maxSizeDp.width || minSizeDp.height > maxSizeDp.height)) {
@@ -133,6 +137,7 @@ export const Window = defineArrangable({
                 closable: props.closable,
                 alwaysOnTop: props.alwaysOnTop,
                 ...(props.showInTaskbar !== undefined ? { showInTaskbar: props.showInTaskbar } : {}),
+                transparent: props.transparent,
                 backdrop: props.backdrop,
                 cornerPreference: props.cornerPreference,
             })
@@ -160,15 +165,16 @@ export const Window = defineArrangable({
                 density.dpScale = dpiScale
                 density.spScale = dpiScale
             },
+            onCommitMount: () => {
+                stateInternal.bind(bindingOwner, surface.windowId, windowHandle, action => {
+                    const activeId = surface.activeWindowId
+                    if (activeId !== undefined) host.native.windowCommand(activeId, action)
+                })
+            },
             onRollbackMount: () => stateInternal.unbind(bindingOwner, windowHandle),
             onRetire: () => stateInternal.unbind(bindingOwner, windowHandle),
-        })
+        }, state)
         instance.surface = surface
-
-        stateInternal.bind(bindingOwner, surface.windowId, windowHandle, action => {
-            const activeId = surface.activeWindowId
-            if (activeId !== undefined) host.native.windowCommand(activeId, action)
-        })
 
         const focus = createNativeFocusManager(host.native, surface.windowId)
         onScopeDispose(() => {

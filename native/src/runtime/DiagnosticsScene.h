@@ -15,7 +15,7 @@ namespace canton::runtime {
         [[nodiscard]] std::vector<canton::core::DrawOp> buildErrorScreen(core::Rect editorBounds, const ErrorScreenModel& error, bool detailed, float dpiScale = 1.0f) const;
         [[nodiscard]] std::vector<canton::core::DrawOp> buildBadge(core::Rect editorBounds, const DiagnosticsBadgeModel& model, DiagnosticVisibility visibility, const canton::core::TextLayoutService& textLayout, float dpiScale = 1.0f) const;
         [[nodiscard]] std::vector<canton::core::DrawOp> buildFpsBadge(core::Rect editorBounds, int fps, const canton::core::TextLayoutService& textLayout, float dpiScale = 1.0f) const;
-        [[nodiscard]] std::vector<canton::core::DrawOp> buildToasts(core::Rect editorBounds, const std::vector<DiagnosticsToastModel>& toasts, DiagnosticVisibility visibility, float dpiScale = 1.0f) const;
+        [[nodiscard]] std::vector<canton::core::DrawOp> buildToasts(core::Rect editorBounds, const std::vector<DiagnosticsToastModel>& toasts, DiagnosticVisibility visibility, float dpiScale = 1.0f, const canton::core::TextLayoutService* textLayout = nullptr) const;
 
        private:
         static canton::core::DrawOp fill(canton::core::Rect rect, std::uint32_t color, float radius = 0.0f);

@@ -8,7 +8,7 @@
 >   - **开窗把玩**：仓库脚本按正式加载规矩（`CANTON_DEV_*`）拉起宿主，弹出真窗口，改 `.cta` 热更新。M3 的窗口只显示、不可交互；M4 接上输入后可上手操作，此后主人的验收以把玩为准。
 > - 与验收无关的随手试验放在不进 Git 的临时目录。
 
-## M0：设定冻结与架构蓝图（已完成）
+## M0：设定冻结与架构蓝图：已完成
 
 目标：完成 Canton 面向 Windows 原生桌面的首轮核心架构决策，确定实现次序与代码迁移方针，不在施工中随手发明基础语义。
 
@@ -85,7 +85,7 @@
 - **原生输入**：鼠标多击与捕获、滚轮平滑与边界接力、键盘与焦点导航、光标形状、`Input` 词级操作/多击选词/`readOnly`/剪贴板接入宿主窗口；纯 Win32 IMM32 中文输入法与显式 `compositionRange` 组合模型接入 `InputTextSession`（按焦点动态启停 `HIMC`）；接通 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
 - **M3 移交与 Dist 物理剥离**：Dev 窗口级调试交互（`F5` 重载、`F8` 帧率徽标、`F9` / `Shift+F9` `DiagnosticsOverlay`、错误屏点击重试与 `Ctrl+C` 复制诊断）经 `DevAssembly` 注入并在 Dist 宿主编译/链接期物理剥离；恢复并扩充 `canton_focus_input`、`canton_scroll_input`、`canton_frame_submission`、`canton_lazy_runtime` 与 `canton_window_runtime`。
 
-验收夹具：
+验收夹具（兼作临时 Demo，正式工程化的 Demo 仍得等到后续）：
 - `window-interaction`（「窗口与交互」夹具）：**自绘标题栏 + Mica 背景** 的桌面工作台，覆盖多窗共享响应式状态、同帧切窗不误退、二级嵌套模态锁、置顶工具窗、无框圆角浮窗、跨 DPI 缩放与中文 IMM32 试验场。
 
 验收：

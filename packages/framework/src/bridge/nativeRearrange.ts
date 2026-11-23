@@ -121,10 +121,17 @@ export class NativeRearrangeHost implements RearrangeHost {
     syncCandidateSurfaces(): void {
         const activeApps = [...this.appInstances].filter(instance => !instance.isUnmounted && instance.structure?.isActive())
         if (activeApps.length > 1) throw new Error('<App> 是进程内唯一的非布局应用根，不能同时挂载多个实例')
+        const surfaceStates: Array<{ surface: WindowRearrangeSurface; active: boolean }> = []
+        const activeWindowStates = new Set<object>()
         for (const surface of [...this.surfaces]) {
             const active = !surface.owner.isUnmounted && Boolean(surface.owner.structure?.isActive())
-            surface.syncCandidateActive(active)
+            if (active && surface.state) {
+                if (activeWindowStates.has(surface.state)) throw new Error('同一 WindowState 不能同时绑定多个活跃 <Window>')
+                activeWindowStates.add(surface.state)
+            }
+            surfaceStates.push({ surface, active })
         }
+        for (const { surface, active } of surfaceStates) surface.syncCandidateActive(active)
     }
 
     registerProvider(node: LayoutRearrangeNode, provider: LayoutContentProvider): void {
@@ -285,7 +292,7 @@ export class WindowRearrangeSurface implements RearrangeSurface {
     private pendingConfig: NativeWindowConfig | undefined
     private configStagedEpoch = 0
 
-    constructor(readonly owner: ArrangableInstance, private readonly host: NativeRearrangeHost, initialConfig: NativeWindowConfig, private readonly callbacks: WindowSurfaceCallbacks) {
+    constructor(readonly owner: ArrangableInstance, private readonly host: NativeRearrangeHost, initialConfig: NativeWindowConfig, private readonly callbacks: WindowSurfaceCallbacks, readonly state?: object) {
         this.windowId = host.native.allocateWindowId()
         this.rootId = host.allocateId()
         this.committedConfig = initialConfig

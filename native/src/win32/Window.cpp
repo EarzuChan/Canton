@@ -493,7 +493,10 @@ namespace canton::win32 {
                 case core::WindowCornerPreference::Round: corner = 2; break;
                 case core::WindowCornerPreference::RoundSmall: corner = 3; break;
             }
+            if (config.transparent) corner = DWMWCP_DONOTROUND;
             (void)DwmSetWindowAttribute(hwnd, kDwmWindowCornerPreference, &corner, sizeof(corner));
+            const COLORREF border = config.transparent ? DWMWA_COLOR_NONE : DWMWA_COLOR_DEFAULT;
+            (void)DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &border, sizeof(border));
 
             if (config.backdrop != core::WindowBackdrop::None) {
                 const MARGINS full{-1, -1, -1, -1};
@@ -1190,7 +1193,10 @@ namespace canton::win32 {
                             return (GetKeyState(code) & 0x8000) != 0;
                         });
                     }
-                    if (message == WM_SYSKEYUP) break;
+                    if (message == WM_SYSKEYUP) {
+                        if (wParam == VK_F10) return 0;
+                        break;
+                    }
                     return 0;
                 }
 
@@ -1468,7 +1474,7 @@ namespace canton::win32 {
             impl_->syncCloseMenuItem();
         }
 
-        if (prev.backdrop != next.backdrop || prev.cornerPreference != next.cornerPreference || prev.chrome != next.chrome) {
+        if (prev.backdrop != next.backdrop || prev.cornerPreference != next.cornerPreference || prev.chrome != next.chrome || prev.transparent != next.transparent) {
             impl_->applyDwmAttributes();
         }
 

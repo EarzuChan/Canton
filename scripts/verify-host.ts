@@ -21,11 +21,15 @@ const devOnlyMarkers = [
     '热更新已恢复',
     'DIST FALLBACK',
     '气泡之《',
-    'UI idle',
+    'UI IDLE',
     'frag %llu/%llu',
     'frame %.2f ms  paint %.2f ms',
-    '诊断叠层',
+    '帧时间面板 (F9)',
+    '重画区闪红 (F10)',
+    '布局框框与命中高亮 (F11)',
     '快捷键请求重新加载 (F5)',
+    'CANTON_DEV_CRASH_LOG',
+    'StackWalk64',
 ]
 
 function contains(binary: Buffer, text: string): boolean {

@@ -46,6 +46,7 @@ namespace render_regression {
         int width = 0;
         int height = 0;
         std::function<Image(CaseContext&)> run;
+        bool compareBaseline = true;
     };
 
     void addDrawCases(std::vector<Case>& cases);

@@ -164,9 +164,9 @@ namespace canton::quickjs {
         ScriptExecutionResult runModuleTask(const char* name, bool resetFirst, const std::function<bool(struct QuickJsRuntimeContext&, std::string&)>& step);
         struct QuickJsRuntimeContext* runtimeContext() noexcept;
 
+        canton::core::MutationTransactionQueue pendingTransactions_;
         struct Impl;
         std::unique_ptr<Impl> impl_;
-        canton::core::MutationTransactionQueue pendingTransactions_;
     };
 
 }

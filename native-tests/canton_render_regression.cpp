@@ -90,6 +90,16 @@ namespace {
         for (const auto& item : cases) {
             if (!options.only.empty() && item.name != options.only) continue;
             ++ran;
+            if (!item.compareBaseline) {
+                try {
+                    (void)runCase(item, warp, options);
+                    std::cout << "PASS " << item.name << " [warp]\n";
+                } catch (const std::exception& error) {
+                    std::cout << "FAIL " << item.name << " " << error.what() << '\n';
+                    ++failures;
+                }
+                continue;
+            }
             const auto baselinePath = options.baselines / (item.name + ".png");
             const auto report = [&](const char* tier, const Image& actual, int tolerance, double ratio) {
                 test_support::writePng(options.output / (item.name + "." + tier + ".png"), actual);

@@ -29,7 +29,8 @@ const server = source === 'dist' ? undefined : await createFixtureServer(fixture
 await server?.listen()
 const url = server?.resolvedUrls?.local[0]
 const readiness = await NativeReadiness.open()
-const environment: NodeJS.ProcessEnv = { ...process.env, ...readiness.environment, CANTON_DEV_SOURCE: source }
+const crashLog = resolve(repoRoot, '.canton/logs/crash.log')
+const environment: NodeJS.ProcessEnv = { ...process.env, ...readiness.environment, CANTON_DEV_SOURCE: source, CANTON_DEV_CRASH_LOG: crashLog }
 if (url) environment.CANTON_DEV_SERVER = url
 const dist = option('--dist')
 if (dist) environment.CANTON_DEV_DIST = resolve(dist)
@@ -39,21 +40,29 @@ console.log('[CantonFixtureWindow]', `夹具 ${fixture}，策略 ${source}${url 
 const host = spawn(nativeExecutable(resolve(nativeTestDirectory(), 'native'), 'canton-host-dev'), [], { env: environment, stdio: ['ignore', 'inherit', 'inherit'] })
 const exited = new Promise<number>(done => host.once('exit', code => done(code ?? 1)))
 const abort = new AbortController()
+let stoppedBySignal = false
 const stop = () => {
+    stoppedBySignal = true
     abort.abort()
     host.kill()
 }
 process.once('SIGINT', stop)
 process.once('SIGTERM', stop)
 try {
+    const exitAfterReady = args.includes('--exit-after-ready')
     const ready = readiness.wait(abort.signal).then(() => 'ready' as const, () => 'aborted' as const)
     const first = await Promise.race([ready, exited])
     if (first === 'ready') {
         console.log('[CantonFixtureWindow]', '首帧已就绪')
-        if (args.includes('--exit-after-ready')) host.kill()
-    } else if (typeof first === 'number') console.log('[CantonFixtureWindow]', `宿主在首帧前退出，退出码 ${first}`)
-    process.exitCode = first === 'ready' ? 0 : 1
-    await exited
+        if (exitAfterReady) host.kill()
+    } else if (typeof first === 'number') console.log('[CantonFixtureWindow]', `宿主在首帧前退出，退出码 0x${(first >>> 0).toString(16).toUpperCase()}`)
+    const finalCode = await exited
+    if (!exitAfterReady && !stoppedBySignal && finalCode !== 0) {
+        console.error('[CantonFixtureWindow]', `宿主异常退出，退出码 0x${(finalCode >>> 0).toString(16).toUpperCase()}（崩溃栈见 ${crashLog}）`)
+        process.exitCode = 1
+    } else {
+        process.exitCode = first === 'ready' ? 0 : 1
+    }
 } finally {
     abort.abort()
     await readiness.close()
