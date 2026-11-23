@@ -116,6 +116,15 @@ namespace canton::core {
                     counters_.layoutWork.placeCacheHits += layout_.counters().placeCacheHits;
                 }
                 result.phases.record(FramePhase::Layout, result.plan.layout);
+                if (preparation.positioned && (result.plan.layout || result.plan.buildPaint || result.plan.applyMutations)) {
+                    const auto updates = collectPositionedUpdates(tree, root, {constraints.maxWidth, constraints.maxHeight});
+                    if (!updates.empty()) {
+                        preparation.positioned(scene, updates);
+                        result.plan.buildPaint = true;
+                        result.plan.publishFrame = true;
+                        result.plan.passivePaint = true;
+                    }
+                }
                 if (result.plan.buildPaint) {
                     if (preparation.draw) {
                         const auto drawStarted = std::chrono::steady_clock::now();

@@ -262,6 +262,7 @@ const n = globalThis.__CANTON_NATIVE__
 let stage = 'login'
 let allowClose = false
 let dpiA = 1
+let boxHeight = 40
 let loginId = 0, mainId = 0, childId = 0, mainRoot = 0, boxA = 0, chainA = null
 
 function baseConfig(title, ownerWindowId) {
@@ -311,6 +312,16 @@ n.installWindowDriver({
     },
 })
 
+function boxModifiers() {
+    return { elements: [
+        { type: 'size', value: { width: 100 * dpiA, height: boxHeight * dpiA } },
+        { type: 'draggable', value: { axis: 'vertical', onDelta: event => {
+            boxHeight += event.deltaY
+            n.requestFrame(true)
+        } } },
+    ] }
+}
+
 n.installFrameDriver(() => {
     n.beginRearrange()
     n.configureApp({ exitOnLastWindowClosed: true })
@@ -330,13 +341,13 @@ n.installFrameDriver(() => {
         n.insertChild(mainRoot, boxA, 0)
         n.updateBinding(n.registerBinding(boxA, 'measurePolicy'), { kind: 'MinSize' })
         chainA = n.registerBinding(boxA, 'modifier')
-        n.updateBinding(chainA, { elements: [{ type: 'size', value: { width: 100 * dpiA, height: 40 * dpiA } }, { type: 'clickable', value: { onClick: () => n.requestAppExit() } }] })
+        n.updateBinding(chainA, boxModifiers())
 
         childId = n.allocateWindowId()
         n.createWindow(childId, 5, baseConfig('Child', mainId))
         n.createNode(5, 'Root', childId)
     } else if (stage === 'main' && mainId !== 0) {
-        n.updateBinding(chainA, { elements: [{ type: 'size', value: { width: 100 * dpiA, height: 40 * dpiA } }, { type: 'clickable', value: { onClick: () => n.requestAppExit() } }] })
+        n.updateBinding(chainA, boxModifiers())
     } else if (stage === 'failedFrame') {
         n.updateWindow(mainId, baseConfig('Uncommitted title'))
         n.updateBinding(chainA, { elements: [{ type: 'size', value: { width: 200, height: 80 } }] })
@@ -473,6 +484,18 @@ n.requestFrame(true)
             check(containsText(childOps, "应用运行异常") && !containsText(childOps, "详细堆栈用于验证主副错误屏分工"), "非主窗应展示极简冻结态而非完整堆栈");
             return;
         }
+
+        const auto& main = *session.window(mainWinId);
+        const auto boxHeight = [&] { return main.pipeline.scene().node(4).bounds.height; };
+        session.pointerDown(mainWinId, {{20, 20}, {}, now});
+        check(!main.input.focus().target(), "拖动回归须在无焦点目标时运行");
+        session.pointerMove(mainWinId, {{20, 21}, {}, now + 1});
+        (void)session.pumpFrame(now += 16);
+        check(boxHeight() == 40.0f, "阈值内不应交付拖动位移");
+        session.pointerMove(mainWinId, {{20, 32}, {}, now + 1});
+        session.pointerUp(mainWinId, {{20, 32}, {}, now + 2});
+        (void)session.pumpFrame(now += 16);
+        check(boxHeight() == 48.0f, "无焦点目标时，越过阈值后应交付扣除阈值的首段位移");
 
         // DPI 变更为 1.5x -> 驱动主窗节点尺寸重测为 150x60
         session.notifyWindowDpi(mainWinId, 1.5);

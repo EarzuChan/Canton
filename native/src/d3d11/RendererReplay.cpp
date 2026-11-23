@@ -92,24 +92,14 @@ namespace canton::d3d11 {
         targetHeight = output.bufferHeight;
         ++frameNumber;
         ensureMasks();
+        releaseFrameLayers();
+        layerRecordStack.clear();
+        activeRecordingLayers.clear();
 
         float clear[4];
         setColor(clear, frame.background, 1.0f);
-        context->OMSetRenderTargets(1, &targetView, nullptr);
+        bindQuadPipeline();
         context->ClearRenderTargetView(targetView, clear);
-        const D3D11_VIEWPORT viewport{0, 0, static_cast<float>(targetWidth), static_cast<float>(targetHeight), 0, 1};
-        context->RSSetViewports(1, &viewport);
-        context->RSSetState(rasterizer.Get());
-        context->OMSetBlendState(blend.Get(), nullptr, 0xffffffffu);
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-        context->IASetInputLayout(inputLayout.Get());
-        const UINT stride = sizeof(QuadInstance), offset = 0;
-        context->IASetVertexBuffers(0, 1, instanceBuffer.GetAddressOf(), &stride, &offset);
-        context->VSSetShader(vertexShader.Get(), nullptr, 0);
-        context->PSSetShader(pixelShader.Get(), nullptr, 0);
-        context->VSSetConstantBuffers(0, 1, constantBuffer.GetAddressOf());
-        context->PSSetConstantBuffers(0, 1, constantBuffer.GetAddressOf());
-        context->PSSetSamplers(0, 1, sampler.GetAddressOf());
 
         states.assign(1, RenderState{{}, {0, 0, targetWidth, targetHeight}, {}, -1, false});
         pending.clear();
@@ -131,6 +121,9 @@ namespace canton::d3d11 {
         replayScoped(content.diagnosticsToastDrawOps, 1.0f);
         flush();
         states.clear();
+        releaseFrameLayers();
+        layerRecordStack.clear();
+        activeRecordingLayers.clear();
         for (auto& mask : masks) mask.used = false;
         ID3D11ShaderResourceView* none[4]{};
         context->PSSetShaderResources(0, 4, none);
@@ -251,7 +244,11 @@ namespace canton::d3d11 {
     void Renderer::Impl::pushTransform(const core::DrawOp& op) {
         pushState();
         auto& current = state();
-        current.transform = current.transform.after(Affine::layer(op.rect, op.transformOriginX, op.transformOriginY, op.scaleX, op.scaleY, op.rotationZ, op.translationX, op.translationY));
+        if (op.useMatrix) {
+            current.transform = current.transform.after(op.matrix);
+        } else {
+            current.transform = current.transform.after(Affine::layer(op.rect, op.transformOriginX, op.transformOriginY, op.scaleX, op.scaleY, op.rotationZ, op.translationX, op.translationY));
+        }
         // 压扁成一条线或一个点的层什么都画不出来
         if (!inverted(current.transform) && !current.scissor.empty()) {
             flush();
@@ -261,13 +258,17 @@ namespace canton::d3d11 {
 
     void Renderer::Impl::clipToCoverage(const std::function<void()>& draw) {
         flush();
+        const int needW = std::max(targetWidth, 1);
+        const int needH = std::max(targetHeight, 1);
         std::size_t index = 0;
-        while (index < masks.size() && masks[index].used) ++index;
+        while (index < masks.size() && (masks[index].used || masks[index].width < needW || masks[index].height < needH)) ++index;
         if (index == masks.size()) {
             MaskTarget mask;
+            mask.width = std::max(needW, maskWidth);
+            mask.height = std::max(needH, maskHeight);
             D3D11_TEXTURE2D_DESC description{};
-            description.Width = static_cast<UINT>(std::max(maskWidth, 1));
-            description.Height = static_cast<UINT>(std::max(maskHeight, 1));
+            description.Width = static_cast<UINT>(mask.width);
+            description.Height = static_cast<UINT>(mask.height);
             description.MipLevels = 1;
             description.ArraySize = 1;
             description.Format = DXGI_FORMAT_R8_UNORM;
@@ -288,8 +289,7 @@ namespace canton::d3d11 {
         context->OMSetBlendState(replace.Get(), nullptr, 0xffffffffu);
         draw();
         flush();
-        context->OMSetRenderTargets(1, &targetView, nullptr);
-        context->OMSetBlendState(blend.Get(), nullptr, 0xffffffffu);
+        bindQuadPipeline();
         auto& current = state();
         current.clip = {};
         current.mask = static_cast<int>(index);
@@ -384,13 +384,16 @@ namespace canton::d3d11 {
         if (!invisible(fragment.bounds)) {
             auto depth = states.size();
             if (fragment.layer && fragment.layer->drawCommands) {
-                // 自定义绘制层：子片段只在内容标记处重放
+                // 自定义绘制层：子片段只在内容标记处重放；录制 RenderLayer 时以满不透明度捕获
                 for (const auto& op : fragment.layer->before) {
                     if (op.type == core::DrawOpType::ContentMarker) {
-                        for (const auto& child : fragment.children) replayFragment(child, alpha);
+                        const float childAlpha = layerRecordStack.empty() ? alpha : 1.0f;
+                        for (const auto& child : fragment.children) replayFragment(child, childAlpha);
                     } else
                         replayOps(std::span<const core::DrawOp>(&op, 1), alpha, depth);
                 }
+            } else if (fragment.layer && fragment.layer->useOffscreenGroup) {
+                replayOffscreenGroup(fragment, alpha);
             } else {
                 if (const auto* effect = fragment.layer ? std::get_if<core::EffectModifier>(&fragment.layer->value) : nullptr) replayEffect(*effect, fragment.layer->bounds, alpha);
                 if (fragment.layer) replayOps(fragment.layer->before, alpha, depth);
@@ -405,66 +408,117 @@ namespace canton::d3d11 {
     }
 
     void Renderer::Impl::replayOps(std::span<const core::DrawOp> ops, float alpha, std::size_t& depth) {
+        using core::BlendMode;
         using core::DrawOpType;
+        const auto isCoverageSafeHardwareBlend = [](BlendMode mode) noexcept {
+            return mode == BlendMode::DstOver || mode == BlendMode::DstOut || mode == BlendMode::SrcAtop || mode == BlendMode::Xor || mode == BlendMode::Plus || mode == BlendMode::Screen;
+        };
+
         for (const auto& op : ops) {
-            const auto stateOp = op.type == DrawOpType::PushClip || op.type == DrawOpType::PopClip || op.type == DrawOpType::PushTransform || op.type == DrawOpType::PopTransform;
+            const auto stateOp = op.type == DrawOpType::PushClip || op.type == DrawOpType::PopClip || op.type == DrawOpType::PushTransform || op.type == DrawOpType::PopTransform || op.type == DrawOpType::BeginRecordLayer || op.type == DrawOpType::EndRecordLayer;
             if (!stateOp && (state().scissor.empty() || invisible(core::drawOpBounds(op)))) continue;
-            switch (op.type) {
+
+            const bool isDrawPrimitive = op.type == DrawOpType::FillRect || op.type == DrawOpType::StrokeRect || op.type == DrawOpType::DrawLine || op.type == DrawOpType::DrawPath || op.type == DrawOpType::DrawText || op.type == DrawOpType::DrawPainter;
+            if (isDrawPrimitive) {
+                if (op.blendMode == BlendMode::Dst) continue;
+                if (op.shader) {
+                    drawOpWithShaderBrush(op, alpha);
+                    continue;
+                }
+                if (op.colorFilter || (op.blendMode != BlendMode::SrcOver && op.blendMode != BlendMode::Clear && !isCoverageSafeHardwareBlend(op.blendMode))) {
+                    drawOpIsolated(op, alpha);
+                    continue;
+                }
+            }
+
+            const bool customHardwareBlend = isDrawPrimitive && (op.blendMode == BlendMode::Clear || isCoverageSafeHardwareBlend(op.blendMode));
+            if (customHardwareBlend) {
+                flush();
+                auto* bs = op.blendMode == BlendMode::Clear ? clearPunchOutBlend.Get() : hardwareBlends[static_cast<std::size_t>(op.blendMode)].Get();
+                context->OMSetBlendState(bs, nullptr, 0xffffffffu);
+            }
+
+            const core::DrawOp* activeOp = &op;
+            core::DrawOp clearMaskOp;
+            float activeAlpha = alpha;
+            if (customHardwareBlend && op.blendMode == BlendMode::Clear) {
+                clearMaskOp = op;
+                clearMaskOp.color = 0xffffffffu;
+                clearMaskOp.gradient = {};
+                activeOp = &clearMaskOp;
+                activeAlpha = 1.0f;
+            }
+
+            switch (activeOp->type) {
                 case DrawOpType::ContentMarker:
                     break;
                 case DrawOpType::FillRect:
-                    drawShape(op, op.rect, op.shape, op.corners, unbounded, 0.0f, alpha);
+                    drawShape(*activeOp, activeOp->rect, activeOp->shape, activeOp->corners, unbounded, 0.0f, activeAlpha);
                     break;
                 case DrawOpType::StrokeRect: {
                     // 对齐 Compose：border 的描边落在轮廓内侧，Canvas 的形状描边以轮廓为中线。
                     // 直角矩形的中线描边按外扩半个线宽的矩形向内描，外角保持尖角（尖角线接）
-                    const auto half = op.strokeWidth * 0.5f;
+                    const auto half = activeOp->strokeWidth * 0.5f;
                     const auto inward = [&](Rect rect) {
-                        drawShape(op, rect, op.shape, op.corners, -std::min(op.strokeWidth, std::min(rect.width, rect.height) * 0.5f), 0.0f, alpha);
+                        drawShape(*activeOp, rect, activeOp->shape, activeOp->corners, -std::min(activeOp->strokeWidth, std::min(rect.width, rect.height) * 0.5f), 0.0f, activeAlpha);
                     };
-                    if (op.strokeInside)
-                        inward(op.rect);
-                    else if (op.shape == core::DrawShapeType::Rectangle)
-                        inward(expanded(op.rect, half));
+                    if (activeOp->strokeInside)
+                        inward(activeOp->rect);
+                    else if (activeOp->shape == core::DrawShapeType::Rectangle)
+                        inward(expanded(activeOp->rect, half));
                     else
-                        drawShape(op, op.rect, op.shape, op.corners, -half, half, alpha);
+                        drawShape(*activeOp, activeOp->rect, activeOp->shape, activeOp->corners, -half, half, activeAlpha);
                     break;
                 }
                 case DrawOpType::DrawLine:
-                    drawLine(op, alpha);
+                    drawLine(*activeOp, activeAlpha);
                     break;
                 case DrawOpType::DrawPath:
-                    drawPath(op, alpha);
+                    drawPath(*activeOp, activeAlpha);
                     break;
                 case DrawOpType::DrawText:
-                    if (op.inputText && focused.valid() && op.textField == focused) {
+                    if (activeOp->inputText && focused.valid() && activeOp->textField == focused) {
                         // 焦点输入框的文字、选区和光标由输入叠层在原位重放
                         pushState();
-                        state().transform = state().transform.after(Affine::translation(op.rect.x, op.rect.y));
+                        state().transform = state().transform.after(Affine::translation(activeOp->rect.x, activeOp->rect.y));
                         const auto saved = std::exchange(focused, {});
-                        replayScoped(focusedOps, alpha * op.inputAlpha);
+                        replayScoped(focusedOps, activeAlpha * activeOp->inputAlpha);
                         focused = saved;
                         popState();
                     } else
-                        drawText(op, alpha);
+                        drawText(*activeOp, activeAlpha);
                     break;
                 case DrawOpType::DrawPainter:
-                    drawPainter(op, alpha);
+                    drawPainter(*activeOp, activeAlpha);
                     break;
                 case DrawOpType::DrawNative:
                     // drawNative 的后端实现属后续里程碑：不绘制，每个名字记一条诊断
-                    if (op.native && reportedNatives.insert(op.native->name).second) core::Log::w(TAG, "渲染器尚不支持 drawNative，已跳过", op.native->name);
+                    if (activeOp->native && reportedNatives.insert(activeOp->native->name).second) core::Log::w(TAG, "渲染器尚不支持 drawNative，已跳过", activeOp->native->name);
                     break;
                 case DrawOpType::PushClip:
-                    pushClip(op);
+                    pushClip(*activeOp);
                     break;
                 case DrawOpType::PushTransform:
-                    pushTransform(op);
+                    pushTransform(*activeOp);
                     break;
                 case DrawOpType::PopClip:
                 case DrawOpType::PopTransform:
                     if (states.size() > depth) popState();
                     break;
+                case DrawOpType::BeginRecordLayer:
+                    beginRecordLayer(*activeOp, depth);
+                    break;
+                case DrawOpType::EndRecordLayer:
+                    endRecordLayer(depth);
+                    break;
+                case DrawOpType::DrawLayer:
+                    drawRenderLayer(*activeOp, alpha);
+                    break;
+            }
+
+            if (customHardwareBlend) {
+                flush();
+                context->OMSetBlendState(blend.Get(), nullptr, 0xffffffffu);
             }
         }
     }

@@ -5,6 +5,7 @@
 #include <memory>
 #include "Invalidation.h"
 #include "Layout.h"
+#include "ModifierGeometry.h"
 #include "MutationTransaction.h"
 #include "NativeScene.h"
 #include "Paint.h"
@@ -128,6 +129,7 @@ namespace canton::core {
         std::function<MutationTransaction(NodeId, const std::vector<int>&)> materialize;
         std::function<void(NativeScene&)> draw;
         std::function<void(LayoutTree&)> interaction;
+        std::function<void(NativeScene&, const std::vector<PositionedUpdate>&)> positioned;
     };
 
     class SceneFramePipeline {

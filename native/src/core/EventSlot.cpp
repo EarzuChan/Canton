@@ -47,6 +47,8 @@ namespace canton::core {
                 return "semanticsIncrement";
             case EventSlotKind::SemanticsDecrement:
                 return "semanticsDecrement";
+            case EventSlotKind::GloballyPositioned:
+                return "globallyPositioned";
             case EventSlotKind::Custom:
                 return "custom";
             case EventSlotKind::None:
@@ -78,6 +80,7 @@ namespace canton::core {
         if (name == "pointerInput") return EventSlotKind::PointerInput;
         if (name == "semanticsIncrement") return EventSlotKind::SemanticsIncrement;
         if (name == "semanticsDecrement") return EventSlotKind::SemanticsDecrement;
+        if (name == "globallyPositioned") return EventSlotKind::GloballyPositioned;
         if (name == "custom") return EventSlotKind::Custom;
         return EventSlotKind::None;
     }

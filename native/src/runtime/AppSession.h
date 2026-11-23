@@ -56,6 +56,7 @@ namespace canton::runtime {
         RuntimePackageLoader::DistResources distResources;
         AppResolver::MountPackage mountPackage;
         std::shared_ptr<const core::NativePainterRegistry> painters;
+        std::shared_ptr<const core::ShaderCompiler> shaderCompiler;
         AppPlatformCallbacks platform;
     };
 

@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <optional>
 
 namespace canton::core {
     namespace {
         // 与绘制重放一致的层变换
         Affine opTransform(const DrawOp& op) {
+            if (op.useMatrix) return op.matrix;
             return Affine::layer(op.rect, op.transformOriginX, op.transformOriginY, op.scaleX, op.scaleY, op.rotationZ, op.translationX, op.translationY);
         }
 
@@ -66,6 +68,7 @@ namespace canton::core {
             const auto& previous = *before.fragment;
             const auto& next = *after.fragment;
             if (previous.layer != next.layer || previous.content != next.content || previous.children.size() != next.children.size()) return replaceWhole();
+            if (previous.layer && previous.layer->useOffscreenGroup) return replaceWhole();
             // 内容命令先于子片段重放，其中的状态命令会改变子片段作用域
             if (previous.content && std::any_of(previous.content->begin(), previous.content->end(), [](const DrawOp& op) { return op.type == DrawOpType::PushClip || op.type == DrawOpType::PushTransform; })) return replaceWhole();
             auto inner = placedScope(parent, before.offset);
@@ -163,6 +166,23 @@ namespace canton::core {
 
     void RepaintDamage::compareScene(const PlacedPaintFragment& before, const PlacedPaintFragment& after) {
         compare(*this, before, after, {});
+        if (!full_ && !rects_.empty()) {
+            // 若场景中含有 RenderLayer 录制/绘制引用，源子树变更可能影响异处 drawLayer，保守标全幅脏区
+            std::function<bool(const PlacedPaintFragment&)> hasLayerDraw = [&](const PlacedPaintFragment& placed) -> bool {
+                if (!placed.fragment) return false;
+                const auto& frag = *placed.fragment;
+                if (frag.layer) {
+                    for (const auto& op : frag.layer->before) {
+                        if (op.type == DrawOpType::DrawLayer) return true;
+                    }
+                }
+                for (const auto& child : frag.children) {
+                    if (hasLayerDraw(child)) return true;
+                }
+                return false;
+            };
+            if (hasLayerDraw(after)) markFull();
+        }
     }
 
     void RepaintDamage::addInputField(const PlacedPaintFragment& scene, ModifierHandle field) {

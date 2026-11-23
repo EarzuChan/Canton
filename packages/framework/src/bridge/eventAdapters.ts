@@ -1,4 +1,5 @@
 import type { Density } from '../layout/density.ts'
+import { createLayoutCoordinates, type LayoutCoordinatesAttachToken, type NativePositionedPayload } from '../layout/coordinates.ts'
 import { dragStateInternal, type DragModifiers } from '../modifier/gesture.ts'
 
 type NativeHandlers = Readonly<Record<string, (event: never) => void>>
@@ -8,8 +9,9 @@ export class EventAdapters {
     private readonly pointers = new WeakMap<object, (event: { type?: string; x: number; y: number; modifiers: unknown }) => unknown>()
     private readonly wheels = new WeakMap<object, (event: { deltaX: number; deltaY: number; modifiers: unknown }) => unknown>()
     private readonly drags = new WeakMap<object, { input: Readonly<Record<string, unknown>>; native: NativeHandlers }>()
+    private readonly positioned = new WeakMap<LayoutCoordinatesAttachToken, { callback: (coords: unknown) => void; native: (payload: NativePositionedPayload) => void }>()
 
-    constructor(private readonly density: Density) { }
+    constructor(private readonly density: Density, private readonly windowId: number = 0) { }
 
     // 按修饰种类适配回调字段；无需适配时原样返回
     adapt(type: string, value: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
@@ -17,6 +19,25 @@ export class EventAdapters {
         if (type === 'onWheel') return { ...value, callback: this.wheel(value.callback) }
         if (type === 'draggable') return this.draggable(value)
         return value
+    }
+
+    adaptPositioned(token: LayoutCoordinatesAttachToken, callback: (coords: unknown) => void): (payload: NativePositionedPayload) => void {
+        let entry = this.positioned.get(token)
+        if (!entry) {
+            const created = {
+                callback,
+                native: (payload: NativePositionedPayload) => {
+                    if (!token.attached) return
+                    const normalized: NativePositionedPayload = payload.windowId ? payload : { ...payload, windowId: this.windowId }
+                    created.callback(createLayoutCoordinates(normalized, token))
+                },
+            }
+            entry = created
+            this.positioned.set(token, entry)
+        } else {
+            entry.callback = callback
+        }
+        return entry.native
     }
 
     // 指针事件为受体本地 PX；pointerInput 事件另带 type

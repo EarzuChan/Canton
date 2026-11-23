@@ -201,6 +201,10 @@ namespace canton::win32 {
                     return LoadCursorW(nullptr, MAKEINTRESOURCEW(32644));  // IDC_SIZEWE
                 case core::PointerIcon::ResizeVertical:
                     return LoadCursorW(nullptr, MAKEINTRESOURCEW(32645));  // IDC_SIZENS
+                case core::PointerIcon::ResizeNwse:
+                    return LoadCursorW(nullptr, MAKEINTRESOURCEW(32642));  // IDC_SIZENWSE
+                case core::PointerIcon::ResizeNesw:
+                    return LoadCursorW(nullptr, MAKEINTRESOURCEW(32643));  // IDC_SIZENESW
                 case core::PointerIcon::None:
                     return nullptr;
             }
@@ -1063,7 +1067,13 @@ namespace canton::win32 {
                         self->ncPressedButton = HTNOWHERE;
                         if (self->callbacks.pointerCancelled) self->callbacks.pointerCancelled();
                     }
+                    const auto previousIcon = self->callbacks.pointerIcon ? self->callbacks.pointerIcon() : core::PointerIcon::Default;
                     if (self->callbacks.pointerMove) self->callbacks.pointerMove(self->makeSample(pt));
+                    // WM_SETCURSOR precedes this hit test, so apply icon changes on the same move.
+                    if (self->callbacks.pointerIcon) {
+                        const auto icon = self->callbacks.pointerIcon();
+                        if (icon != previousIcon) SetCursor(cursorForIcon(icon));
+                    }
                     return 0;
                 }
 

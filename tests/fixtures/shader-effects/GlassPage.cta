@@ -1,0 +1,332 @@
+<template>
+    <Box :modifier="M.fillMaxSize()">
+        <!-- 底层彩色实景背景，供液态玻璃实时采样与折射 -->
+        <Box :modifier="M.fillMaxSize().then(layerBackdrop(rootBackdrop))">
+            <Column :modifier="M.fillMaxSize().verticalScroll(scrollState).background(bgGrad).padding(20.dp)" :verticalArrangement="Arrangement.spacedBy(16.dp)">
+                <Row :horizontalArrangement="Arrangement.spacedBy(16.dp)">
+                    <Box :modifier="M.size(210.dp, 118.dp).background(cardGrad1, rounded(20.dp)).padding(14.dp)">
+                        <Column :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                            <Text text="LIQUID OPTICS" :style="heading" />
+
+                            <Text text="Drag the glass card across vibrant edges to inspect real-time refraction & chromatic dispersion." :style="caption" />
+                        </Column>
+                    </Box>
+
+                    <Box :modifier="M.size(210.dp, 118.dp).background(cardGrad2, rounded(20.dp)).padding(14.dp)">
+                        <Column :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                            <Text text="SPECTRAL PRISM" :style="heading" />
+
+                            <Text text="7-band dispersion splits RGB along rounded-SDF gradients." :style="caption" />
+                        </Column>
+                    </Box>
+
+                    <Box :modifier="M.size(210.dp, 118.dp).background(cardGrad3, rounded(20.dp)).padding(14.dp)">
+                        <Column :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                            <Text text="ZERO-LAG TRACK" :style="heading" />
+
+                            <Text text="onGloballyPositioned syncs coordinates before draw on the same frame." :style="caption" />
+                        </Column>
+                    </Box>
+                </Row>
+
+                <Row :horizontalArrangement="Arrangement.spacedBy(14.dp)">
+                    <Box :modifier="M.size(96.dp, 96.dp).background(palette.amber, CircleShape)" />
+
+                    <Box :modifier="M.size(160.dp, 96.dp).background(stripeGrad, rounded(18.dp)).padding(12.dp)">
+                        <Text text="HIGH CONTRAST" :style="darkBody" />
+                    </Box>
+
+                    <Box :modifier="M.size(160.dp, 96.dp).background(palette.emerald, rounded(18.dp)).padding(12.dp)">
+                        <Text text="EMERALD BAND" :style="darkBody" />
+                    </Box>
+
+                    <Box :modifier="M.size(160.dp, 96.dp).background(palette.rose, rounded(18.dp)).padding(12.dp)">
+                        <Text text="CRIMSON BAND" :style="heading" />
+                    </Box>
+                </Row>
+
+                <Row :horizontalArrangement="Arrangement.spacedBy(14.dp)">
+                    <Box :modifier="M.size(310.dp, 130.dp).background(cardGrad4, rounded(20.dp)).padding(16.dp)">
+                        <Column :verticalArrangement="Arrangement.spacedBy(8.dp)">
+                            <Text text="SCROLLABLE WALLPAPER" :style="heading" />
+
+                            <Text text="Scroll wheel moves the backdrop layer continuously beneath the glass sheet." :style="body" />
+                        </Column>
+                    </Box>
+                    <Box :modifier="M.size(310.dp, 130.dp).background(cardGrad5, rounded(20.dp)).padding(16.dp)">
+                        <Column :verticalArrangement="Arrangement.spacedBy(8.dp)">
+                            <Text text="DOUBLE GLASS CASCADE" :style="heading" />
+
+                            <Text text="Bottom sheet exports its glass surface to the nested glass action pill." :style="body" />
+                        </Column>
+                    </Box>
+                </Row>
+
+                <Row :horizontalArrangement="Arrangement.spacedBy(14.dp)">
+                    <Box :modifier="M.size(634.dp, 120.dp).background(cardGrad1, rounded(20.dp)).padding(16.dp)">
+                        <Text text="EXTRA SCROLL CONTENT — KEEP SCROLLING" :style="heading" />
+                    </Box>
+                </Row>
+            </Column>
+        </Box>
+
+        <!-- 拖动内部移动，拖动边缘或角落缩放 -->
+        <Box :modifier="floatingGlassMod" &box-handle>
+            <Column :modifier="M.padding(18.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
+                <Row :horizontalArrangement="Arrangement.SpaceBetween" :verticalAlignment="Alignment.CenterVertically" :modifier="M.fillMaxWidth()">
+                    <Text text="Draggable Liquid Glass" :style="heading" />
+
+                    <!-- 液态玻璃开关 -->
+                    <Box :modifier="switchMod">
+                        <Text :text="dispersion ? 'Prism ON' : 'Prism OFF'" :style="caption" />
+                    </Box>
+                </Row>
+                <Text :text="`Refract H:${refractionHeight}  Amt:${refractionAmount}  Blur:${blurRadius}  Angle:${highlightAngle}`" :style="caption" />
+                <Text :text="`Saturation:${saturation.toFixed(2)}  Pos:(${Math.round(dragX)}, ${Math.round(dragY)})`" :style="caption" />
+            </Column>
+            <Spacer c-for="region in resizeCursorRegions" :key="region.alignment" :modifier="boxHandle.align(region.alignment).then(region.modifier)" />
+        </Box>
+
+        <!-- 底部玻璃控制面板（exportedBackdrop 导出给内部的二级玻璃按钮实现双层玻璃级联） -->
+        <Box :modifier="bottomSheetMod">
+            <Column :verticalArrangement="Arrangement.spacedBy(8.dp)" :modifier="M.fillMaxWidth()">
+                <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)" :verticalAlignment="Alignment.CenterVertically">
+                    <Text text="Controls" :style="subheading" />
+
+                    <Box :modifier="ctrlBtn(cycleRefractionHeight)"><Text :text="`H: ${refractionHeight}`" :style="caption" /></Box>
+
+                    <Box :modifier="ctrlBtn(cycleRefractionAmount)"><Text :text="`Amt: ${refractionAmount}`" :style="caption" /></Box>
+
+                    <Box :modifier="ctrlBtn(cycleBlur)"><Text :text="`Blur: ${blurRadius}`" :style="caption" /></Box>
+
+                    <Box :modifier="ctrlBtn(cycleAngle)"><Text :text="`Angle: ${highlightAngle}`" :style="caption" /></Box>
+
+                    <Box :modifier="ctrlBtn(cycleSaturation)"><Text :text="`Sat: ${saturation.toFixed(1)}`" :style="caption" /></Box>
+
+                    <!-- 二级玻璃级联按钮：采样 bottomSheet 的 exportedBackdrop -->
+                    <Box :modifier="nestedGlassPillMod">
+                        <Text text="Reset Glass" :style="subheading" />
+                    </Box>
+                </Row>
+            </Column>
+        </Box>
+    </Box>
+</template>
+
+<script>
+import { computed, ref, createScrollState, createDraggable2DState, type DragStart } from '@canton/framework'
+import { Alignment, Arrangement, CircleShape, Color, M, TileMode, linearGradient, rounded } from '@canton/framework/ui'
+import { Highlight, HighlightStyle, Shadow, createLayerBackdrop, drawBackdrop, layerBackdrop } from '@canton/kyant-glass'
+import { body, caption, darkBody, heading, subheading } from './theme.ts'
+
+const props = defineProps<{ preset?: number }>()
+
+const palette = {
+    amber: Color(0xfffbbf24),
+    emerald: Color(0xff34d399),
+    rose: Color(0xfff43f5e),
+    ctrlBg: Color(0x401e293b),
+    switchOn: Color(0x8838bdf8),
+    switchOff: Color(0x55334155),
+}
+
+const bgGrad = linearGradient([Color(0xff1e1b4b), Color(0xff0f172a), Color(0xff134e4a)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad1 = linearGradient([Color(0xffec4899), Color(0xff8b5cf6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad2 = linearGradient([Color(0xff06b6d4), Color(0xff3b82f6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad3 = linearGradient([Color(0xfff97316), Color(0xffef4444)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad4 = linearGradient([Color(0xff22c55e), Color(0xff0ea5e9)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad5 = linearGradient([Color(0xffeab308), Color(0xffec4899)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const stripeGrad = linearGradient([Color(0xfffef08a), Color(0xff38bdf8), Color(0xfff472b6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 0 } })
+
+const scrollState = createScrollState()
+const rootBackdrop = createLayerBackdrop()
+const sheetBackdrop = createLayerBackdrop()
+
+const dragX = ref(120)
+const dragY = ref(88)
+const glassWidth = ref(310)
+const glassHeight = ref(138)
+const refractionHeight = ref(20)
+const refractionAmount = ref(28)
+const blurRadius = ref(4)
+const highlightAngle = ref(45)
+const saturation = ref(1.4)
+const dispersion = ref(true)
+
+const resizeBorderDp = 10
+const cornerSize = M.size(resizeBorderDp.dp, resizeBorderDp.dp)
+const diagonalNwse = cornerSize.pointerIcon('resizeNwse')
+const diagonalNesw = cornerSize.pointerIcon('resizeNesw')
+const topBottomEdge = M.fillMaxWidth().padding({ horizontal: resizeBorderDp.dp }).height(resizeBorderDp.dp).pointerIcon('resizeVertical')
+const sideEdge = M.fillMaxHeight().padding({ vertical: resizeBorderDp.dp }).width(resizeBorderDp.dp).pointerIcon('resizeHorizontal')
+const resizeCursorRegions = [
+    { alignment: Alignment.TopStart, modifier: diagonalNwse },
+    { alignment: Alignment.TopCenter, modifier: topBottomEdge },
+    { alignment: Alignment.TopEnd, modifier: diagonalNesw },
+    { alignment: Alignment.CenterStart, modifier: sideEdge },
+    { alignment: Alignment.CenterEnd, modifier: sideEdge },
+    { alignment: Alignment.BottomStart, modifier: diagonalNesw },
+    { alignment: Alignment.BottomCenter, modifier: topBottomEdge },
+    { alignment: Alignment.BottomEnd, modifier: diagonalNwse },
+]
+
+let resizeX = 0
+let resizeY = 0
+
+function startGlassDrag(start: DragStart) {
+    resizeX = start.xDp < resizeBorderDp ? -1 : start.xDp >= start.widthDp - resizeBorderDp ? 1 : 0
+    resizeY = start.yDp < resizeBorderDp ? -1 : start.yDp >= start.heightDp - resizeBorderDp ? 1 : 0
+}
+
+const dragState = createDraggable2DState((delta) => {
+    if (!resizeX && !resizeY) {
+        dragX.value = Math.max(12, Math.min(540, dragX.value + delta.xDp))
+        dragY.value = Math.max(12, Math.min(340, dragY.value + delta.yDp))
+        return
+    }
+
+    if (resizeX) {
+        const maxWidth = resizeX < 0 ? Math.min(700, glassWidth.value + dragX.value - 12) : 700
+        const width = Math.max(275, Math.min(maxWidth, glassWidth.value + resizeX * delta.xDp))
+        if (resizeX < 0) dragX.value += glassWidth.value - width
+        glassWidth.value = width
+    }
+
+    if (resizeY) {
+        const maxHeight = resizeY < 0 ? Math.min(440, glassHeight.value + dragY.value - 12) : 440
+        const height = Math.max(120, Math.min(maxHeight, glassHeight.value + resizeY * delta.yDp))
+        if (resizeY < 0) dragY.value += glassHeight.value - height
+        glassHeight.value = height
+    }
+})
+
+function cycleRefractionHeight() {
+    const vals = [12, 20, 28, 36]
+    refractionHeight.value = vals[(vals.indexOf(refractionHeight.value) + 1) % vals.length]!
+}
+
+function cycleRefractionAmount() {
+    const vals = [14, 28, 42, 56]
+    refractionAmount.value = vals[(vals.indexOf(refractionAmount.value) + 1) % vals.length]!
+}
+
+function cycleBlur() {
+    const vals = [0, 4, 10, 18]
+    blurRadius.value = vals[(vals.indexOf(blurRadius.value) + 1) % vals.length]!
+}
+
+function cycleAngle() {
+    highlightAngle.value = (highlightAngle.value + 45) % 360
+}
+
+function cycleSaturation() {
+    const vals = [1.0, 1.4, 1.8, 2.2]
+    saturation.value = vals[(vals.indexOf(saturation.value) + 1) % vals.length]!
+}
+
+function resetAll() {
+    dragX.value = 120
+    dragY.value = 88
+    glassWidth.value = 310
+    glassHeight.value = 138
+    refractionHeight.value = 20
+    refractionAmount.value = 28
+    blurRadius.value = 4
+    highlightAngle.value = 45
+    saturation.value = 1.4
+    dispersion.value = true
+}
+
+const cardShape = rounded(28.dp)
+const sheetShape = rounded(22.dp)
+const pillShape = rounded(16.dp)
+
+const floatingGlassBackdrop = drawBackdrop({
+    backdrop: rootBackdrop,
+    shape: () => cardShape,
+    effects: (scope) => {
+        scope.colorControls({ saturation: saturation.value })
+        if (blurRadius.value > 0) scope.blur(blurRadius.value, TileMode.Clamp)
+        scope.lens({
+            refractionHeight: refractionHeight.value,
+            refractionAmount: refractionAmount.value,
+            depthEffect: true,
+            chromaticAberration: dispersion.value || props.preset === 1,
+        })
+    },
+    highlight: () =>
+        Highlight.create({
+            widthDp: 1,
+            style: HighlightStyle.default({ angle: highlightAngle.value, falloff: 1.2 }),
+        }),
+    shadow: () => Shadow.create({ radiusDp: 18 }),
+    onDrawSurface: (scope) => {
+        scope.drawRect({ color: Color(0x18ffffff) })
+    },
+})
+
+const floatingGlassMod = computed(() =>
+    M.offset({ x: dragX.value.dp, y: dragY.value.dp })
+        .size(glassWidth.value.dp, glassHeight.value.dp)
+        .draggable2D(dragState, { onDragStarted: startGlassDrag })
+        .pointerIcon('grab')
+        .then(floatingGlassBackdrop),
+)
+
+const bottomSheetMod = computed(() =>
+    M.offset({ x: 20.dp, y: 274.dp })
+        .size(600.dp, 68.dp)
+        .then(
+            drawBackdrop({
+                backdrop: rootBackdrop,
+                exportedBackdrop: sheetBackdrop,
+                shape: () => sheetShape,
+                effects: (scope) => {
+                    scope.vibrancy()
+                    scope.blur(12, TileMode.Clamp)
+                    scope.lens({ refractionHeight: 14, refractionAmount: 20, chromaticAberration: false })
+                },
+                highlight: () => Highlight.Default,
+                shadow: () => Shadow.create({ radiusDp: 14 }),
+                onDrawSurface: (scope) => {
+                    scope.drawRect({ color: Color(0x20ffffff) })
+                },
+            }),
+        )
+        .padding({ horizontal: 14.dp, vertical: 10.dp }),
+)
+
+const nestedGlassPillMod = computed(() =>
+    M.size(112.dp, 38.dp)
+        .clickable({ onClick: resetAll })
+        .pointerIcon('hand')
+        .then(
+            drawBackdrop({
+                backdrop: sheetBackdrop,
+                shape: () => pillShape,
+                effects: (scope) => {
+                    scope.vibrancy()
+                    scope.blur(4, TileMode.Clamp)
+                    scope.lens({ refractionHeight: 10, refractionAmount: 18, chromaticAberration: true })
+                },
+                highlight: () => Highlight.Default,
+                shadow: () => null,
+                onDrawSurface: (scope) => {
+                    scope.drawRect({ color: Color(0x28ffffff) })
+                },
+            }),
+        )
+        .padding({ horizontal: 12.dp, vertical: 8.dp }),
+)
+
+const switchMod = computed(() =>
+    M.background(dispersion.value ? palette.switchOn : palette.switchOff, rounded(12.dp))
+        .padding({ horizontal: 10.dp, vertical: 4.dp })
+        .clickable({ onClick: () => { dispersion.value = !dispersion.value } })
+        .pointerIcon('hand'),
+)
+
+function ctrlBtn(onClick: () => void) {
+    return M.background(palette.ctrlBg, rounded(10.dp)).padding({ horizontal: 8.dp, vertical: 6.dp }).clickable({ onClick }).pointerIcon('hand')
+}
+</script>

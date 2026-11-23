@@ -1,0 +1,110 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(18.dp)" :verticalArrangement="Arrangement.spacedBy(14.dp)">
+        <Text text="HLSL shaderBrush & Hot-Reload Lab" :style="heading" />
+        <Row :horizontalArrangement="Arrangement.spacedBy(16.dp)">
+            <!-- 1. 极光流体圆角背景 + 波纹粗边框 -->
+            <Box :modifier="auroraCardMod">
+                <Column :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                    <Text text="Aurora + Ripple Border" :style="heading" />
+                    <Text text="aurora.hlsl on background + rippleGrid.hlsl on 4dp border" :style="caption" />
+                </Column>
+            </Box>
+            <!-- 2. 纹理采样扰动着色器 -->
+            <Box :modifier="waveCardMod">
+                <Column :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                    <Text text="Texture Perturbation" :style="heading" />
+                    <Text text="textureWave.hlsl sampling PixelBuffer Painter via setPainter()" :style="caption" />
+                </Column>
+            </Box>
+        </Row>
+
+        <!-- 3. Canvas Path + Line + Oval 使用 shaderBrush -->
+        <Box :modifier="M.size(580.dp, 168.dp).background(palette.panel, rounded(14.dp)).drawBehind(drawShaderShapes).padding(12.dp)">
+            <Text text="DrawScope shaderBrush: Path Fill / Path Stroke / Rounded / Line" :style="caption" />
+        </Box>
+    </Column>
+</template>
+
+<script>
+import { Arrangement, Color, M, Path, TileMode, createPixelBuffer, createRuntimeShader, rounded, shaderBrush } from '@canton/framework/ui'
+import type { DrawScope } from '@canton/framework/ui'
+import { caption, heading } from './theme.ts'
+import auroraEffect from './shaders/aurora.hlsl'
+import rippleGridEffect from './shaders/rippleGrid.hlsl'
+import textureWaveEffect from './shaders/textureWave.hlsl'
+
+const palette = {
+    panel: Color(0xff111827),
+}
+
+// 生成一张程序化棋盘彩色纹理，喂给 textureWave.hlsl 的 Texture2D sourceTex
+function buildCheckerPainter() {
+    const w = 64
+    const h = 64
+    const buf = createPixelBuffer(w, h)
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const tile = ((x >> 3) + (y >> 3)) & 1
+            const r = tile ? 248 : 30
+            const g = tile ? 113 : 144
+            const b = tile ? 185 : 255
+            buf.data[y * w + x] = ((0xff << 24) | (r << 16) | (g << 8) | b) >>> 0
+        }
+    }
+    buf.commit()
+    return buf
+}
+
+const auroraShader = createRuntimeShader(auroraEffect).setFloat('time', 0.8).setFloat('intensity', 0.85).setColor('colorA', Color(0xff0ea5e9)).setColor('colorB', Color(0xffa855f7)).setColor('colorC', Color(0xfff43f5e))
+
+const rippleShader = createRuntimeShader(rippleGridEffect).setFloat('time', 0.5).setFloat('gridScale', 6.0).setColor('baseColor', Color(0xff0f172a)).setColor('accentColor', Color(0xff38bdf8))
+
+const checkerPainter = buildCheckerPainter()
+const waveShader = createRuntimeShader(textureWaveEffect).setFloat('time', 0.6).setFloat('amplitude', 0.045).setFloat('frequency', 14.0)
+    .setPainter('sourceTex', checkerPainter, { tileModeX: TileMode.Repeated, tileModeY: TileMode.Repeated })
+
+const auroraBrush = shaderBrush(auroraShader)
+const rippleBrush = shaderBrush(rippleShader)
+const waveBrush = shaderBrush(waveShader)
+
+const auroraCardMod = M.size(282.dp, 130.dp).background(auroraBrush, rounded(18.dp)).border(4.dp, rippleBrush, rounded(18.dp)).padding(16.dp)
+
+const waveCardMod = M.size(282.dp, 130.dp).background(waveBrush, rounded(18.dp)).border(2.dp, Color(0x66ffffff), rounded(18.dp)).padding(16.dp)
+
+function buildStarPath(cx: number, cy: number, outerR: number, innerR: number): Path {
+    const path = new Path()
+    for (let i = 0; i < 10; i++) {
+        const angle = -Math.PI / 2 + (i * Math.PI) / 5
+        const r = i % 2 === 0 ? outerR : innerR
+        const x = cx + Math.cos(angle) * r
+        const y = cy + Math.sin(angle) * r
+        if (i === 0) path.moveTo(x, y)
+        else path.lineTo(x, y)
+    }
+    return path.close()
+}
+
+const starFill = buildStarPath(95, 92, 46, 21)
+const starStroke = buildStarPath(240, 92, 42, 19)
+
+function drawShaderShapes(scope: DrawScope) {
+    scope.drawPath(starFill, { brush: auroraBrush })
+    scope.drawPath(starStroke, { brush: rippleBrush, strokeWidth: 5.px, join: 'round' })
+    scope.drawRoundRect({
+        x: 324.px,
+        y: 44.px,
+        width: 112.px,
+        height: 92.px,
+        corners: { topStart: 24.px, topEnd: 6.px, bottomEnd: 24.px, bottomStart: 6.px },
+        brush: waveBrush,
+    })
+    scope.drawLine({
+        startX: 462.px,
+        startY: 50.px,
+        endX: 556.px,
+        endY: 132.px,
+        strokeWidth: 14.px,
+        brush: auroraBrush,
+    })
+}
+</script>

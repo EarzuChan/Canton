@@ -8,6 +8,7 @@ async function prepareWorkspace(root: string): Promise<void> {
     await mkdir(root, { recursive: true })
     await mkdir(resolve(root, 'node_modules/@canton'), { recursive: true })
     await symlink(resolve(repository, 'packages/framework'), resolve(root, 'node_modules/@canton/framework'), process.platform === 'win32' ? 'junction' : 'dir')
+    await symlink(resolve(repository, 'packages/kyant-glass'), resolve(root, 'node_modules/@canton/kyant-glass'), process.platform === 'win32' ? 'junction' : 'dir')
     await writeFile(resolve(root, 'package.json'), JSON.stringify({ private: true, type: 'module' }))
 }
 

@@ -44,6 +44,7 @@ namespace canton::runtime {
         RearrangeInvokeResult semanticCheckpoint(double nowMillis);
         [[nodiscard]] RearrangeInvokeResult prepareVisualFrame(double nowMillis);
         RearrangeInvokeResult completeVisualFrame(bool success);
+        RearrangeInvokeResult dispatchPositioned(canton::core::WindowId windowId, const canton::core::NativeScene& candidate, const std::vector<canton::core::PositionedUpdate>& updates);
         RearrangeInvokeResult prepareDrawModifiers(canton::core::NativeScene& candidate);
         RearrangeInvokeResult materializeLayout(canton::core::NodeId id, const std::vector<int>& indices);
         std::vector<canton::core::FocusCommand> takeFocusCommands();

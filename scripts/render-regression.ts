@@ -13,7 +13,7 @@ await withNativeSession(async () => {
     const fixtures = resolve(buildDir, 'native-tests/fixtures')
     await configureNativeBuild(repoRoot, buildDir, 'Debug', ['-DCANTON_BUILD_TESTS=ON'])
     await nativeCmake(['--build', buildDir, '--target', 'canton_render_regression', '--parallel', process.env.CMAKE_BUILD_PARALLEL_LEVEL ?? '4'])
-    await run(process.execPath, ['--import', 'tsx', resolve(repoRoot, 'scripts/build-runtime-fixtures.ts'), fixtures, 'showcase', 'render-windows'])
+    await run(process.execPath, ['--import', 'tsx', resolve(repoRoot, 'scripts/build-runtime-fixtures.ts'), fixtures, 'showcase', 'render-windows', 'shader-effects'])
     await run(nativeExecutable(resolve(buildDir, 'native-tests'), 'canton_render_regression'), [
         '--baselines', resolve(repoRoot, 'native-tests/baselines'),
         '--output', resolve(repoRoot, '.canton/verification/render'),

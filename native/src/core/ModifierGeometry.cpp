@@ -103,11 +103,65 @@ namespace canton::core {
         if (const auto* transform = std::get_if<TransformModifierSemantics>(&value)) {
             point = inverseLayerPoint(point, instance.bounds, *transform);
             if (!std::isfinite(point.x) || !std::isfinite(point.y)) return false;
-            if (transform->clip && !containsRect(instance.bounds, point)) return false;
+            if (transform->clip && !containsShape(instance.bounds, transform->shape, point)) return false;
         }
         if (const auto* animation = std::get_if<AnimateContentSizeModifier>(&value); animation && animation->clip && !containsRect(instance.bounds, point)) return false;
         if (const auto* clip = std::get_if<ClipModifier>(&value); clip && !containsShape(instance.bounds, clip->shape, point)) return false;
         if (const auto* layout = std::get_if<LayoutModifierSemantics>(&value); layout && (layout->kind == LayoutModifierKind::VerticalScroll || layout->kind == LayoutModifierKind::HorizontalScroll) && !containsRect(instance.bounds, point)) return false;
         return true;
+    }
+
+    namespace {
+        void walkPositioned(LayoutTree& tree, NodeId id, const LayoutNode* parentNode, Affine cumulative, Rect clipInWindow, std::vector<PositionedUpdate>& out) {
+            if (!tree.contains(id)) return;
+            const auto modifierCount = tree.node(id).modifier.elements().size();
+            for (std::size_t index = 0; index < modifierCount; ++index) {
+                const auto& instance = tree.node(id).modifier.elements()[index];
+                const auto& value = instance.descriptor.value;
+                if (const auto* positioned = std::get_if<PositionedModifier>(&value)) {
+                    PositionedGeometry geometry;
+                    geometry.size = {instance.bounds.width, instance.bounds.height};
+                    geometry.positionInParent = parentNode
+                        ? Point{instance.bounds.x - parentNode->bounds.x, instance.bounds.y - parentNode->bounds.y}
+                        : Point{instance.bounds.x, instance.bounds.y};
+                    geometry.localToRoot = cumulative.after(Affine::translation(instance.bounds.x, instance.bounds.y));
+                    if (const auto projected = geometry.localToRoot.project({0.0f, 0.0f, instance.bounds.width, instance.bounds.height})) {
+                        geometry.clippedBoundsInWindow = intersectRect(*projected, clipInWindow);
+                    } else {
+                        geometry.clippedBoundsInWindow = {0.0f, 0.0f, 0.0f, 0.0f};
+                    }
+                    if (!instance.lastPositioned || *instance.lastPositioned != geometry) {
+                        tree.mutableNode(id).modifier.elements()[index].lastPositioned = geometry;
+                        out.push_back({id, index, positioned->callback, geometry});
+                    }
+                }
+                if (const auto* layer = std::get_if<TransformModifierSemantics>(&value)) {
+                    cumulative = cumulative.after(Affine::layer(instance.bounds, layer->transformOriginX, layer->transformOriginY, layer->scaleX, layer->scaleY, layer->rotationZ, layer->translationX, layer->translationY));
+                    if (layer->clip) {
+                        if (const auto projected = cumulative.project(instance.bounds)) clipInWindow = intersectRect(clipInWindow, *projected);
+                    }
+                } else if (const auto* clip = std::get_if<ClipModifier>(&value)) {
+                    if (const auto projected = cumulative.project(instance.bounds)) clipInWindow = intersectRect(clipInWindow, *projected);
+                } else if (const auto* anim = std::get_if<AnimateContentSizeModifier>(&value); anim && anim->clip) {
+                    if (const auto projected = cumulative.project(instance.bounds)) clipInWindow = intersectRect(clipInWindow, *projected);
+                } else if (const auto* layout = std::get_if<LayoutModifierSemantics>(&value); layout && (layout->kind == LayoutModifierKind::VerticalScroll || layout->kind == LayoutModifierKind::HorizontalScroll)) {
+                    if (const auto projected = cumulative.project(instance.bounds)) clipInWindow = intersectRect(clipInWindow, *projected);
+                }
+            }
+            const auto children = tree.node(id).children;
+            const auto* currentNode = &tree.node(id);
+            for (const auto childId : children) {
+                walkPositioned(tree, childId, currentNode, cumulative, clipInWindow, out);
+                currentNode = &tree.node(id);
+            }
+        }
+    }
+
+    std::vector<PositionedUpdate> collectPositionedUpdates(LayoutTree& tree, NodeId root, Size viewport) {
+        std::vector<PositionedUpdate> out;
+        if (!tree.contains(root)) return out;
+        const Rect initialClip{0.0f, 0.0f, std::max(0.0f, viewport.width), std::max(0.0f, viewport.height)};
+        walkPositioned(tree, root, nullptr, Affine{}, initialClip, out);
+        return out;
     }
 }

@@ -3,27 +3,58 @@ import { collectSourceReads, noteSourceRead, sourceStateOf, type DataSource, typ
 import { findFrameScheduler } from '../runtime/animationOwner.ts'
 import type { FrameParticipant, FrameScheduler } from '../runtime/scheduler.ts'
 import { requireArgb } from '../values/color.ts'
+import { defaultDensity, type Density } from '../values/density.ts'
+import { BlendMode, blendModeToIndex, isColorFilter, type ColorFilter } from '../values/graphics.ts'
 import { painterSnapshot, type Painter } from './painter.ts'
-import type { Brush, ContentScaleValue, ImageAlignment, TextAlignment } from '../values/primitives.ts'
+import { runtimeShaderSnapshot } from './shader.ts'
+import { renderLayerHandle, renderLayerSnapshot, setRenderLayerRecordedSize, type RenderLayer } from './renderLayer.ts'
+import { runWithDrawCacheDisposal } from './disposal.ts'
+import type { Brush, ContentScaleValue, ImageAlignment, Shape, TextAlignment } from '../values/primitives.ts'
 import type { ArrangableInstance } from '../runtime/internal.ts'
 import { normalizeFontStyle } from './font.ts'
 import { defaultFontSize } from '../native/protocol.ts'
 
 export type DrawSize = Readonly<{ width: number; height: number }>
 export type DrawRect = Readonly<{ x?: number; y?: number; width?: number; height?: number }>
+export type DrawCorners = Readonly<{ topStart?: number; topEnd?: number; bottomEnd?: number; bottomStart?: number }>
 // color 与 brush 二选一；strokeWidth 为 0 表示填充
-export type DrawPaint = Readonly<{ color?: number; brush?: Brush; strokeWidth?: number }>
+export type DrawPaint = Readonly<{ color?: number; brush?: Brush; strokeWidth?: number; blendMode?: BlendMode; colorFilter?: ColorFilter }>
 export type StrokeCap = 'butt' | 'round' | 'square'
 export type StrokeJoin = 'miter' | 'round' | 'bevel'
 export type DrawPathPaint = DrawPaint & Readonly<{ cap?: StrokeCap; join?: StrokeJoin }>
-export type DrawTextOptions = Readonly<{ text: string; x?: number; y?: number; width?: number; color: number; fontSize?: number; lineHeight?: number; maxLines?: number; textAlign?: TextAlignment; overflow?: 'clip' | 'ellipsis' | 'visible'; fontFamily?: string | readonly string[]; fontWeight?: number; fontStyle?: 'normal' | 'italic'; fontSynthesis?: boolean }>
+export type DrawTextOptions = Readonly<{ text: string; x?: number; y?: number; width?: number; color: number; fontSize?: number; lineHeight?: number; maxLines?: number; textAlign?: TextAlignment; overflow?: 'clip' | 'ellipsis' | 'visible'; fontFamily?: string | readonly string[]; fontWeight?: number; fontStyle?: 'normal' | 'italic'; fontSynthesis?: boolean; blendMode?: BlendMode; colorFilter?: ColorFilter }>
 // 九宫格切分以图片固有尺寸为单位：四角保持源尺寸，边与中心拉伸
 export type NinePatch = Readonly<{ left: number; top: number; right: number; bottom: number }>
-export type DrawPainterOptions = DrawRect & Readonly<{ alpha?: number; tint?: number; contentScale?: ContentScaleValue; alignment?: ImageAlignment; tile?: boolean; ninePatch?: NinePatch }>
-export type DrawTransform = Readonly<{ translationX?: number; translationY?: number; scaleX?: number; scaleY?: number; rotationZ?: number; originX?: number; originY?: number }>
+export type DrawPainterOptions = DrawRect & Readonly<{ alpha?: number; tint?: number; colorFilter?: ColorFilter; blendMode?: BlendMode; contentScale?: ContentScaleValue; alignment?: ImageAlignment; tile?: boolean; ninePatch?: NinePatch }>
+export type DrawMatrixTransform = Readonly<{ a: number; b: number; c: number; d: number; tx?: number; ty?: number }>
+export type DrawTransform =
+    | Readonly<{ translationX?: number; translationY?: number; scaleX?: number; scaleY?: number; rotationZ?: number; originX?: number; originY?: number }>
+    | DrawMatrixTransform
 // 绘制命令编码：操作码与数值参数依次写入 Float64Array，非数值参数进引用表；与原生解码一一对应
 // 画笔槽非负为颜色，负数 -(i+1) 指向引用表中的 Brush
-export const DrawOpcode = Object.freeze({ Rect: 1, RoundRect: 2, Oval: 3, Line: 4, Clip: 5, PopClip: 6, Transform: 7, PopTransform: 8, Content: 9, Path: 10, Text: 11, Painter: 12, ClipPath: 13, Native: 14 })
+export const DrawOpcode = Object.freeze({
+    Rect: 1,
+    RoundRect: 2,
+    Oval: 3,
+    Line: 4,
+    Clip: 5,
+    PopClip: 6,
+    Transform: 7,
+    PopTransform: 8,
+    Content: 9,
+    Path: 10,
+    Text: 11,
+    Painter: 12,
+    ClipPath: 13,
+    Native: 14,
+    MatrixTransform: 15,
+    BeginRecordLayer: 16,
+    EndRecordLayer: 17,
+    DrawLayer: 18,
+    RoundRectCorners: 19,
+    ClipRoundRectCorners: 20,
+    PaintEffect: 21,
+})
 // 原生 painter 参数：数值、颜色（数值）、布尔或数据源名
 // 数据源参数按名称传给原生 painter，并登记读取：数据推进即重录并重绘
 export type NativePainterParams = Readonly<Record<string, number | boolean | string | DataSource>>
@@ -45,7 +76,8 @@ const emptyPrepared: PreparedDraw = Object.freeze({ ops: new Float64Array(0), re
 export type DrawCallback = (scope: DrawScope) => void
 export type DrawContentCallback = (scope: DrawScope, drawContent: () => void) => void
 export type DrawCacheResult = Readonly<{ onDrawBehind?: DrawCallback; onDrawWithContent?: DrawContentCallback }>
-export type DrawCacheBuilder = (scope: Readonly<{ size: DrawSize }>) => DrawCacheResult
+export type DrawCacheScope = Readonly<{ size: DrawSize; density: Density; onDispose: (cleanup: () => void) => void }>
+export type DrawCacheBuilder = (scope: DrawCacheScope) => DrawCacheResult
 // Canvas 失效方式：auto 按读取的响应式依赖与数据源版本，manual 只由 controller 触发，frame 逐帧重录
 export type CanvasInvalidation = 'auto' | 'manual' | 'frame'
 export interface CanvasController {
@@ -83,6 +115,13 @@ function lookup<T extends string>(table: Readonly<Record<T, number>>, value: T, 
     const result = Object.hasOwn(table, value) ? table[value] : undefined
     if (result === undefined) throw new TypeError(`${name}无效：${String(value)}`)
     return result
+}
+
+function runCleanups(cleanups: Array<() => void>): void {
+    for (let i = cleanups.length - 1; i >= 0; i--) {
+        try { cleanups[i]() } catch { /* 清理阶段不覆盖主路径状态 */ }
+    }
+    cleanups.length = 0
 }
 
 // 可复用的路径：动词与参数依次记录，绘制时整段写入命令流；坐标为逻辑 PX，角度为度数，0 指向右侧、顺时针
@@ -124,7 +163,17 @@ export class DrawScope {
     private ops = new Float64Array(64)
     private length = 0
     private readonly refs: unknown[] = []
-    constructor(readonly size: DrawSize) { }
+    private readonly sizeStack: DrawSize[]
+    readonly density: Density
+
+    constructor(size: DrawSize, density: Density = defaultDensity) {
+        this.sizeStack = [size]
+        this.density = density
+    }
+
+    get size(): DrawSize {
+        return this.sizeStack[this.sizeStack.length - 1]!
+    }
 
     private reserve(count: number): Float64Array {
         if (!this.active) throw new Error('绘制作用域已退出')
@@ -147,25 +196,73 @@ export class DrawScope {
         this.refs.push(value)
         return this.refs.length - 1
     }
+    private emitPaintEffect(blendMode?: BlendMode, colorFilter?: ColorFilter): void {
+        const blendIdx = blendMode === undefined ? blendModeToIndex(BlendMode.SrcOver) : blendModeToIndex(blendMode)
+        if (colorFilter !== undefined && !isColorFilter(colorFilter)) throw new TypeError('colorFilter 需要 ColorFilter 对象')
+        if (blendMode === undefined && colorFilter === undefined) return
+        if (blendIdx === 3 && colorFilter === undefined) return
+        this.emit(DrawOpcode.PaintEffect, blendIdx, colorFilter ? this.ref(colorFilter) : -1)
+    }
     private paint(args: DrawPaint): [number, number] {
         if ((args.color === undefined) === (args.brush === undefined)) throw new TypeError('绘制需要 color 与 brush 二选一')
         const brush = args.brush
-        const slot = brush === undefined ? requireArgb(args.color!) : brush.type === 'solidColor' ? requireArgb(brush.color) : -(this.ref(brush) + 1)
+        let slot: number
+        if (brush === undefined) {
+            slot = requireArgb(args.color!)
+        } else if (brush.type === 'solidColor') {
+            slot = requireArgb(brush.color)
+        } else if (brush.type === 'shader') {
+            slot = -(this.ref(runtimeShaderSnapshot(brush.shader)) + 1)
+        } else {
+            slot = -(this.ref(brush) + 1)
+        }
         return [slot, nonnegative(args.strokeWidth ?? 0, 'strokeWidth')]
     }
-    drawRect(args: DrawRect & DrawPaint): void { this.emit(DrawOpcode.Rect, ...this.bounds(args), ...this.paint(args)) }
-    drawRoundRect(args: DrawRect & DrawPaint & { radius: number }): void { this.emit(DrawOpcode.RoundRect, ...this.bounds(args), ...this.paint(args), nonnegative(args.radius, 'radius')) }
-    drawOval(args: DrawRect & DrawPaint): void { this.emit(DrawOpcode.Oval, ...this.bounds(args), ...this.paint(args)) }
+    drawRect(args: DrawRect & DrawPaint): void {
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
+        this.emit(DrawOpcode.Rect, ...this.bounds(args), ...this.paint(args))
+    }
+    drawRoundRect(args: DrawRect & DrawPaint & ({ radius: number; corners?: undefined } | { corners: DrawCorners; radius?: undefined })): void {
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
+        if (args.corners !== undefined) {
+            this.emit(DrawOpcode.RoundRectCorners, ...this.bounds(args), ...this.paint(args), nonnegative(args.corners.topStart ?? 0, 'corners.topStart'), nonnegative(args.corners.topEnd ?? 0, 'corners.topEnd'), nonnegative(args.corners.bottomEnd ?? 0, 'corners.bottomEnd'), nonnegative(args.corners.bottomStart ?? 0, 'corners.bottomStart'))
+            return
+        }
+        this.emit(DrawOpcode.RoundRect, ...this.bounds(args), ...this.paint(args), nonnegative(args.radius, 'radius'))
+    }
+    drawOval(args: DrawRect & DrawPaint): void {
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
+        this.emit(DrawOpcode.Oval, ...this.bounds(args), ...this.paint(args))
+    }
     drawCircle(args: DrawPaint & { centerX?: number; centerY?: number; radius?: number }): void {
         const radius = nonnegative(args.radius ?? Math.min(this.size.width, this.size.height) / 2, 'radius')
         this.drawOval({ ...args, x: finite(args.centerX ?? this.size.width / 2, 'centerX') - radius, y: finite(args.centerY ?? this.size.height / 2, 'centerY') - radius, width: radius * 2, height: radius * 2 })
     }
+    drawOutline(shape: Shape, args: DrawRect & DrawPaint): void {
+        if (shape.type === 'rounded') {
+            this.drawRoundRect({
+                ...args,
+                corners: {
+                    topStart: this.density.dpToPx(shape.topStartDp) + shape.topStartPx,
+                    topEnd: this.density.dpToPx(shape.topEndDp) + shape.topEndPx,
+                    bottomEnd: this.density.dpToPx(shape.bottomEndDp) + shape.bottomEndPx,
+                    bottomStart: this.density.dpToPx(shape.bottomStartDp) + shape.bottomStartPx,
+                },
+            })
+        } else if (shape.type === 'circle') {
+            this.drawOval(args)
+        } else {
+            this.drawRect(args)
+        }
+    }
     drawLine(args: DrawPaint & { startX: number; startY: number; endX: number; endY: number }): void {
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
         const [color, strokeWidth] = this.paint({ ...args, strokeWidth: args.strokeWidth ?? 1 })
         if (!strokeWidth) throw new RangeError('线宽必须大于零')
         this.emit(DrawOpcode.Line, finite(args.startX, 'startX'), finite(args.startY, 'startY'), finite(args.endX, 'endX'), finite(args.endY, 'endY'), color, strokeWidth)
     }
     drawPath(path: Path, args: DrawPathPaint): void {
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
         this.emit(DrawOpcode.Path, ...this.paint(args), lookup(strokeCaps, args.cap ?? 'butt', '线帽'), lookup(strokeJoins, args.join ?? 'miter', '线接'), ...path.encode())
     }
     // 文字经原生排版；width 为 0 或省略表示不限宽，字号与行高为 PX
@@ -174,6 +271,7 @@ export class DrawScope {
         const maxLines = args.maxLines ?? 0
         if (!Number.isSafeInteger(maxLines) || maxLines < 0) throw new RangeError('maxLines 需要非负整数')
         const font = normalizeFontStyle({ fontFamily: args.fontFamily, fontWeight: args.fontWeight, fontStyle: args.fontStyle, fontSynthesis: args.fontSynthesis }) as { fontFamily?: readonly string[]; fontWeight?: number; fontStyle?: string; fontSynthesis?: boolean }
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
         this.emit(DrawOpcode.Text, this.ref(args.text), finite(args.x ?? 0, 'x'), finite(args.y ?? 0, 'y'), nonnegative(args.width ?? 0, 'width'), requireArgb(args.color), nonnegative(args.fontSize ?? defaultFontSize, 'fontSize'), nonnegative(args.lineHeight ?? 0, 'lineHeight'), maxLines, lookup(textAligns, args.textAlign ?? 'start', 'textAlign'), lookup(textOverflows, args.overflow ?? 'visible', 'overflow'), font.fontFamily?.length ? this.ref(font.fontFamily.join('\n')) : -1, font.fontWeight ?? 400, font.fontStyle === 'italic' ? 1 : 0, font.fontSynthesis === false ? 0 : 1)
     }
     drawPainter(painter: Painter, args: DrawPainterOptions = {}): void {
@@ -181,6 +279,7 @@ export class DrawScope {
         if (alpha > 1) throw new RangeError('alpha 需要在 0 到 1 之间')
         if (args.tile && args.ninePatch) throw new TypeError('tile 与 ninePatch 不能同用')
         const slices = args.ninePatch ? [nonnegative(args.ninePatch.left, 'ninePatch.left'), nonnegative(args.ninePatch.top, 'ninePatch.top'), nonnegative(args.ninePatch.right, 'ninePatch.right'), nonnegative(args.ninePatch.bottom, 'ninePatch.bottom')] : [0, 0, 0, 0]
+        this.emitPaintEffect(args.blendMode, args.colorFilter)
         this.emit(DrawOpcode.Painter, this.ref(painterSnapshot(painter)), ...this.bounds(args), alpha, args.tint === undefined ? -1 : requireArgb(args.tint), lookup(contentScales, args.contentScale ?? 'Fit', 'contentScale'), lookup(imageAlignments, args.alignment ?? 'Center', 'alignment'), args.tile ? 1 : args.ninePatch ? 2 : 0, ...slices)
     }
     // 按名称调用 C++ 注册的原生 painter，只画在目标矩形内；名称与参数在原生解码时按注册的参数表校验
@@ -205,9 +304,62 @@ export class DrawScope {
         }
         this.emit(DrawOpcode.Native, this.ref(name), ...this.bounds(args), this.ref(Object.freeze(copy)), revision)
     }
+    recordLayer(layer: RenderLayer, draw: (scope: DrawScope) => void): void
+    recordLayer(layer: RenderLayer, size: DrawSize, draw: (scope: DrawScope) => void): void
+    recordLayer(layer: RenderLayer, sizeOrDraw: DrawSize | ((scope: DrawScope) => void), maybeDraw?: (scope: DrawScope) => void): void {
+        const handle = renderLayerHandle(layer)
+        const hasSize = typeof sizeOrDraw !== 'function'
+        const targetSize = hasSize
+            ? Object.freeze({ width: nonnegative(sizeOrDraw.width, 'recordLayer.size.width'), height: nonnegative(sizeOrDraw.height, 'recordLayer.size.height') })
+            : this.size
+        const draw = hasSize ? maybeDraw : sizeOrDraw
+        if (typeof draw !== 'function') throw new TypeError('recordLayer 需要绘制回调')
+        setRenderLayerRecordedSize(layer, targetSize.width, targetSize.height)
+        this.emit(DrawOpcode.BeginRecordLayer, this.ref(handle), targetSize.width, targetSize.height)
+        this.sizeStack.push(targetSize)
+        try {
+            synchronous(() => draw(this))
+        } finally {
+            this.sizeStack.pop()
+            this.emit(DrawOpcode.EndRecordLayer)
+        }
+    }
+    drawLayer(layer: RenderLayer): void {
+        this.emit(DrawOpcode.DrawLayer, this.ref(renderLayerSnapshot(layer, this.density)))
+    }
     clipRect(args: DrawRect, draw: () => void): void { this.clip(DrawClipShape.Rectangle, args, 0, draw) }
-    clipRoundRect(args: DrawRect & { radius: number }, draw: () => void): void { this.clip(DrawClipShape.Rounded, args, nonnegative(args.radius, 'radius'), draw) }
+    clipRoundRect(args: DrawRect & ({ radius: number; corners?: undefined } | { corners: DrawCorners; radius?: undefined }), draw: () => void): void {
+        if (args.corners !== undefined) {
+            this.emit(DrawOpcode.ClipRoundRectCorners, ...this.bounds(args), nonnegative(args.corners.topStart ?? 0, 'corners.topStart'), nonnegative(args.corners.topEnd ?? 0, 'corners.topEnd'), nonnegative(args.corners.bottomEnd ?? 0, 'corners.bottomEnd'), nonnegative(args.corners.bottomStart ?? 0, 'corners.bottomStart'))
+            try { synchronous(draw) } finally { this.emit(DrawOpcode.PopClip) }
+            return
+        }
+        this.clip(DrawClipShape.Rounded, args, nonnegative(args.radius, 'radius'), draw)
+    }
     clipOval(args: DrawRect, draw: () => void): void { this.clip(DrawClipShape.Oval, args, 0, draw) }
+    clipOutline(shape: Shape, draw: () => void): void
+    clipOutline(shape: Shape, args: DrawRect, draw: () => void): void
+    clipOutline(shape: Shape, argsOrDraw: DrawRect | (() => void), maybeDraw?: () => void): void {
+        const hasArgs = typeof argsOrDraw !== 'function'
+        const args: DrawRect = hasArgs ? argsOrDraw : {}
+        const draw = hasArgs ? maybeDraw! : argsOrDraw
+        if (typeof draw !== 'function') throw new TypeError('clipOutline 需要绘制回调')
+        if (shape.type === 'rounded') {
+            this.clipRoundRect({
+                ...args,
+                corners: {
+                    topStart: this.density.dpToPx(shape.topStartDp) + shape.topStartPx,
+                    topEnd: this.density.dpToPx(shape.topEndDp) + shape.topEndPx,
+                    bottomEnd: this.density.dpToPx(shape.bottomEndDp) + shape.bottomEndPx,
+                    bottomStart: this.density.dpToPx(shape.bottomStartDp) + shape.bottomStartPx,
+                },
+            }, draw)
+        } else if (shape.type === 'circle') {
+            this.clipOval(args, draw)
+        } else {
+            this.clipRect(args, draw)
+        }
+    }
     private clip(shape: number, args: DrawRect, radius: number, draw: () => void): void {
         this.emit(DrawOpcode.Clip, shape, ...this.bounds(args), radius)
         try { synchronous(draw) } finally { this.emit(DrawOpcode.PopClip) }
@@ -217,7 +369,12 @@ export class DrawScope {
         try { synchronous(draw) } finally { this.emit(DrawOpcode.PopClip) }
     }
     withTransform(args: DrawTransform, draw: () => void): void {
-        this.emit(DrawOpcode.Transform, this.size.width, this.size.height, finite(args.translationX ?? 0, 'translationX'), finite(args.translationY ?? 0, 'translationY'), finite(args.scaleX ?? 1, 'scaleX'), finite(args.scaleY ?? 1, 'scaleY'), finite(args.rotationZ ?? 0, 'rotationZ'), finite(args.originX ?? 0.5, 'originX'), finite(args.originY ?? 0.5, 'originY'))
+        if ('a' in args && args.a !== undefined) {
+            this.emit(DrawOpcode.MatrixTransform, finite(args.a, 'a'), finite(args.b, 'b'), finite(args.c, 'c'), finite(args.d, 'd'), finite(args.tx ?? 0, 'tx'), finite(args.ty ?? 0, 'ty'))
+        } else {
+            const layer = args as Exclude<DrawTransform, DrawMatrixTransform>
+            this.emit(DrawOpcode.Transform, this.size.width, this.size.height, finite(layer.translationX ?? 0, 'translationX'), finite(layer.translationY ?? 0, 'translationY'), finite(layer.scaleX ?? 1, 'scaleX'), finite(layer.scaleY ?? 1, 'scaleY'), finite(layer.rotationZ ?? 0, 'rotationZ'), finite(layer.originX ?? 0.5, 'originX'), finite(layer.originY ?? 0.5, 'originY'))
+        }
         try { synchronous(draw) } finally { this.emit(DrawOpcode.PopTransform) }
     }
     // 内部内容标记
@@ -234,27 +391,52 @@ export class DrawInstance {
     readonly revision = shallowRef(0)
     readonly prepare: (width: number, height: number, phase?: 'prepare' | 'commit' | 'rollback') => PreparedDraw
     private readonly scope: EffectScope | undefined
+    private readonly density: Density
     private buildEffect: ReactiveEffect
     private drawEffect: ReactiveEffect
     private readonly createEffects: () => readonly [ReactiveEffect, ReactiveEffect]
-    private candidate: { build: ReactiveEffect; draw: ReactiveEffect; size: DrawSize; cache: DrawCacheResult | undefined; cacheDirty: boolean; commands: PreparedDraw } | undefined
+    private candidate: { build: ReactiveEffect; draw: ReactiveEffect; size: DrawSize; cache: DrawCacheResult | undefined; cacheCleanups: Array<() => void>; cacheDirty: boolean; commands: PreparedDraw } | undefined
     private size: DrawSize = Object.freeze({ width: 0, height: 0 })
     private cache: DrawCacheResult | undefined
+    private cacheCleanups: Array<() => void> = []
     private cacheDirty = true
     private commands: PreparedDraw = emptyPrepared
     private stopped = false
+    private recording = false
     private readonly cleanup = () => this.stop()
     // auto 失效订阅的数据源；manual 与 frame 不登记
     private sourceWatches: readonly (() => void)[] = []
     private readonly controllerListener = () => this.invalidate()
     private frame: { scheduler: FrameScheduler; participant: FrameParticipant } | undefined
 
-    constructor(readonly kind: string, readonly declaration: DrawDeclaration, owner?: ArrangableInstance) {
+    constructor(readonly kind: string, readonly declaration: DrawDeclaration, owner?: ArrangableInstance, density: Density = defaultDensity) {
         this.scope = owner?.scope ?? getCurrentScope()
+        this.density = density
         const makeEffects = () => {
             const build = new ReactiveEffect(() => {
-                const result = (declaration.draw as DrawCacheBuilder)(Object.freeze({ size: this.size }))
-                if (!result || typeof result !== 'object' || Array.isArray(result) || typeof (result as { then?: unknown }).then === 'function' || Object.getOwnPropertySymbols(result).length || Object.keys(result).some(key => key !== 'onDrawBehind' && key !== 'onDrawWithContent') || result.onDrawBehind !== undefined && typeof result.onDrawBehind !== 'function' || result.onDrawWithContent !== undefined && typeof result.onDrawWithContent !== 'function') throw new TypeError('drawWithCache 需要同步返回合法的绘制回调对象')
+                const nextCleanups: Array<() => void> = []
+                const cacheScope: DrawCacheScope = Object.freeze({
+                    size: this.size,
+                    density: this.density,
+                    onDispose(fn: () => void) {
+                        if (typeof fn !== 'function') throw new TypeError('drawWithCache onDispose 需要函数')
+                        nextCleanups.push(fn)
+                    },
+                })
+                let result: DrawCacheResult
+                try {
+                    result = runWithDrawCacheDisposal(nextCleanups, () => (declaration.draw as DrawCacheBuilder)(cacheScope))
+                } catch (error) {
+                    runCleanups(nextCleanups)
+                    throw error
+                }
+                if (!result || typeof result !== 'object' || Array.isArray(result) || typeof (result as { then?: unknown }).then === 'function' || Object.getOwnPropertySymbols(result).length || Object.keys(result).some(key => key !== 'onDrawBehind' && key !== 'onDrawWithContent') || result.onDrawBehind !== undefined && typeof result.onDrawBehind !== 'function' || result.onDrawWithContent !== undefined && typeof result.onDrawWithContent !== 'function') {
+                    runCleanups(nextCleanups)
+                    throw new TypeError('drawWithCache 需要同步返回合法的绘制回调对象')
+                }
+                // 非候选态直接清理旧缓存；候选态延后到 commit 再清理旧缓存、rollback 清理新缓存
+                if (!this.candidate) runCleanups(this.cacheCleanups)
+                this.cacheCleanups = nextCleanups
                 this.cache = result
             })
             const draw = new ReactiveEffect(() => this.record())
@@ -264,11 +446,15 @@ export class DrawInstance {
             const effects = this.scope ? this.scope.run(makeEffects) : makeEffects()
             if (!effects) throw new Error('绘制受体作用域已经退休')
             effects[0].scheduler = () => {
+                if (this.recording) return
                 this.cacheDirty = true
                 if (this.candidate?.build === effects[0]) this.candidate.cacheDirty = true
-                this.invalidate()
+                if (this.buildEffect === effects[0] || this.candidate?.build === effects[0]) this.invalidate()
             }
-            effects[1].scheduler = () => this.invalidate()
+            effects[1].scheduler = () => {
+                if (this.recording) return
+                if (this.drawEffect === effects[1]) this.invalidate()
+            }
             return effects
         }
         const effects = this.createEffects();
@@ -283,7 +469,7 @@ export class DrawInstance {
             height = nonnegative(height, '绘制高度')
             if (phase === 'prepare') {
                 this.finish(false)
-                this.candidate = { build: this.buildEffect, draw: this.drawEffect, size: this.size, cache: this.cache, cacheDirty: this.cacheDirty, commands: this.commands }
+                this.candidate = { build: this.buildEffect, draw: this.drawEffect, size: this.size, cache: this.cache, cacheCleanups: this.cacheCleanups, cacheDirty: this.cacheDirty, commands: this.commands }
                 const [build, draw] = this.createEffects()
                 this.drawEffect = draw
                 if (kind === 'drawWithCache' && (this.cacheDirty || width !== this.size.width || height !== this.size.height)) this.buildEffect = build
@@ -293,13 +479,19 @@ export class DrawInstance {
                 this.size = Object.freeze({ width, height })
                 this.cacheDirty = true
             }
-            if (kind === 'drawWithCache' && this.cacheDirty) {
-                this.buildEffect.run()
-                this.cacheDirty = false
+            this.recording = true
+            try {
+                if (kind === 'drawWithCache' && this.cacheDirty) {
+                    this.buildEffect.run()
+                    this.cacheDirty = false
+                }
+                this.drawEffect.run()
+            } finally {
+                this.recording = false
             }
-            this.drawEffect.run()
             return this.commands
         }
+        Object.defineProperty(this.prepare, 'revision', { get: () => this.revision.value })
         this.scope?.cleanups.push(this.cleanup)
         if (declaration.controller) controllers.get(declaration.controller)?.add(this.controllerListener)
         if (declaration.invalidation === 'frame') {
@@ -321,13 +513,16 @@ export class DrawInstance {
         if (success) {
             if (previous.build !== this.buildEffect) this.stopEffect(previous.build)
             if (previous.draw !== this.drawEffect) this.stopEffect(previous.draw)
+            if (previous.cacheCleanups !== this.cacheCleanups) runCleanups(previous.cacheCleanups)
         } else {
             if (previous.build !== this.buildEffect) this.stopEffect(this.buildEffect)
             if (previous.draw !== this.drawEffect) this.stopEffect(this.drawEffect)
+            if (previous.cacheCleanups !== this.cacheCleanups) runCleanups(this.cacheCleanups)
             this.buildEffect = previous.build
             this.drawEffect = previous.draw
             this.size = previous.size
             this.cache = previous.cache
+            this.cacheCleanups = previous.cacheCleanups
             this.cacheDirty = previous.cacheDirty
             this.commands = previous.commands
         }
@@ -339,9 +534,9 @@ export class DrawInstance {
             if (index >= 0) this.scope.effects.splice(index, 1)
         }
     }
-    private invalidate(): void { if (!this.stopped) this.revision.value++ }
+    private invalidate(): void { if (!this.stopped && !this.recording) this.revision.value++ }
     private record(): void {
-        const scope = new DrawScope(this.size)
+        const scope = new DrawScope(this.size, this.density)
         let completed = false
         const tracked = (this.declaration.invalidation ?? 'auto') === 'auto'
         if (!tracked) pauseTracking()
@@ -374,6 +569,7 @@ export class DrawInstance {
         if (this.stopped) return
         this.finish(false)
         this.stopped = true
+        runCleanups(this.cacheCleanups)
         this.stopEffect(this.buildEffect)
         this.stopEffect(this.drawEffect)
         if (this.scope) {

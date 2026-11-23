@@ -16,6 +16,8 @@
 #include <core/UiPackage.h>
 #include <core/FocusTypes.h>
 #include <core/Font.h>
+#include <core/GraphicsEffects.h>
+#include <core/ModifierGeometry.h>
 #include <core/NativePainter.h>
 #include <core/Log.h>
 #include <core/WindowTypes.h>
@@ -96,6 +98,7 @@ namespace canton::quickjs {
         void setFontRegistry(std::shared_ptr<core::FontRegistry> fonts);
         [[nodiscard]] const std::shared_ptr<core::FontRegistry>& fontRegistry() const noexcept;
         void setNativePainterRegistry(std::shared_ptr<const core::NativePainterRegistry> painters);
+        void setShaderCompiler(std::shared_ptr<const core::ShaderCompiler> compiler);
 
         ScriptExecutionResult executeModule(const std::filesystem::path& modulePath, std::string_view source);
         ScriptExecutionResult executePackage(std::shared_ptr<const core::UiPackage> package) override;
@@ -144,6 +147,7 @@ namespace canton::quickjs {
         bool hasPendingSemanticWork() const noexcept;
         bool hasPendingVisualWork() const noexcept;
         CallbackInvokeResult prepareVisualFrame(double nowMillis);
+        CallbackInvokeResult dispatchPositioned(core::WindowId windowId, const core::NativeScene& candidateScene, const std::vector<core::PositionedUpdate>& updates);
         CallbackInvokeResult prepareDrawModifiers(canton::core::NativeScene& candidateScene);
         CallbackInvokeResult materializeLayout(canton::core::NodeId id, const std::vector<int>& indices);
         CallbackInvokeResult completeVisualFrame(bool success);

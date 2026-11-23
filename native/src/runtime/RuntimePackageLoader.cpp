@@ -23,6 +23,7 @@ namespace canton::runtime {
         auto host = std::make_unique<canton::quickjs::QuickJsScriptHost>();
         if (fonts_) host->setFontRegistry(fonts_);
         host->setNativePainterRegistry(painters_);
+        host->setShaderCompiler(shaderCompiler_);
         host->setPainterLoader(std::move(resources.painter));
         host->setAssetLoader(std::move(resources.asset));
         return host;

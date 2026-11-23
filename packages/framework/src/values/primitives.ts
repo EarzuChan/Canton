@@ -1,6 +1,9 @@
 import { requireArgb } from './color.ts'
+import type { ShaderBrush } from './graphics.ts'
 
 export { Dp, Sp, Px } from './unit.ts'
+export { BlendMode, TileMode, CompositingStrategy, ColorMatrix, ColorFilter } from './graphics.ts'
+export type { TintColorFilter, ColorMatrixColorFilter, LightingColorFilter, ShaderBrush } from './graphics.ts'
 
 export type CornerSizes = Readonly<{ topStartDp?: number; topStartPx?: number; topEndDp?: number; topEndPx?: number; bottomEndDp?: number; bottomEndPx?: number; bottomStartDp?: number; bottomStartPx?: number }>
 export type Shape = Readonly<{ type: "rectangle" | "circle" }> | Readonly<{ type: "rounded"; topStartDp: number; topStartPx: number; topEndDp: number; topEndPx: number; bottomEndDp: number; bottomEndPx: number; bottomStartDp: number; bottomStartPx: number }>
@@ -14,7 +17,7 @@ export type RadialGradient = GradientColors & Readonly<{ type: "radialGradient";
 // 起始角为度数，0 指向右侧、顺时针
 export type SweepGradient = GradientColors & Readonly<{ type: "sweepGradient"; center: BrushPoint; startAngle: number }>
 export type SolidColor = Readonly<{ type: "solidColor"; color: number }>
-export type Brush = SolidColor | LinearGradient | RadialGradient | SweepGradient
+export type Brush = SolidColor | LinearGradient | RadialGradient | SweepGradient | ShaderBrush
 export type PaddingValue = Readonly<{ startDp?: number; startPx?: number; topDp?: number; topPx?: number; endDp?: number; endPx?: number; bottomDp?: number; bottomPx?: number; horizontalDp?: number; horizontalPx?: number; verticalDp?: number; verticalPx?: number }>
 export type Padding = Readonly<{ startDp: number; startPx: number; topDp: number; topPx: number; endDp: number; endPx: number; bottomDp: number; bottomPx: number }>
 

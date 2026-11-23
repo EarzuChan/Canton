@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <iterator>
 #include <optional>
 
@@ -508,7 +509,7 @@ namespace canton::quickjs {
             const auto id = readIndex(context, argv[0]);
             if (JS_HasException(context)) return JS_EXCEPTION;
             if (!self->nodeGenerations.contains(id)) return JS_ThrowReferenceError(context, "Canton node does not exist");
-            QuickJsModifierReader modifierReader(context, self->events, self->transactionForNode(id));
+            QuickJsModifierReader modifierReader(context, self->events, self->transactionForNode(id), &self->runtimeEffects);
             const auto previous = self->modifierInputDescriptors(id);
             auto modifier = modifierReader.read(id, argv[1], nullptr, previous);
             if (modifierReader.failed() || JS_HasException(context)) {
@@ -636,7 +637,7 @@ namespace canton::quickjs {
                         if (!validateHostValue(*self, input.node.id, input.input, value, error)) return JS_ThrowTypeError(context, "%s", error.c_str());
                         self->updateBinding(*handle, std::move(value));
                     } else if constexpr (std::is_same_v<T, canton::core::ModifierChainTarget>) {
-                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id));
+                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id), &self->runtimeEffects);
                         const auto previous = self->modifierInputDescriptors(input.node.id);
                         auto value = reader.read(input.node.id, argv[1], nullptr, previous);
                         if (reader.failed() || JS_HasException(context)) return JS_EXCEPTION;
@@ -647,7 +648,7 @@ namespace canton::quickjs {
                         if (instance == inputs.end()) return JS_ThrowReferenceError(context, "Modifier 实例已从当前候选退出");
                         ScopedValue array(context, JS_NewArray(context));
                         JS_SetPropertyUint32(context, array.get(), 0, JS_DupValue(context, argv[1]));
-                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id));
+                        QuickJsModifierReader reader(context, self->events, self->transactionForNode(input.node.id), &self->runtimeEffects);
                         auto descriptors = reader.read(input.node.id, array.get(), &instance->descriptor.value);
                         if (reader.failed() || JS_HasException(context)) return JS_EXCEPTION;
                         self->updateBinding(*handle, std::move(descriptors.front().value));
@@ -831,6 +832,112 @@ namespace canton::quickjs {
             return JS_TRUE;
         }
 
+        JSValue nativeCompileRuntimeEffect(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 3 || !JS_IsString(argv[0]) || !JS_IsString(argv[1]) || !JS_IsString(argv[2])) {
+                return JS_ThrowTypeError(context, "compileRuntimeEffect 需要 source、entryPoint 与 debugName");
+            }
+            if (!self->shaderCompiler) return JS_ThrowInternalError(context, "当前运行时未装配 HLSL 编译器");
+            QuickJsValueReader reader(context);
+            const auto source = reader.toString(argv[0]);
+            const auto entryPoint = reader.toString(argv[1]);
+            const auto debugName = reader.toString(argv[2]);
+            try {
+                auto compiled = self->shaderCompiler->compileHlsl(source, entryPoint, debugName);
+                core::RuntimeEffectProgram program;
+                program.debugName = debugName;
+                program.entryPoint = entryPoint;
+                program.dxbc = std::move(compiled.dxbc);
+                program.reflection = std::move(compiled.reflection);
+                const auto handle = self->runtimeEffects.registerProgram(std::move(program));
+                return bindingValue(context, {handle.identity, handle.generation});
+            } catch (const std::exception& error) {
+                return JS_ThrowInternalError(context, "%s", error.what());
+            }
+        }
+
+        JSValue nativeLoadRuntimeEffectAsset(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 3 || !JS_IsString(argv[0]) || !JS_IsString(argv[1]) || !JS_IsString(argv[2])) {
+                return JS_ThrowTypeError(context, "loadRuntimeEffectAsset 需要 assetPath、entryPoint 与 debugName");
+            }
+            if (!self->shaderCompiler) return JS_ThrowInternalError(context, "当前运行时未装配 DXBC 反射器");
+            if (!self->uiPackage) return JS_ThrowInternalError(context, "loadRuntimeEffectAsset 仅可用于已挂载的 UI 包");
+            QuickJsValueReader reader(context);
+            const auto assetPath = reader.toString(argv[0]);
+            const auto entryPoint = reader.toString(argv[1]);
+            const auto debugName = reader.toString(argv[2]);
+            try {
+                const auto raw = self->uiPackage->read(assetPath, core::UiEntryKind::Asset, core::UiEntryLimit);
+                std::vector<std::uint8_t> dxbc(raw.size());
+                if (!raw.empty()) std::memcpy(dxbc.data(), raw.data(), raw.size());
+                auto reflection = self->shaderCompiler->reflectDxbc(dxbc, debugName);
+                core::RuntimeEffectProgram program;
+                program.debugName = debugName;
+                program.entryPoint = entryPoint;
+                program.dxbc = std::move(dxbc);
+                program.reflection = std::move(reflection);
+                const auto handle = self->runtimeEffects.registerProgram(std::move(program));
+                return bindingValue(context, {handle.identity, handle.generation});
+            } catch (const std::exception& error) {
+                return JS_ThrowInternalError(context, "%s", error.what());
+            }
+        }
+
+        JSValue nativeUpdateRuntimeEffect(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc < 4 || !JS_IsString(argv[1]) || !JS_IsString(argv[2]) || !JS_IsString(argv[3])) {
+                return JS_ThrowTypeError(context, "updateRuntimeEffect 需要 handle、source、entryPoint 与 debugName");
+            }
+            const auto handle = readBinding(context, argv[0]);
+            if (!handle) return JS_EXCEPTION;
+            if (!self->shaderCompiler) return JS_ThrowInternalError(context, "当前运行时未装配 HLSL 编译器");
+            QuickJsValueReader reader(context);
+            const auto source = reader.toString(argv[1]);
+            const auto entryPoint = reader.toString(argv[2]);
+            const auto debugName = reader.toString(argv[3]);
+            const auto result = JS_NewObject(context);
+            try {
+                auto compiled = self->shaderCompiler->compileHlsl(source, entryPoint, debugName);
+                core::RuntimeEffectProgram program;
+                program.debugName = debugName;
+                program.entryPoint = entryPoint;
+                program.dxbc = std::move(compiled.dxbc);
+                program.reflection = std::move(compiled.reflection);
+                self->runtimeEffects.updateProgram({handle->identity, handle->generation}, std::move(program));
+                JS_SetPropertyStr(context, result, "ok", JS_TRUE);
+            } catch (const std::exception& error) {
+                JS_SetPropertyStr(context, result, "ok", JS_FALSE);
+                JS_SetPropertyStr(context, result, "error", JS_NewString(context, error.what()));
+            }
+            return result;
+        }
+
+        JSValue nativeReleaseRuntimeEffect(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc != 1) return JS_ThrowTypeError(context, "releaseRuntimeEffect 需要句柄");
+            const auto handle = readBinding(context, argv[0]);
+            if (!handle) return JS_EXCEPTION;
+            self->runtimeEffects.release({handle->identity, handle->generation});
+            return JS_UNDEFINED;
+        }
+
+        JSValue nativeCreateRenderLayer(JSContext* context, JSValueConst, int, JSValueConst*) {
+            auto* self = runtime(context);
+            if (!self) return JS_UNDEFINED;
+            const auto handle = self->renderLayers.create();
+            return bindingValue(context, {handle.identity, handle.generation});
+        }
+
+        JSValue nativeReleaseRenderLayer(JSContext* context, JSValueConst, int argc, JSValueConst* argv) {
+            auto* self = runtime(context);
+            if (!self || argc != 1) return JS_ThrowTypeError(context, "releaseRenderLayer 需要句柄");
+            const auto handle = readBinding(context, argv[0]);
+            if (!handle) return JS_EXCEPTION;
+            self->renderLayers.release({handle->identity, handle->generation});
+            return JS_UNDEFINED;
+        }
+
         const JSCFunctionListEntry nativeApiFunctions[] = {
             JS_CFUNC_DEF("configureApp", 1, nativeConfigureApp),
             JS_CFUNC_DEF("requestAppExit", 0, nativeRequestAppExit),
@@ -841,6 +948,12 @@ namespace canton::quickjs {
             JS_CFUNC_DEF("windowCommand", 2, nativeWindowCommand),
             JS_CFUNC_DEF("installWindowDriver", 1, nativeInstallWindowDriver),
             JS_CFUNC_DEF("focusCommand", 4, nativeFocusCommand),
+            JS_CFUNC_DEF("compileRuntimeEffect", 3, nativeCompileRuntimeEffect),
+            JS_CFUNC_DEF("loadRuntimeEffectAsset", 3, nativeLoadRuntimeEffectAsset),
+            JS_CFUNC_DEF("updateRuntimeEffect", 4, nativeUpdateRuntimeEffect),
+            JS_CFUNC_DEF("releaseRuntimeEffect", 1, nativeReleaseRuntimeEffect),
+            JS_CFUNC_DEF("createRenderLayer", 0, nativeCreateRenderLayer),
+            JS_CFUNC_DEF("releaseRenderLayer", 1, nativeReleaseRenderLayer),
             JS_CFUNC_DEF("installLayoutDriver", 1, nativeInstallLayoutDriver),
             JS_CFUNC_DEF("continueRearrange", 0, nativeContinueRearrange),
             JS_CFUNC_DEF("currentTime", 0, performanceNow),

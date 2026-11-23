@@ -1,12 +1,14 @@
 #pragma once
 #include "ScrollSnapshot.h"
 
+#include "Affine.h"
 #include "EventSlot.h"
 #include "Animation.h"
 #include "Geometry.h"
 #include "DrawCommands.h"
 #include "Alignment.h"
 #include "DrawEnums.h"
+#include "GraphicsEffects.h"
 #include "Painter.h"
 #include "TextLayoutService.h"
 #include "WindowTypes.h"
@@ -126,8 +128,9 @@ namespace canton::core {
         ShapeKind shapeType = ShapeKind::Rectangle;
         CornerRadii corners;
         float alpha = 1.0f;
-        // 渐变存在时 color 不参与着色
+        // 渐变或着色器存在时 color 不参与着色
         GradientRef gradient;
+        RuntimeShaderRef shader;
         bool operator==(const PaintStyleSemantics&) const = default;
     };
 
@@ -138,7 +141,7 @@ namespace canton::core {
 
     enum class InputModifierKind { Clickable, Hoverable, Focusable, ContextClick, PointerIcon, KeyEvent, Wheel, Draggable, PointerInput, DraggableArea, NonDraggableArea, CaptionButton };
 
-    enum class PointerIcon : std::uint8_t { Default, Hand, Text, Crosshair, ResizeHorizontal, ResizeVertical, Grab, Grabbing, None };
+    enum class PointerIcon : std::uint8_t { Default, Hand, Text, Crosshair, ResizeHorizontal, ResizeVertical, Grab, Grabbing, None, ResizeNwse, ResizeNesw };
 
     enum class DragAxis : std::uint8_t { Horizontal, Vertical, Both };
 
@@ -196,6 +199,11 @@ namespace canton::core {
         float transformOriginY = 0.5f;
         float alpha = 1.0f;
         bool clip = false;
+        PaintStyleSemantics shape;
+        RenderEffectRef renderEffect;
+        BlendMode blendMode = BlendMode::SrcOver;
+        ColorFilter colorFilter;
+        CompositingStrategy compositingStrategy = CompositingStrategy::Auto;
         bool operator==(const TransformModifierSemantics&) const = default;
     };
 
@@ -264,6 +272,7 @@ namespace canton::core {
         ImageAlignment alignment = ImageAlignment::Center;
         float alpha = 1.0f;
         std::optional<std::uint32_t> tint;
+        ColorFilter colorFilter;
         bool sizeToIntrinsics = true;
         ImageRepeat repeat = ImageRepeat::None;
         ImageSlices slices;
@@ -324,7 +333,20 @@ namespace canton::core {
         bool operator==(const SemanticsModifier&) const = default;
     };
 
-    using ModifierValue = std::variant<LayoutModifierSemantics, PaintStyleSemantics, ClipModifier, InputModifierSemantics, TransformModifierSemantics, OffsetModifier, ParentDataModifierSemantics, ZIndexModifier, AnimateContentSizeModifier, PaintModifier, TextModifier, TextFieldModifier, FocusModifier, DrawModifier, SemanticsModifier, EffectModifier, AnimateItemModifier>;
+    struct PositionedModifier {
+        EventSlotId callback;
+        bool operator==(const PositionedModifier&) const = default;
+    };
+
+    struct PositionedGeometry {
+        Size size;
+        Point positionInParent;
+        Affine localToRoot;
+        Rect clippedBoundsInWindow;
+        bool operator==(const PositionedGeometry&) const = default;
+    };
+
+    using ModifierValue = std::variant<LayoutModifierSemantics, PaintStyleSemantics, ClipModifier, InputModifierSemantics, TransformModifierSemantics, OffsetModifier, ParentDataModifierSemantics, ZIndexModifier, AnimateContentSizeModifier, PaintModifier, TextModifier, TextFieldModifier, FocusModifier, DrawModifier, SemanticsModifier, EffectModifier, AnimateItemModifier, PositionedModifier>;
 
     struct ModifierDescriptor {
         ModifierValue value;
@@ -365,6 +387,7 @@ namespace canton::core {
         Size preparedDrawSize;
         EventSlotId preparedDrawCallback;
         std::uint64_t preparedDrawRevision = 0;
+        std::optional<PositionedGeometry> lastPositioned;
     };
 
     struct ModifierReconcileResult {
@@ -418,6 +441,7 @@ namespace canton::core {
         if (const auto* focus = std::get_if<FocusModifier>(&value)) slot = focus->eventSlot;
         if (const auto* layout = std::get_if<LayoutModifierSemantics>(&value)) slot = layout->eventSlot;
         if (const auto* draw = std::get_if<DrawModifier>(&value)) slot = draw->prepare;
+        if (const auto* positioned = std::get_if<PositionedModifier>(&value)) slot = positioned->callback;
         if (const auto* semantics = std::get_if<SemanticsModifier>(&value)) slot = kind == EventSlotKind::SemanticsDecrement ? semantics->decrement : semantics->increment;
         return kind == EventSlotKind::None || slot.kind == kind ? slot : EventSlotId{};
     }

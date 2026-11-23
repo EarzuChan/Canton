@@ -4,6 +4,7 @@
 #include <core/Log.h>
 #include <d3d11/DWriteText.h>
 #include <d3d11/Renderer.h>
+#include <d3d11/ShaderCompiler.h>
 #include <runtime/VBlankSource.h>
 #include <win32/ConsoleLog.h>
 #include <win32/Window.h>
@@ -336,6 +337,7 @@ namespace canton::host {
         sessionOptions.detailedErrorScreen = assembly.detailedErrorScreen;
         if (assembly.live) sessionOptions.live = assembly.live(wake);
         sessionOptions.painters = std::make_shared<core::NativePainterRegistry>();
+        sessionOptions.shaderCompiler = std::make_shared<d3d11::D3DShaderCompiler>();
 
         sessionOptions.platform.onAppConfigChanged = [](const core::AppConfigSpec& spec) {
             if (!spec.appId.empty()) win32::setProcessAppId(spec.appId);

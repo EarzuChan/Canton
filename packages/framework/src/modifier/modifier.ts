@@ -3,9 +3,12 @@ import { nativeAnimationSpec, spring, type AnimationSpec } from "../animation/va
 import { IntrinsicSize, PaddingValues } from "../values/primitives.ts"
 import type { IntrinsicSizeValue } from "../values/primitives.ts"
 import type { Brush, PaddingValue, Shape } from "../values/primitives.ts"
+import type { BlendMode, ColorFilter, CompositingStrategy } from "../values/graphics.ts"
 import { scrollStateInternal, type ScrollState } from "../layout/state.ts"
+import type { LayoutCoordinates } from "../layout/coordinates.ts"
 import { painterSnapshot } from '../draw/painter.ts'
 import type { Painter } from '../draw/painter.ts'
+import type { RenderEffect } from '../draw/renderEffect.ts'
 import type { NinePatch } from '../draw/draw.ts'
 import type { ContentScaleValue, ImageAlignment, TextAlignment } from '../values/primitives.ts'
 import type { TextStyleProp } from '../native/protocol.ts'
@@ -14,7 +17,7 @@ import type { FocusRequester, FocusProperties, FocusState } from './focus.ts'
 import { isCanvasController, type CanvasController, type CanvasInvalidation, type DrawCallback, type DrawContentCallback, type DrawCacheBuilder } from '../draw/draw.ts'
 import { dragStateInternal, interactionStateInternal } from './gesture.ts'
 import type { DraggableOptions, DraggableState, Draggable2DState, InteractionState, KeyModifiers } from './gesture.ts'
-export type { DrawSize, DrawRect, DrawPaint, DrawPathPaint, DrawTextOptions, DrawPainterOptions, DrawNativeOptions, NativePainterParams, NinePatch, StrokeCap, StrokeJoin, DrawTransform, DrawCallback, DrawContentCallback, DrawCacheResult, DrawCacheBuilder, CanvasInvalidation, CanvasController } from '../draw/draw.ts'
+export type { DrawSize, DrawRect, DrawCorners, DrawPaint, DrawPathPaint, DrawTextOptions, DrawPainterOptions, DrawNativeOptions, NativePainterParams, NinePatch, StrokeCap, StrokeJoin, DrawMatrixTransform, DrawTransform, DrawCallback, DrawContentCallback, DrawCacheResult, DrawCacheScope, DrawCacheBuilder, CanvasInvalidation, CanvasController } from '../draw/draw.ts'
 export { DrawScope, Path, createCanvasController } from '../draw/draw.ts'
 
 export type ModifierValue = Readonly<Record<string, unknown>>
@@ -31,14 +34,14 @@ export type FocusableOptions = { enabled?: boolean; interactionState?: Interacti
 export type HoverableOptions = { enabled?: boolean; onEnter?: () => void; onExit?: () => void; interactionState?: InteractionState }
 export type SemanticsRole = 'button' | 'slider' | 'switch' | 'checkbox' | 'textField' | 'image' | 'group'
 export type SemanticsOptions = { role?: SemanticsRole; label?: string; description?: string; valueText?: string; enabled?: boolean; increment?: () => void; decrement?: () => void }
-export type PointerIcon = 'default' | 'hand' | 'text' | 'crosshair' | 'resizeHorizontal' | 'resizeVertical' | 'grab' | 'grabbing' | 'none'
+export type PointerIcon = 'default' | 'hand' | 'text' | 'crosshair' | 'resizeHorizontal' | 'resizeVertical' | 'grab' | 'grabbing' | 'none' | 'resizeNwse' | 'resizeNesw'
 export type { KeyModifiers }
 export type ContextClickEvent = Readonly<{ xDp: number; yDp: number; modifiers: KeyModifiers }>
 export type WheelEvent = Readonly<{ deltaXDp: number; deltaYDp: number; modifiers: KeyModifiers }>
 export type PointerInputEvent = Readonly<{ type: 'down' | 'move' | 'up' | 'cancel' | 'enter' | 'exit'; xDp: number; yDp: number; modifiers: KeyModifiers }>
 export type KeyEvent = Readonly<{ type: 'down' | 'up'; key: string; text: string; repeat: boolean; modifiers: KeyModifiers }>
 // tile 按固有尺寸平铺；ninePatch 以固有尺寸为单位切分，四角保持源尺寸。两者都忽略 contentScale 与 alignment
-export type PaintOptions = Readonly<{ contentScale?: ContentScaleValue; alignment?: ImageAlignment; alpha?: number; colorFilter?: Readonly<{ tint: number }>; sizeToIntrinsics?: boolean; tile?: boolean; ninePatch?: NinePatch }>
+export type PaintOptions = Readonly<{ contentScale?: ContentScaleValue; alignment?: ImageAlignment; alpha?: number; colorFilter?: ColorFilter | Readonly<{ tint: number }>; sizeToIntrinsics?: boolean; tile?: boolean; ninePatch?: NinePatch }>
 export type TextOptions = Readonly<{ style?: TextStyleProp; singleLine?: boolean; minLines?: number; maxLines?: number; textAlign?: TextAlignment; overflow?: 'clip' | 'ellipsis' | 'visible' }>
 export type TextFieldOptions = Readonly<{ textStyle?: TextStyleProp; singleLine?: boolean; minLines?: number; maxLines?: number; placeholder?: string; enabled?: boolean; readOnly?: boolean; selectAllOnFocus?: boolean; onValueChange?: (value: string) => void; onSubmit?: (value: string) => void; onChange?: (value: string) => void; onBlur?: (value: string) => void }>
 export type GraphicsLayerOptions = {
@@ -49,6 +52,11 @@ export type GraphicsLayerOptions = {
     rotationZ?: number
     alpha?: number
     clip?: boolean
+    shape?: Shape
+    renderEffect?: RenderEffect | null
+    blendMode?: BlendMode
+    colorFilter?: ColorFilter | null
+    compositingStrategy?: CompositingStrategy
     transformOrigin?: "TopStart" | "TopCenter" | "TopEnd" | "CenterStart" | "Center" | "CenterEnd" | "BottomStart" | "BottomCenter" | "BottomEnd" | { x?: number; y?: number }
 }
 
@@ -207,6 +215,11 @@ export class Modifier {
 
     graphicsLayer(args: GraphicsLayerOptions = {}): Modifier {
         return this.#add("graphicsLayer", { ...args })
+    }
+
+    onGloballyPositioned(callback: (coordinates: LayoutCoordinates) => void): Modifier {
+        if (typeof callback !== 'function') throw new TypeError('onGloballyPositioned 需要函数')
+        return this.#add('onGloballyPositioned', { callback })
     }
 
     drawBehind(draw: DrawCallback): Modifier {

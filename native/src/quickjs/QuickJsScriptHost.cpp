@@ -294,6 +294,10 @@ namespace canton::quickjs {
         impl_->runtime.nativePainters = std::move(painters);
     }
 
+    void QuickJsScriptHost::setShaderCompiler(std::shared_ptr<const core::ShaderCompiler> compiler) {
+        impl_->runtime.shaderCompiler = std::move(compiler);
+    }
+
     std::size_t QuickJsScriptHost::eventSlotCount() const noexcept {
         return impl_ ? impl_->runtime.events.size() : 0;
     }
@@ -583,6 +587,45 @@ namespace canton::quickjs {
         return {true, {}};
     }
 
+    CallbackInvokeResult QuickJsScriptHost::dispatchPositioned(core::WindowId windowId, const core::NativeScene& candidateScene, const std::vector<core::PositionedUpdate>& updates) {
+        if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
+        if (updates.empty()) return {true, {}};
+        Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
+        auto& state = impl_->runtime;
+        auto* ctx = state.context;
+        try {
+            for (const auto& update : updates) {
+                if (!update.callback.valid() || !candidateScene.hasEventSlot(update.callback)) continue;
+                ScopedValue callback(ctx, JS_DupValue(ctx, state.events.candidateCallback(update.callback)));
+                if (!JS_IsFunction(ctx, callback.get())) continue;
+                ScopedValue payload(ctx, JS_NewObject(ctx));
+                JS_SetPropertyStr(ctx, payload.get(), "windowId", JS_NewUint32(ctx, windowId));
+                JS_SetPropertyStr(ctx, payload.get(), "width", JS_NewFloat64(ctx, update.geometry.size.width));
+                JS_SetPropertyStr(ctx, payload.get(), "height", JS_NewFloat64(ctx, update.geometry.size.height));
+                JS_SetPropertyStr(ctx, payload.get(), "parentX", JS_NewFloat64(ctx, update.geometry.positionInParent.x));
+                JS_SetPropertyStr(ctx, payload.get(), "parentY", JS_NewFloat64(ctx, update.geometry.positionInParent.y));
+                JS_SetPropertyStr(ctx, payload.get(), "a", JS_NewFloat64(ctx, update.geometry.localToRoot.a));
+                JS_SetPropertyStr(ctx, payload.get(), "b", JS_NewFloat64(ctx, update.geometry.localToRoot.b));
+                JS_SetPropertyStr(ctx, payload.get(), "c", JS_NewFloat64(ctx, update.geometry.localToRoot.c));
+                JS_SetPropertyStr(ctx, payload.get(), "d", JS_NewFloat64(ctx, update.geometry.localToRoot.d));
+                JS_SetPropertyStr(ctx, payload.get(), "tx", JS_NewFloat64(ctx, update.geometry.localToRoot.tx));
+                JS_SetPropertyStr(ctx, payload.get(), "ty", JS_NewFloat64(ctx, update.geometry.localToRoot.ty));
+                JS_SetPropertyStr(ctx, payload.get(), "clipX", JS_NewFloat64(ctx, update.geometry.clippedBoundsInWindow.x));
+                JS_SetPropertyStr(ctx, payload.get(), "clipY", JS_NewFloat64(ctx, update.geometry.clippedBoundsInWindow.y));
+                JS_SetPropertyStr(ctx, payload.get(), "clipWidth", JS_NewFloat64(ctx, update.geometry.clippedBoundsInWindow.width));
+                JS_SetPropertyStr(ctx, payload.get(), "clipHeight", JS_NewFloat64(ctx, update.geometry.clippedBoundsInWindow.height));
+                JS_SetPropertyStr(ctx, payload.get(), "attached", JS_TRUE);
+                JSValueConst argv[]{payload.get()};
+                ScopedValue res(ctx, JS_Call(ctx, callback.get(), JS_UNDEFINED, 1, argv));
+                if (JS_IsException(res.get())) return {false, impl_->exceptionText(ctx)};
+            }
+            return {true, {}};
+        } catch (const std::exception& error) {
+            if (JS_HasException(ctx)) return {false, std::string(error.what()) + "：" + impl_->exceptionText(ctx)};
+            return {false, error.what()};
+        }
+    }
+
     CallbackInvokeResult QuickJsScriptHost::prepareDrawModifiers(canton::core::NativeScene& candidateScene) {
         if (!impl_ || !impl_->runtime.context) return {false, "QuickJS 运行时尚未初始化"};
         Impl::TaskBudget budget(*impl_, __func__, impl_->limits.visualMillis);
@@ -595,10 +638,18 @@ namespace canton::quickjs {
                     const auto* input = std::get_if<canton::core::DrawModifier>(&current.descriptor.value);
                     if (!input) continue;
                     const canton::core::Size size{current.bounds.width, current.bounds.height};
-                    if (current.preparedDraw && current.preparedDrawSize == size && current.preparedDrawRevision == input->revision && current.preparedDrawCallback == input->prepare) continue;
                     if (!candidateScene.hasEventSlot(input->prepare)) throw std::runtime_error("绘制准备受体已经退休");
                     ScopedValue callback(state.context, JS_DupValue(state.context, state.events.candidateCallback(input->prepare)));
                     if (!JS_IsFunction(state.context, callback.get())) throw std::runtime_error("绘制准备函数已经退休");
+                    std::uint64_t effectiveRevision = input->revision;
+                    ScopedValue revProp(state.context, JS_GetPropertyStr(state.context, callback.get(), "revision"));
+                    if (JS_IsNumber(revProp.get())) {
+                        double revNum = 0;
+                        if (JS_ToFloat64(state.context, &revNum, revProp.get()) == 0 && std::isfinite(revNum) && revNum >= 0) {
+                            effectiveRevision = std::max(effectiveRevision, static_cast<std::uint64_t>(revNum));
+                        }
+                    }
+                    if (current.preparedDraw && current.preparedDrawSize == size && current.preparedDrawRevision == effectiveRevision && current.preparedDrawCallback == input->prepare) continue;
                     ScopedValue width(state.context, JS_NewFloat64(state.context, size.width));
                     ScopedValue height(state.context, JS_NewFloat64(state.context, size.height));
                     ScopedValue phase(state.context, JS_NewString(state.context, "prepare"));
@@ -606,11 +657,11 @@ namespace canton::quickjs {
                     JSValueConst arguments[]{width.get(), height.get(), phase.get()};
                     ScopedValue prepared(state.context, JS_Call(state.context, callback.get(), JS_UNDEFINED, input->transactional ? 3 : 2, arguments));
                     if (JS_IsException(prepared.get())) throw std::runtime_error(impl_->exceptionText(state.context));
-                    auto commands = QuickJsDrawReader(state.context, state.nativePainters.get()).read(prepared.get());
+                    auto commands = QuickJsDrawReader(state.context, state.nativePainters.get(), &state.runtimeEffects, &state.renderLayers).read(prepared.get());
                     auto& instance = candidateScene.tree().mutableNode(id).modifier.elements()[index];
                     if (!instance.preparedDraw || *instance.preparedDraw != commands) instance.preparedDraw = std::make_shared<const canton::core::DrawCommands>(std::move(commands));
                     instance.preparedDrawSize = size;
-                    instance.preparedDrawRevision = input->revision;
+                    instance.preparedDrawRevision = effectiveRevision;
                     instance.preparedDrawCallback = input->prepare;
                     candidateScene.noteDrawPrepared();
                 }
@@ -701,6 +752,7 @@ namespace canton::quickjs {
         Impl::TaskBudget budget(*impl_, __func__, impl_->limits.moduleMillis);
         auto& state = impl_->runtime;
         const std::string entry(package->entry());
+        state.uiPackage = package;
         state.moduleLoader.install(std::move(package));
         auto* module = QuickJsModuleLoader::load(state.context, entry.c_str(), &state.moduleLoader);
         if (!module) return {false, impl_->exceptionText(state.context)};

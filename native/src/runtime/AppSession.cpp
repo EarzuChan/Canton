@@ -80,7 +80,8 @@ namespace canton::runtime {
                       return RuntimeLoadResources{packagePainterLoader(package, workers), packageAssetLoader(package, workers)};
                   },
                   fonts_,
-                  options_.painters),
+                  options_.painters,
+                  options_.shaderCompiler),
               options_.live),
           fallbackPipeline_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))) {
         if (options_.hudFactory) {
@@ -729,19 +730,23 @@ namespace canton::runtime {
             };
 
             const core::FramePreparation preparation{
-                [&](core::NodeId id, const std::vector<int>& indices) {
+                .materialize = [&](core::NodeId id, const std::vector<int>& indices) {
                     const auto materialized = host->materializeLayout(id, indices);
                     if (!materialized.ok) throw std::runtime_error(materialized.error);
                     auto tx = host->takeWindowTransaction(windowId);
                     if (!tx) throw std::runtime_error("Layout 材料化未提交原生候选");
                     return std::move(*tx);
                 },
-                [&](core::NativeScene& candidate) {
+                .draw = [&](core::NativeScene& candidate) {
                     const auto prepared = host->prepareDrawModifiers(candidate);
                     if (!prepared.ok) throw std::runtime_error(prepared.error);
                 },
-                [&](core::LayoutTree& tree) {
+                .interaction = [&](core::LayoutTree& tree) {
                     win.input.prepareLazyInteraction(tree);
+                },
+                .positioned = [&](core::NativeScene& candidate, const std::vector<core::PositionedUpdate>& updates) {
+                    const auto dispatched = host->dispatchPositioned(windowId, candidate, updates);
+                    if (!dispatched.ok) throw std::runtime_error(dispatched.error);
                 },
             };
 
@@ -1088,7 +1093,7 @@ namespace canton::runtime {
         auto& tree = win->pipeline.scene().tree();
         const auto& hit = win->pipeline.publishedFrame().content.hitTest;
         if (!hit) return;
-        if (win->input.focus().target() || win->input.pointerDragging() || win->text.isActive(tree, true)) {
+        if (win->input.focus().target() || win->input.pointerPressed() || win->text.isActive(tree, true)) {
             core::PointerGestureOutput dragOut;
             auto callbacks = makeInputCallbacks(windowId);
             if (win->input.pointerDrag(tree, true, sample, win->text, callbacks, &dragOut) || !dragOut.events.empty() || dragOut.consumed) {

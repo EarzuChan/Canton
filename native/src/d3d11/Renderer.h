@@ -51,6 +51,10 @@ namespace canton::d3d11 {
         std::uint64_t pathsRasterized = 0;
         std::uint64_t atlasResets = 0;
         std::uint64_t deviceRebuilds = 0;
+        std::uint64_t offscreenTargetsCreated = 0;
+        std::uint64_t offscreenTargetReuses = 0;
+        std::uint64_t userShadersCompiled = 0;
+        std::uint64_t offscreenPasses = 0;
     };
 
     class RenderTarget {

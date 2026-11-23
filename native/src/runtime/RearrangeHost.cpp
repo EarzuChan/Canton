@@ -73,6 +73,14 @@ namespace canton::runtime {
         return {false, true, {}};
     }
 
+    RearrangeInvokeResult RearrangeHost::dispatchPositioned(canton::core::WindowId windowId, const canton::core::NativeScene& candidate, const std::vector<canton::core::PositionedUpdate>& updates) {
+        if (scriptHost_) {
+            const auto result = scriptHost_->dispatchPositioned(windowId, candidate, updates);
+            return {true, result.ok, result.error};
+        }
+        return {false, true, {}};
+    }
+
     RearrangeInvokeResult RearrangeHost::prepareDrawModifiers(canton::core::NativeScene& candidate) {
         if (scriptHost_) {
             const auto result = scriptHost_->prepareDrawModifiers(candidate);

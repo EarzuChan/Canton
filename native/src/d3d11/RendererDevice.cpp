@@ -1,7 +1,12 @@
 #include <d3d11/RendererImpl.h>
 
+#include "BlurPs.h"
+#include "ColorFilterPs.h"
+#include "CompositePs.h"
+#include "PostVs.h"
 #include "QuadPs.h"
 #include "QuadVs.h"
+#include "UserVs.h"
 
 #include <algorithm>
 #include <cstring>
@@ -86,6 +91,11 @@ namespace canton::d3d11 {
     void Renderer::Impl::createDeviceResources() {
         check(device->CreateVertexShader(kQuadVs, sizeof(kQuadVs), nullptr, vertexShader.ReleaseAndGetAddressOf()), "无法创建顶点着色器");
         check(device->CreatePixelShader(kQuadPs, sizeof(kQuadPs), nullptr, pixelShader.ReleaseAndGetAddressOf()), "无法创建像素着色器");
+        check(device->CreateVertexShader(kUserVs, sizeof(kUserVs), nullptr, userVertexShader.ReleaseAndGetAddressOf()), "无法创建用户着色器顶点管线");
+        check(device->CreateVertexShader(kPostVs, sizeof(kPostVs), nullptr, postVertexShader.ReleaseAndGetAddressOf()), "无法创建后处理顶点着色器");
+        check(device->CreatePixelShader(kBlurPs, sizeof(kBlurPs), nullptr, blurPixelShader.ReleaseAndGetAddressOf()), "无法创建模糊像素着色器");
+        check(device->CreatePixelShader(kColorFilterPs, sizeof(kColorFilterPs), nullptr, colorFilterPixelShader.ReleaseAndGetAddressOf()), "无法创建色彩滤镜像素着色器");
+        check(device->CreatePixelShader(kCompositePs, sizeof(kCompositePs), nullptr, compositePixelShader.ReleaseAndGetAddressOf()), "无法创建离屏合成像素着色器");
         std::array<D3D11_INPUT_ELEMENT_DESC, sizeof(QuadInstance) / (sizeof(float) * 4)> elements{};
         for (std::size_t i = 0; i < elements.size(); ++i) elements[i] = {"INSTANCE", static_cast<UINT>(i), DXGI_FORMAT_R32G32B32A32_FLOAT, 0, static_cast<UINT>(i * sizeof(float) * 4), D3D11_INPUT_PER_INSTANCE_DATA, 1};
         check(device->CreateInputLayout(elements.data(), static_cast<UINT>(elements.size()), kQuadVs, sizeof(kQuadVs), inputLayout.ReleaseAndGetAddressOf()), "无法创建输入布局");
@@ -96,20 +106,52 @@ namespace canton::d3d11 {
         buffer.BindFlags = D3D11_BIND_VERTEX_BUFFER;
         buffer.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         check(device->CreateBuffer(&buffer, nullptr, instanceBuffer.ReleaseAndGetAddressOf()), "无法创建实例缓冲");
-        buffer.ByteWidth = sizeof(FrameConstants);
         buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        buffer.ByteWidth = sizeof(FrameConstants);
         check(device->CreateBuffer(&buffer, nullptr, constantBuffer.ReleaseAndGetAddressOf()), "无法创建常量缓冲");
+        buffer.ByteWidth = sizeof(UserVsConstants);
+        check(device->CreateBuffer(&buffer, nullptr, userVsBuffer.ReleaseAndGetAddressOf()), "无法创建用户顶点常量缓冲");
+        buffer.ByteWidth = sizeof(CantonConstants);
+        check(device->CreateBuffer(&buffer, nullptr, cantonCbuffer.ReleaseAndGetAddressOf()), "无法创建 Canton 常量缓冲");
+        buffer.ByteWidth = sizeof(PostVsConstants);
+        check(device->CreateBuffer(&buffer, nullptr, postVsBuffer.ReleaseAndGetAddressOf()), "无法创建后处理顶点常量缓冲");
+        buffer.ByteWidth = static_cast<UINT>(std::max(sizeof(BlurParamsConstants), sizeof(CompositeParamsConstants)));
+        check(device->CreateBuffer(&buffer, nullptr, postPsBuffer.ReleaseAndGetAddressOf()), "无法创建后处理像素常量缓冲");
 
-        // 预乘 Alpha 的 source-over
-        D3D11_BLEND_DESC blending{};
-        blending.RenderTarget[0].BlendEnable = TRUE;
-        blending.RenderTarget[0].SrcBlend = blending.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
-        blending.RenderTarget[0].DestBlend = blending.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
-        blending.RenderTarget[0].BlendOp = blending.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-        blending.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-        check(device->CreateBlendState(&blending, blend.ReleaseAndGetAddressOf()), "无法创建混合状态");
-        blending.RenderTarget[0].BlendEnable = FALSE;
-        check(device->CreateBlendState(&blending, replace.ReleaseAndGetAddressOf()), "无法创建混合状态");
+        const auto makeBlend = [&](bool enable, D3D11_BLEND src, D3D11_BLEND dst, D3D11_BLEND srcA, D3D11_BLEND dstA, ComPtr<ID3D11BlendState>& out) {
+            D3D11_BLEND_DESC desc{};
+            desc.RenderTarget[0].BlendEnable = enable ? TRUE : FALSE;
+            desc.RenderTarget[0].SrcBlend = src;
+            desc.RenderTarget[0].DestBlend = dst;
+            desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+            desc.RenderTarget[0].SrcBlendAlpha = srcA;
+            desc.RenderTarget[0].DestBlendAlpha = dstA;
+            desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            check(device->CreateBlendState(&desc, out.ReleaseAndGetAddressOf()), "无法创建混合状态");
+        };
+
+        // 前 15 种硬件 BlendMode（预乘 RGBA）
+        makeBlend(true, D3D11_BLEND_ZERO, D3D11_BLEND_ZERO, D3D11_BLEND_ZERO, D3D11_BLEND_ZERO, hardwareBlends[0]);                             // Clear
+        makeBlend(false, D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_BLEND_ONE, D3D11_BLEND_ZERO, hardwareBlends[1]);                              // Src
+        makeBlend(true, D3D11_BLEND_ZERO, D3D11_BLEND_ONE, D3D11_BLEND_ZERO, D3D11_BLEND_ONE, hardwareBlends[2]);                               // Dst
+        makeBlend(true, D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA, hardwareBlends[3]);             // SrcOver
+        makeBlend(true, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ONE, hardwareBlends[4]);           // DstOver
+        makeBlend(true, D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_ZERO, D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_ZERO, hardwareBlends[5]);                 // SrcIn
+        makeBlend(true, D3D11_BLEND_ZERO, D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_ZERO, D3D11_BLEND_SRC_ALPHA, hardwareBlends[6]);                   // DstIn
+        makeBlend(true, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ZERO, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_ZERO, hardwareBlends[7]);         // SrcOut
+        makeBlend(true, D3D11_BLEND_ZERO, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ZERO, D3D11_BLEND_INV_SRC_ALPHA, hardwareBlends[8]);           // DstOut
+        makeBlend(true, D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_INV_SRC_ALPHA, hardwareBlends[9]); // SrcAtop
+        makeBlend(true, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_SRC_ALPHA, hardwareBlends[10]); // DstAtop
+        makeBlend(true, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_INV_DEST_ALPHA, D3D11_BLEND_INV_SRC_ALPHA, hardwareBlends[11]); // Xor
+        makeBlend(true, D3D11_BLEND_ONE, D3D11_BLEND_ONE, D3D11_BLEND_ONE, D3D11_BLEND_ONE, hardwareBlends[12]);                                // Plus
+        makeBlend(true, D3D11_BLEND_DEST_COLOR, D3D11_BLEND_ZERO, D3D11_BLEND_DEST_ALPHA, D3D11_BLEND_ZERO, hardwareBlends[13]);                // Modulate
+        makeBlend(true, D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_COLOR, D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA, hardwareBlends[14]);            // Screen
+
+        blend = hardwareBlends[3];
+        replace = hardwareBlends[1];
+        // Clear 抗锯齿挖空：源输出 (0,0,0,cov) 时结果 = dst * (1 - cov)
+        clearPunchOutBlend = hardwareBlends[8];
 
         D3D11_RASTERIZER_DESC raster{};
         raster.FillMode = D3D11_FILL_SOLID;
@@ -137,13 +179,32 @@ namespace canton::d3d11 {
             context->Flush();
         }
         resetCaches();
+        frameRecordedLayers.clear();
+        layerRecordStack.clear();
+        activeRecordingLayers.clear();
         masks.clear();
+        offscreenPool.clear();
+        userShaders.clear();
+        for (auto& cb : userCbuffers) cb.Reset();
+        userCbufferSizes.fill(0);
+        for (auto& smp : samplers) smp.Reset();
+        for (auto& bs : hardwareBlends) bs.Reset();
+        clearPunchOutBlend.Reset();
         maskWidth = maskHeight = 0;
         vertexShader.Reset();
         pixelShader.Reset();
+        userVertexShader.Reset();
+        postVertexShader.Reset();
+        blurPixelShader.Reset();
+        colorFilterPixelShader.Reset();
+        compositePixelShader.Reset();
         inputLayout.Reset();
         instanceBuffer.Reset();
         constantBuffer.Reset();
+        userVsBuffer.Reset();
+        cantonCbuffer.Reset();
+        postVsBuffer.Reset();
+        postPsBuffer.Reset();
         blend.Reset();
         replace.Reset();
         rasterizer.Reset();
@@ -315,9 +376,26 @@ namespace canton::d3d11 {
                 impl_->batchImage = impl_->batchCoverage = nullptr;
                 impl_->focused = {};
                 impl_->focusedOps = {};
+                impl_->releaseFrameLayers();
+                impl_->layerRecordStack.clear();
+                impl_->activeRecordingLayers.clear();
+                for (auto& rt : impl_->offscreenPool) rt.inUse = false;
+                for (auto& mask : impl_->masks) mask.used = false;
                 if (attempt >= 2 || !(isDeviceLost(error.code()) || impl_->deviceLost())) throw;
                 core::Log::w(Impl::TAG, "显示设备丢失，正在重建", error.what());
                 impl_->rebuildDevice();
+            } catch (...) {
+                impl_->pending.clear();
+                impl_->states.clear();
+                impl_->batchImage = impl_->batchCoverage = nullptr;
+                impl_->focused = {};
+                impl_->focusedOps = {};
+                impl_->releaseFrameLayers();
+                impl_->layerRecordStack.clear();
+                impl_->activeRecordingLayers.clear();
+                for (auto& rt : impl_->offscreenPool) rt.inUse = false;
+                for (auto& mask : impl_->masks) mask.used = false;
+                throw;
             }
         }
     }

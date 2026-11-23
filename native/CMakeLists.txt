@@ -4,7 +4,9 @@ add_library(canton_core STATIC
   src/core/FlowLayout.cpp
   src/core/Focus.cpp
   src/core/FocusOwner.cpp
+  src/core/FocusTypes.h
   src/core/Font.cpp
+  src/core/GraphicsEffects.cpp
   src/core/HitTest.cpp
   src/core/HostInput.cpp
   src/core/InputEditing.cpp
@@ -164,12 +166,24 @@ target_link_libraries(canton_win32 PUBLIC Canton::core PRIVATE comctl32 dwmapi g
 find_program(CANTON_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}x64" "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkDir}bin/$ENV{WindowsSDKVersion}x64" REQUIRED)
 set(shader_dir "${CMAKE_CURRENT_BINARY_DIR}/canton-shaders")
 set(quad_shader "${CMAKE_CURRENT_SOURCE_DIR}/src/d3d11/shaders/Quad.hlsl")
+set(effects_shader "${CMAKE_CURRENT_SOURCE_DIR}/src/d3d11/shaders/Effects.hlsl")
 add_custom_command(
   OUTPUT "${shader_dir}/QuadVs.h" "${shader_dir}/QuadPs.h"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${shader_dir}"
   COMMAND "${CANTON_FXC}" /nologo /O3 /T vs_5_0 /E vsMain /Vn kQuadVs /Fh "${shader_dir}/QuadVs.h" "${quad_shader}"
   COMMAND "${CANTON_FXC}" /nologo /O3 /T ps_5_0 /E psMain /Vn kQuadPs /Fh "${shader_dir}/QuadPs.h" "${quad_shader}"
   DEPENDS "${quad_shader}"
+  VERBATIM
+)
+add_custom_command(
+  OUTPUT "${shader_dir}/UserVs.h" "${shader_dir}/PostVs.h" "${shader_dir}/BlurPs.h" "${shader_dir}/ColorFilterPs.h" "${shader_dir}/CompositePs.h"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${shader_dir}"
+  COMMAND "${CANTON_FXC}" /nologo /O3 /T vs_5_0 /E userVsMain /Vn kUserVs /Fh "${shader_dir}/UserVs.h" "${effects_shader}"
+  COMMAND "${CANTON_FXC}" /nologo /O3 /T vs_5_0 /E postVsMain /Vn kPostVs /Fh "${shader_dir}/PostVs.h" "${effects_shader}"
+  COMMAND "${CANTON_FXC}" /nologo /O3 /T ps_5_0 /E blurPsMain /Vn kBlurPs /Fh "${shader_dir}/BlurPs.h" "${effects_shader}"
+  COMMAND "${CANTON_FXC}" /nologo /O3 /T ps_5_0 /E colorFilterPsMain /Vn kColorFilterPs /Fh "${shader_dir}/ColorFilterPs.h" "${effects_shader}"
+  COMMAND "${CANTON_FXC}" /nologo /O3 /T ps_5_0 /E compositePsMain /Vn kCompositePs /Fh "${shader_dir}/CompositePs.h" "${effects_shader}"
+  DEPENDS "${effects_shader}"
   VERBATIM
 )
 
@@ -179,10 +193,17 @@ add_library(canton_d3d11 STATIC
   src/d3d11/PathRaster.cpp
   src/d3d11/RendererCaches.cpp
   src/d3d11/RendererDevice.cpp
+  src/d3d11/RendererEffects.cpp
   src/d3d11/RendererReplay.cpp
+  src/d3d11/ShaderCompiler.cpp
   src/d3d11/VBlankThread.cpp
   "${shader_dir}/QuadVs.h"
   "${shader_dir}/QuadPs.h"
+  "${shader_dir}/UserVs.h"
+  "${shader_dir}/PostVs.h"
+  "${shader_dir}/BlurPs.h"
+  "${shader_dir}/ColorFilterPs.h"
+  "${shader_dir}/CompositePs.h"
 )
 add_library(Canton::d3d11 ALIAS canton_d3d11)
 target_include_directories(canton_d3d11 PRIVATE "${shader_dir}")

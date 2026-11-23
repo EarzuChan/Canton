@@ -33,6 +33,7 @@ namespace canton::core {
         PointerInput = 20,
         SemanticsIncrement = 21,
         SemanticsDecrement = 22,
+        GloballyPositioned = 23,
         Custom = 100,
     };
 

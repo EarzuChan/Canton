@@ -354,18 +354,22 @@ namespace canton::runtime {
 
         const auto actualRoot = boundWindowId_ ? boundRootNodeId_ : root;
         const canton::core::FramePreparation preparation{
-            [&](canton::core::NodeId id, const std::vector<int>& indices) {
+            .materialize = [&](canton::core::NodeId id, const std::vector<int>& indices) {
                 const auto materialized = rearrangeHost_.materializeLayout(id, indices);
                 if (!materialized.ok) throw std::runtime_error(materialized.error);
                 auto transaction = boundWindowId_ ? rearrangeHost_.takeWindowTransaction(*boundWindowId_) : rearrangeHost_.takePendingTransaction();
                 if (!transaction) throw std::runtime_error("Layout 材料化未提交原生候选");
                 return std::move(*transaction);
             },
-            [&](canton::core::NativeScene& candidate) {
+            .draw = [&](canton::core::NativeScene& candidate) {
                 const auto prepared = rearrangeHost_.prepareDrawModifiers(candidate);
                 if (!prepared.ok) throw std::runtime_error(prepared.error);
             },
-            interactionPreparation_,
+            .interaction = interactionPreparation_,
+            .positioned = [&](canton::core::NativeScene& candidate, const std::vector<canton::core::PositionedUpdate>& updates) {
+                const auto dispatched = rearrangeHost_.dispatchPositioned(boundWindowId_.value_or(0), candidate, updates);
+                if (!dispatched.ok) throw std::runtime_error(dispatched.error);
+            },
         };
         auto result = pipelineState_.run(actualRoot, constraints, frame_.framePipelineRunRequested(), finalize, preparation);
         frame_.clearFramePipelineRunRequest();

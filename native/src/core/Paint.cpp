@@ -58,7 +58,8 @@ namespace canton::core {
 
     namespace {
         void translateOp(DrawOp& op, Point offset) {
-            if (op.type == DrawOpType::PopClip || op.type == DrawOpType::PopTransform) return;
+            if (op.type == DrawOpType::PopClip || op.type == DrawOpType::PopTransform || op.type == DrawOpType::BeginRecordLayer || op.type == DrawOpType::EndRecordLayer || op.type == DrawOpType::DrawLayer) return;
+            if (op.type == DrawOpType::PushTransform && op.useMatrix) return;
             op.rect.x += offset.x;
             op.rect.y += offset.y;
             if (op.type == DrawOpType::DrawLine) {
@@ -90,6 +91,7 @@ namespace canton::core {
         }
 
         Affine opTransform(const DrawOp& op) {
+            if (op.useMatrix) return op.matrix;
             return Affine::layer(op.rect, op.transformOriginX, op.transformOriginY, op.scaleX, op.scaleY, op.rotationZ, op.translationX, op.translationY);
         }
 
@@ -109,7 +111,9 @@ namespace canton::core {
 
             std::vector<State> stack{{}};
             PaintBounds result;
+            int recordDepth = 0;
             const auto include = [&](const PaintBounds& local) {
+                if (recordDepth > 0) return;
                 if (!local.known) {
                     result.known = false;
                     return;
@@ -125,21 +129,33 @@ namespace canton::core {
             };
             for (const auto& op : ops) {
                 switch (op.type) {
+                    case DrawOpType::BeginRecordLayer:
+                        result.known = false;
+                        ++recordDepth;
+                        break;
+                    case DrawOpType::EndRecordLayer:
+                        if (recordDepth > 0) --recordDepth;
+                        break;
+                    case DrawOpType::DrawLayer:
+                        if (recordDepth == 0) result.known = false;
+                        break;
                     case DrawOpType::PushTransform:
-                        stack.push_back({stack.back().transform.after(opTransform(op)), stack.back().clip});
+                        if (recordDepth == 0) stack.push_back({stack.back().transform.after(opTransform(op)), stack.back().clip});
                         break;
                     case DrawOpType::PushClip: {
-                        auto next = stack.back();
-                        if (const auto clip = next.transform.project(op.rect))
-                            next.clip = next.clip ? intersectRect(*next.clip, *clip) : *clip;
-                        else
-                            result.known = false;
-                        stack.push_back(next);
+                        if (recordDepth == 0) {
+                            auto next = stack.back();
+                            if (const auto clip = next.transform.project(op.rect))
+                                next.clip = next.clip ? intersectRect(*next.clip, *clip) : *clip;
+                            else
+                                result.known = false;
+                            stack.push_back(next);
+                        }
                         break;
                     }
                     case DrawOpType::PopTransform:
                     case DrawOpType::PopClip:
-                        if (stack.size() > 1) stack.pop_back();
+                        if (recordDepth == 0 && stack.size() > 1) stack.pop_back();
                         break;
                     case DrawOpType::ContentMarker:
                         include(children);
@@ -156,12 +172,15 @@ namespace canton::core {
             DrawOp op;
             op.nodeId = node;
             op.rect = command.rect;
-            op.color = command.gradient ? 0xffffffffu : command.color;
+            op.color = (command.gradient || command.shader) ? 0xffffffffu : command.color;
             op.gradient = command.gradient;
+            op.shader = command.shader;
+            op.blendMode = command.blendMode;
+            op.colorFilter = command.colorFilter;
             op.strokeWidth = command.strokeWidth;
             op.cap = command.cap;
             op.join = command.join;
-            op.corners = CornerRadii::uniform(command.radius);
+            op.corners = command.hasCorners ? command.corners : CornerRadii::uniform(command.radius);
             op.lineEnd = command.lineEnd;
             op.path = command.path;
             if (command.path) op.rect = command.path->bounds;
@@ -192,11 +211,27 @@ namespace canton::core {
                     op.transformOriginX = command.originX;
                     op.transformOriginY = command.originY;
                     break;
+                case DrawCommandKind::MatrixTransform:
+                    op.type = DrawOpType::PushTransform;
+                    op.useMatrix = true;
+                    op.matrix = command.matrix;
+                    break;
                 case DrawCommandKind::PopTransform:
                     op.type = DrawOpType::PopTransform;
                     break;
                 case DrawCommandKind::Content:
                     op.type = DrawOpType::ContentMarker;
+                    break;
+                case DrawCommandKind::BeginRecordLayer:
+                    op.type = DrawOpType::BeginRecordLayer;
+                    op.layerHandle = command.layerHandle;
+                    break;
+                case DrawCommandKind::EndRecordLayer:
+                    op.type = DrawOpType::EndRecordLayer;
+                    break;
+                case DrawCommandKind::DrawLayer:
+                    op.type = DrawOpType::DrawLayer;
+                    op.layerSnapshot = command.layerSnapshot;
                     break;
                 case DrawCommandKind::Path:
                     op.type = DrawOpType::DrawPath;
@@ -246,6 +281,9 @@ namespace canton::core {
             if (next.content)
                 for (const auto& op : *next.content) includeBounds(next.bounds, drawOpBounds(op));
             if (next.layer) {
+                if (next.layer->groupRenderEffect && next.bounds.known && !next.bounds.empty) {
+                    next.bounds.rect = renderEffectOutputBounds(next.layer->groupRenderEffect, next.bounds.rect);
+                }
                 for (auto it = next.layer->before.rbegin(); it != next.layer->before.rend(); ++it)
                     if (it->type == DrawOpType::PushTransform) next.bounds = transformBounds(next.bounds, *it);
                 for (const auto& op : next.layer->before) includeBounds(next.bounds, drawOpBounds(op));
@@ -273,7 +311,9 @@ namespace canton::core {
             if (alpha >= 1 || !fragment) return fragment;
             auto layer = std::make_shared<PaintLayerFragment>();
             layer->value = AnimateItemModifier{};
-            layer->contentAlpha = std::max(0.0f, alpha);
+            layer->useOffscreenGroup = true;
+            layer->groupAlpha = std::max(0.0f, alpha);
+            layer->contentAlpha = 1.0f;
             PaintFragment wrapper;
             wrapper.layer = std::move(layer);
             wrapper.children.push_back({fragment, {}});
@@ -361,7 +401,8 @@ namespace canton::core {
     }
 
     PaintBounds drawOpBounds(const DrawOp& op) {
-        if (op.type == DrawOpType::PushClip || op.type == DrawOpType::PopClip || op.type == DrawOpType::PushTransform || op.type == DrawOpType::PopTransform || op.type == DrawOpType::ContentMarker) return {};
+        if (op.type == DrawOpType::PushClip || op.type == DrawOpType::PopClip || op.type == DrawOpType::PushTransform || op.type == DrawOpType::PopTransform || op.type == DrawOpType::ContentMarker || op.type == DrawOpType::BeginRecordLayer || op.type == DrawOpType::EndRecordLayer) return {};
+        if (op.type == DrawOpType::DrawLayer) return {{}, false, false};
         auto rect = op.rect;
         if (op.type == DrawOpType::DrawText) {
             if (op.inputText || (op.overflow != TextOverflow::Visible && textHasVisualOverflow(op))) return {rect, true, rect.width <= 0 || rect.height <= 0};
@@ -437,14 +478,29 @@ namespace canton::core {
                         if (op.type != DrawOpType::DrawPainter || op.painter.content) ops.push_back(std::move(op));
                     }
                     split = ops.size();
-                } else
+                } else {
+                    if (const auto* style = std::get_if<PaintStyleSemantics>(&value); style && style->kind == PaintStyleKind::Alpha && style->alpha < 1.0f) {
+                        next->useOffscreenGroup = true;
+                        next->groupAlpha = style->alpha;
+                    } else if (const auto* transform = std::get_if<TransformModifierSemantics>(&value)) {
+                        const bool hasEffect = static_cast<bool>(transform->renderEffect) || static_cast<bool>(transform->colorFilter) || transform->blendMode != BlendMode::SrcOver;
+                        const bool needsOffscreen = transform->compositingStrategy == CompositingStrategy::Offscreen || hasEffect || (transform->compositingStrategy == CompositingStrategy::Auto && transform->alpha < 1.0f);
+                        if (needsOffscreen) {
+                            next->useOffscreenGroup = true;
+                            next->groupAlpha = transform->alpha;
+                            next->groupBlendMode = transform->blendMode;
+                            next->groupColorFilter = transform->colorFilter;
+                            next->groupRenderEffect = transform->renderEffect;
+                        }
+                    }
                     collectModifier(
                         tree, id, index, ops, 1,
                         [&](float alpha) {
                             split = ops.size();
-                            next->contentAlpha = alpha;
+                            next->contentAlpha = next->useOffscreenGroup ? 1.0f : alpha;
                         },
                         index + 1);
+                }
                 if (!customDraw)
                     for (auto& op : ops) translateOp(op, {-instance.bounds.x, -instance.bounds.y});
                 next->before.assign(ops.begin(), ops.begin() + static_cast<std::ptrdiff_t>(split));
@@ -477,10 +533,71 @@ namespace canton::core {
         return current;
     }
 
+    void validateRenderLayerCycles(const PlacedPaintFragment& root) {
+        std::unordered_map<std::uint64_t, std::vector<std::uint64_t>> edges;
+        std::vector<std::uint64_t> activeRecordStack;
+
+        std::function<void(const PlacedPaintFragment&)> walkFragment;
+        const auto walkOps = [&](const std::vector<DrawOp>& ops, const PaintFragment* owner) {
+            for (const auto& op : ops) {
+                if (op.type == DrawOpType::BeginRecordLayer) {
+                    activeRecordStack.push_back(op.layerHandle.identity);
+                    edges.try_emplace(op.layerHandle.identity);
+                } else if (op.type == DrawOpType::EndRecordLayer) {
+                    if (!activeRecordStack.empty()) activeRecordStack.pop_back();
+                } else if (op.type == DrawOpType::DrawLayer && op.layerSnapshot) {
+                    const auto targetId = op.layerSnapshot->handle.identity;
+                    if (!activeRecordStack.empty()) {
+                        edges[activeRecordStack.back()].push_back(targetId);
+                    }
+                } else if (op.type == DrawOpType::ContentMarker && owner) {
+                    for (const auto& child : owner->children) walkFragment(child);
+                }
+            }
+        };
+
+        walkFragment = [&](const PlacedPaintFragment& placed) {
+            if (!placed.fragment) return;
+            const auto& frag = *placed.fragment;
+            if (frag.layer && frag.layer->drawCommands) {
+                walkOps(frag.layer->before, &frag);
+                return;
+            }
+            if (frag.layer) walkOps(frag.layer->before, nullptr);
+            if (frag.content) walkOps(*frag.content, nullptr);
+            for (const auto& child : frag.children) walkFragment(child);
+            if (frag.layer) walkOps(frag.layer->after, nullptr);
+        };
+
+        walkFragment(root);
+        if (edges.empty()) return;
+
+        std::unordered_map<std::uint64_t, int> state;
+        std::function<void(std::uint64_t)> dfs = [&](std::uint64_t node) {
+            state[node] = 1;
+            const auto it = edges.find(node);
+            if (it != edges.end()) {
+                for (const auto next : it->second) {
+                    const int s = state[next];
+                    if (s == 1) {
+                        throw std::runtime_error("检测到 RenderLayer 自引用环，禁止在录制层内直接或间接绘制自身");
+                    }
+                    if (s == 0) dfs(next);
+                }
+            }
+            state[node] = 2;
+        };
+        for (const auto& [id, _] : edges) {
+            if (state[id] == 0) dfs(id);
+        }
+    }
+
     PlacedPaintFragment DrawOpsBuilder::build(LayoutTree& tree, NodeId root, PaintWorkCounters& counters) const {
         if (!tree.contains(root)) return {};
         const auto& node = tree.node(root);
-        return {buildFragment(tree, root, counters), {node.bounds.x, node.bounds.y}};
+        PlacedPaintFragment built{buildFragment(tree, root, counters), {node.bounds.x, node.bounds.y}};
+        validateRenderLayerCycles(built);
+        return built;
     }
 
     std::vector<DrawOp> exportDrawOps(const PlacedPaintFragment& root) {
@@ -512,7 +629,7 @@ namespace canton::core {
                 return;
             }
             if (part.layer) copyOps(part.layer->before, alpha);
-            const auto contentAlpha = alpha * (part.layer ? part.layer->contentAlpha : 1.0f);
+            const auto contentAlpha = alpha * (part.layer ? (part.layer->useOffscreenGroup ? part.layer->groupAlpha : part.layer->contentAlpha) : 1.0f);
             if (part.content) copyOps(*part.content, contentAlpha);
             for (const auto& child : part.children) append(child, origin, contentAlpha);
             if (part.layer) copyOps(part.layer->after, alpha);
@@ -559,13 +676,14 @@ namespace canton::core {
             }
             const auto overlay = style->kind == PaintStyleKind::Border;
             if (overlay) content();
-            if (style->color != 0 || style->gradient) {
+            if (style->color != 0 || style->gradient || style->shader) {
                 DrawOp op;
                 op.type = overlay ? DrawOpType::StrokeRect : DrawOpType::FillRect;
                 op.nodeId = id;
                 op.rect = instance.bounds;
-                op.color = withAlpha(style->gradient ? 0xffffffffu : style->color, alpha);
+                op.color = withAlpha((style->gradient || style->shader) ? 0xffffffffu : style->color, alpha);
                 op.gradient = style->gradient;
+                op.shader = style->shader;
                 op.strokeWidth = style->strokeWidth;
                 op.strokeInside = overlay;
                 op.shape = shapeType(*style);
@@ -601,7 +719,7 @@ namespace canton::core {
             op.transformOriginY = layer->transformOriginY;
             ops.push_back(op);
             alpha *= layer->alpha;
-            if (layer->clip) pushClip({});
+            if (layer->clip) pushClip(layer->shape);
             content();
             if (layer->clip) pop(DrawOpType::PopClip);
             pop(DrawOpType::PopTransform);
@@ -638,6 +756,7 @@ namespace canton::core {
                 op.repeat = paint->repeat;
                 op.slices = paint->slices;
                 op.hasTint = paint->tint.has_value();
+                op.colorFilter = paint->colorFilter;
                 op.color = withAlpha(paint->tint.value_or(0xffffffffu), alpha * paint->alpha);
                 ops.push_back(std::move(op));
             }

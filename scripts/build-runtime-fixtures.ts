@@ -12,7 +12,7 @@ await rm(workspace, { recursive: true, force: true })
 await mkdir(workspace, { recursive: true })
 await prepareRuntimeFixtureWorkspace(workspace)
 // 夹具名到入口文件；有 public 目录的夹具，其中的资源会随包输出
-const fixtures: Record<string, string> = { 'app-smoke': 'src/main.ts', showcase: 'main.ts', layout: 'main.ts', lazy: 'main.ts', 'rearrange-runtime': 'main.ts', 'viewport-runtime': 'main.ts', 'window-interaction': 'main.ts', 'render-windows': 'main.ts' }
+const fixtures: Record<string, string> = { 'app-smoke': 'src/main.ts', showcase: 'main.ts', layout: 'main.ts', lazy: 'main.ts', 'rearrange-runtime': 'main.ts', 'viewport-runtime': 'main.ts', 'window-interaction': 'main.ts', 'render-windows': 'main.ts', 'shader-effects': 'main.ts' }
 const requested = process.argv.slice(3)
 for (const fixture of requested) if (!(fixture in fixtures)) throw new Error(`未知的运行时夹具：${fixture}`)
 for (const fixture of requested.length ? requested : Object.keys(fixtures)) {

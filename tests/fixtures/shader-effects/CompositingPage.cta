@@ -1,0 +1,149 @@
+<template>
+    <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(12.dp)">
+        <Text text="Offscreen Compositing, BlendMode & Live Reflection" :style="heading" />
+
+        <Row :horizontalArrangement="Arrangement.spacedBy(12.dp)">
+            <!-- 1. 多级 RenderEffect.chain（模糊 + 色彩滤镜） -->
+            <Column :verticalArrangement="Arrangement.spacedBy(4.dp)">
+                <Text text="RenderEffect.chain" :style="caption" />
+                <Box :modifier="chainCardMod">
+                    <Column :verticalArrangement="Arrangement.spacedBy(4.dp)">
+                        <Box :modifier="M.size(56.dp, 22.dp).background(palette.pink, rounded(6.dp))" />
+                        <Box :modifier="M.size(80.dp, 22.dp).background(palette.sky, rounded(6.dp))" />
+                        <Box :modifier="M.size(64.dp, 22.dp).background(palette.amber, rounded(6.dp))" />
+                    </Column>
+                </Box>
+            </Column>
+
+            <!-- 2. RenderLayer + BlendMode.DstIn 动态倒影 -->
+            <Column :verticalArrangement="Arrangement.spacedBy(4.dp)">
+                <Text text="RenderLayer + DstIn Reflection" :style="caption" />
+                <Box :modifier="M.size(164.dp, 136.dp).background(palette.panel, rounded(12.dp)).drawWithCache(buildReflection)" />
+            </Column>
+
+            <!-- 3. 组透明度对比：Offscreen vs ModulateAlpha -->
+            <Column :verticalArrangement="Arrangement.spacedBy(4.dp)">
+                <Text text="Offscreen vs ModulateAlpha (alpha=0.5)" :style="caption" />
+                <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                    <Box :modifier="offscreenOpacityMod">
+                        <Box :modifier="M.offset({ x: 8.dp, y: 16.dp }).size(56.dp, 56.dp).background(palette.red, CircleShape)" />
+                        <Box :modifier="M.offset({ x: 36.dp, y: 16.dp }).size(56.dp, 56.dp).background(palette.blue, CircleShape)" />
+                    </Box>
+                    <Box :modifier="modulateOpacityMod">
+                        <Box :modifier="M.offset({ x: 8.dp, y: 16.dp }).size(56.dp, 56.dp).background(palette.red, CircleShape)" />
+                        <Box :modifier="M.offset({ x: 36.dp, y: 16.dp }).size(56.dp, 56.dp).background(palette.blue, CircleShape)" />
+                    </Box>
+                </Row>
+            </Column>
+        </Row>
+
+        <!-- 4. 代表性 BlendMode 混合卡片画廊 -->
+        <Text text="BlendMode Showcase (Multiply / Screen / Overlay / Plus / Difference / Hue)" :style="caption" />
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+            <Box c-for="item in blendCards" :key="item.name" :modifier="M.size(88.dp, 90.dp).background(palette.panel, rounded(10.dp)).drawBehind(item.draw).padding(6.dp)">
+                <Text :text="item.name" :style="caption" />
+            </Box>
+        </Row>
+    </Column>
+</template>
+
+<script>
+import { Arrangement, BlendMode, CircleShape, Color, ColorFilter, ColorMatrix, CompositingStrategy, M, RenderEffect, TileMode, createRenderLayer, linearGradient, rounded } from '@canton/framework/ui'
+import type { DrawCacheScope, DrawScope } from '@canton/framework/ui'
+import { caption, heading } from './theme.ts'
+
+const palette = {
+    panel: Color(0xff1e293b),
+    pink: Color(0xfff472b6),
+    sky: Color(0xff38bdf8),
+    amber: Color(0xfffbbf24),
+    red: Color(0xffef4444),
+    blue: Color(0xff3b82f6),
+    green: Color(0xff22c55e),
+}
+
+const warmFilter = ColorFilter.colorMatrix(
+    new ColorMatrix([
+        1.2, 0.1, 0, 0, 12,
+        0, 1.05, 0, 0, 4,
+        0, 0, 0.85, 0, 0,
+        0, 0, 0, 1, 0,
+    ]),
+)
+
+const chainEffect = RenderEffect.chain(RenderEffect.blur(6.px, 6.px, TileMode.Clamp), RenderEffect.colorFilter(warmFilter))
+
+const chainCardMod = M.size(144.dp, 136.dp)
+    .graphicsLayer({
+        clip: true,
+        shape: rounded(14.dp),
+        renderEffect: chainEffect,
+    })
+    .background(palette.panel)
+    .padding(14.dp)
+
+const offscreenOpacityMod = M.size(104.dp, 136.dp).background(palette.panel, rounded(12.dp))
+    .graphicsLayer({ alpha: 0.5, compositingStrategy: CompositingStrategy.Offscreen })
+
+const modulateOpacityMod = M.size(104.dp, 136.dp).background(palette.panel, rounded(12.dp))
+    .graphicsLayer({ alpha: 0.5, compositingStrategy: CompositingStrategy.ModulateAlpha })
+
+const reflectionGrad = linearGradient([Color(0xffffffff), Color(0x00ffffff)], { start: { x: 0, y: 0 }, end: { x: 0, y: 1 } })
+const cardGrad = linearGradient([Color(0xff38bdf8), Color(0xff8b5cf6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+
+function buildReflection({ onDispose }: DrawCacheScope) {
+    const cardLayer = createRenderLayer()
+    const reflectedLayer = createRenderLayer()
+    onDispose(() => {
+        cardLayer.dispose()
+        reflectedLayer.dispose()
+    })
+
+    return {
+        onDrawBehind(scope: DrawScope) {
+            scope.recordLayer(cardLayer, { width: 120.px, height: 52.px }, () => {
+                scope.drawRoundRect({ x: 0.px, y: 0.px, width: 120.px, height: 52.px, radius: 12.px, brush: cardGrad })
+                scope.drawCircle({ centerX: 28.px, centerY: 26.px, radius: 14.px, color: palette.amber })
+                scope.drawRoundRect({ x: 52.px, y: 16.px, width: 54.px, height: 8.px, radius: 4.px, color: Color(0xffffffff) })
+                scope.drawRoundRect({ x: 52.px, y: 30.px, width: 38.px, height: 6.px, radius: 3.px, color: Color(0xbbffffff) })
+            })
+
+            // 原图
+            scope.withTransform({ translationX: 22.px, translationY: 14.px }, () => {
+                scope.drawLayer(cardLayer)
+            })
+
+            // 垂直镜像 + DstIn 渐变遮罩淡出倒影
+            scope.recordLayer(reflectedLayer, { width: 120.px, height: 52.px }, () => {
+                scope.withTransform({ scaleY: -1, originX: 0.5, originY: 0.5 }, () => {
+                    scope.drawLayer(cardLayer)
+                })
+                scope.drawRect({ x: 0.px, y: 0.px, width: 120.px, height: 52.px, brush: reflectionGrad, blendMode: BlendMode.DstIn })
+            })
+            reflectedLayer.alpha = 0.65
+            scope.withTransform({ translationX: 22.px, translationY: 72.px }, () => {
+                scope.drawLayer(reflectedLayer)
+            })
+        },
+    }
+}
+
+function makeBlendCard(name: string, mode: BlendMode) {
+    return {
+        name,
+        draw(scope: DrawScope) {
+            scope.drawCircle({ centerX: 34.px, centerY: 54.px, radius: 22.px, color: palette.sky })
+            scope.drawCircle({ centerX: 56.px, centerY: 54.px, radius: 22.px, color: palette.pink, blendMode: mode })
+        },
+    }
+}
+
+const blendCards = [
+    makeBlendCard('Multiply', BlendMode.Multiply),
+    makeBlendCard('Screen', BlendMode.Screen),
+    makeBlendCard('Overlay', BlendMode.Overlay),
+    makeBlendCard('Plus', BlendMode.Plus),
+    makeBlendCard('Difference', BlendMode.Difference),
+    makeBlendCard('Hue', BlendMode.Hue),
+]
+</script>

@@ -11,6 +11,8 @@ namespace canton::core {
     struct Affine {
         double a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;
 
+        bool operator==(const Affine&) const = default;
+
         static Affine translation(double x, double y) noexcept {
             return {1, 0, 0, 1, x, y};
         }

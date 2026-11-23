@@ -1,0 +1,69 @@
+<template>
+    <App &app-handle>
+        <Window title="Canton Shader & Liquid Glass" :state="windowState" :onCloseRequest="appHandle.exitApplication">
+            <Column &column-handle :modifier="M.fillMaxSize().background(palette.bg)">
+                <Row :modifier="M.fillMaxWidth().background(palette.bar).padding({ horizontal: 12.dp, vertical: 8.dp })" :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalAlignment="Alignment.CenterVertically">
+                    <Text text="Canton Visual Lab" :style="subheading" :modifier="M.padding({ end: 12.dp })" />
+
+                    <Box :modifier="tabMod('glass')">
+                        <Text text="Liquid Glass" :style="body" />
+                    </Box>
+
+                    <Box :modifier="tabMod('brushes')">
+                        <Text text="HLSL Brushes" :style="body" />
+                    </Box>
+
+                    <Box :modifier="tabMod('compositing')">
+                        <Text text="Compositing" :style="body" />
+                    </Box>
+                </Row>
+
+                <Box :modifier="M.fillMaxWidth().then(columnHandle.weight(1))">
+                    <GlassPage c-if="page === 'glass'" :preset="argument" />
+
+                    <BrushLabPage c-else-if="page === 'brushes'" />
+
+                    <CompositingPage c-else-if="page === 'compositing'" />
+
+                    <Text c-else :text="`unknown page ${page}`" :style="body" />
+
+                    <Input value="" :selectAllOnFocus="true" :onSubmit="command" :modifier="M.size(1.dp, 1.dp).alpha(0)" />
+                </Box>
+            </Column>
+        </Window>
+    </App>
+</template>
+
+<script>
+import { ref, createWindowState } from '@canton/framework'
+import { Alignment, Arrangement, Color, M, rounded } from '@canton/framework/ui'
+
+const windowState = createWindowState({ size: { width: 960.dp, height: 640.dp } })
+import { body, subheading } from './theme.ts'
+import GlassPage from './GlassPage.cta'
+import BrushLabPage from './BrushLabPage.cta'
+import CompositingPage from './CompositingPage.cta'
+
+const palette = {
+    bg: Color(0xff0b1120),
+    bar: Color(0xff111827),
+    tabActive: Color(0xff2563eb),
+    tabIdle: Color(0xff1e293b),
+}
+
+const page = ref('glass')
+const argument = ref(0)
+
+function tabMod(name: string) {
+    return M.background(page.value === name ? palette.tabActive : palette.tabIdle, rounded(8.dp))
+        .padding({ horizontal: 12.dp, vertical: 6.dp })
+        .clickable({ onClick: () => { page.value = name } })
+        .pointerIcon('hand')
+}
+
+function command(value: string) {
+    const [name, detail] = value.split(':')
+    page.value = name!
+    argument.value = detail === undefined ? 0 : Number(detail)
+}
+</script>

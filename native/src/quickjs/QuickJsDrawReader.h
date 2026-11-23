@@ -12,12 +12,39 @@
 
 namespace canton::quickjs {
     // 绘制命令操作码，与 framework draw.ts 的 DrawOpcode 一一对应
-    enum class DrawOpcode : int { Rect = 1, RoundRect = 2, Oval = 3, Line = 4, Clip = 5, PopClip = 6, Transform = 7, PopTransform = 8, Content = 9, Path = 10, Text = 11, Painter = 12, ClipPath = 13, Native = 14 };
+    enum class DrawOpcode : int {
+        Rect = 1,
+        RoundRect = 2,
+        Oval = 3,
+        Line = 4,
+        Clip = 5,
+        PopClip = 6,
+        Transform = 7,
+        PopTransform = 8,
+        Content = 9,
+        Path = 10,
+        Text = 11,
+        Painter = 12,
+        ClipPath = 13,
+        Native = 14,
+        MatrixTransform = 15,
+        BeginRecordLayer = 16,
+        EndRecordLayer = 17,
+        DrawLayer = 18,
+        RoundRectCorners = 19,
+        ClipRoundRectCorners = 20,
+        PaintEffect = 21,
+    };
 
     class QuickJsDrawReader {
        public:
         // local 为本实例的 painter 注册表，可为空；名称先查它再查进程级注册表
-        explicit QuickJsDrawReader(JSContext* context, const canton::core::NativePainterRegistry* local = nullptr) : context_(context), local_(local) {}
+        explicit QuickJsDrawReader(
+            JSContext* context,
+            const canton::core::NativePainterRegistry* local = nullptr,
+            const canton::core::RuntimeEffectRegistry* effects = nullptr,
+            const canton::core::RenderLayerRegistry* layers = nullptr)
+            : context_(context), local_(local), effects_(effects), layers_(layers) {}
 
         // 读取 { ops: Float64Array, refs: [] }：一次取得整块数值流，顺序解码；非数值参数按下标取引用表
         canton::core::DrawCommands read(JSValueConst value) {
@@ -41,13 +68,38 @@ namespace canton::quickjs {
 
             DrawCommands result;
             std::vector<DrawCommandKind> stack;
+            BlendMode pendingBlendMode = BlendMode::SrcOver;
+            ColorFilter pendingColorFilter;
+            bool hasPendingPaintEffect = false;
+            const auto consumePaintEffect = [&](DrawCommand& cmd) {
+                if (!hasPendingPaintEffect) return;
+                cmd.blendMode = pendingBlendMode;
+                cmd.colorFilter = pendingColorFilter;
+                pendingBlendMode = BlendMode::SrcOver;
+                pendingColorFilter = {};
+                hasPendingPaintEffect = false;
+            };
             while (cursor.index < cursor.size) {
                 DrawCommand command;
-                const auto opcode = static_cast<DrawOpcode>(cursor.integer(1, 14, "操作码"));
+                const auto opcode = static_cast<DrawOpcode>(cursor.integer(1, 21, "操作码"));
                 switch (opcode) {
+                    case DrawOpcode::PaintEffect: {
+                        pendingBlendMode = static_cast<BlendMode>(cursor.integer(0, 28, "混合模式"));
+                        const auto filterRef = cursor.integer(-1, 1000000, "色彩滤镜引用");
+                        if (filterRef >= 0) {
+                            if (static_cast<std::uint32_t>(filterRef) >= refCount_) throw std::invalid_argument("色彩滤镜引用下标无效");
+                            ScopedValue fval(context_, JS_GetPropertyUint32(context_, refs_.get(), static_cast<std::uint32_t>(filterRef)));
+                            pendingColorFilter = QuickJsEffectsReader(context_, effects_, layers_).readColorFilter(fval.get());
+                        } else {
+                            pendingColorFilter = {};
+                        }
+                        hasPendingPaintEffect = true;
+                        continue;
+                    }
                     case DrawOpcode::Rect:
                     case DrawOpcode::RoundRect:
                     case DrawOpcode::Oval: {
+                        consumePaintEffect(command);
                         command.kind = opcode == DrawOpcode::Rect ? DrawCommandKind::Rectangle : opcode == DrawOpcode::RoundRect ? DrawCommandKind::RoundedRectangle : DrawCommandKind::Oval;
                         command.rect = cursor.rect();
                         paint(cursor, command);
@@ -55,7 +107,18 @@ namespace canton::quickjs {
                         if (opcode == DrawOpcode::RoundRect) command.radius = cursor.number(true);
                         break;
                     }
+                    case DrawOpcode::RoundRectCorners: {
+                        consumePaintEffect(command);
+                        command.kind = DrawCommandKind::RoundedRectangle;
+                        command.rect = cursor.rect();
+                        paint(cursor, command);
+                        command.strokeWidth = cursor.number(true);
+                        command.hasCorners = true;
+                        command.corners = {cursor.number(true), cursor.number(true), cursor.number(true), cursor.number(true)};
+                        break;
+                    }
                     case DrawOpcode::Line:
+                        consumePaintEffect(command);
                         command.kind = DrawCommandKind::Line;
                         command.rect = {cursor.number(), cursor.number(), 0, 0};
                         command.lineEnd = {cursor.number(), cursor.number()};
@@ -70,6 +133,14 @@ namespace canton::quickjs {
                         command.radius = cursor.number(true);
                         stack.push_back(command.kind);
                         break;
+                    case DrawOpcode::ClipRoundRectCorners:
+                        command.kind = DrawCommandKind::PushClip;
+                        command.shape = DrawCommandShape::Rounded;
+                        command.rect = cursor.rect();
+                        command.hasCorners = true;
+                        command.corners = {cursor.number(true), cursor.number(true), cursor.number(true), cursor.number(true)};
+                        stack.push_back(command.kind);
+                        break;
                     case DrawOpcode::Transform:
                         command.kind = DrawCommandKind::PushTransform;
                         command.rect = {0, 0, cursor.number(true), cursor.number(true)};
@@ -82,6 +153,30 @@ namespace canton::quickjs {
                         command.originY = cursor.number();
                         stack.push_back(command.kind);
                         break;
+                    case DrawOpcode::MatrixTransform:
+                        command.kind = DrawCommandKind::MatrixTransform;
+                        command.matrix = {cursor.number(), cursor.number(), cursor.number(), cursor.number(), cursor.number(), cursor.number()};
+                        stack.push_back(DrawCommandKind::PushTransform);
+                        break;
+                    case DrawOpcode::BeginRecordLayer: {
+                        command.kind = DrawCommandKind::BeginRecordLayer;
+                        ScopedValue handleVal(context_, ref(cursor));
+                        command.layerHandle = QuickJsEffectsReader(context_, effects_, layers_).readLayerHandle(handleVal.get());
+                        command.rect = {0, 0, cursor.number(true), cursor.number(true)};
+                        stack.push_back(DrawCommandKind::BeginRecordLayer);
+                        break;
+                    }
+                    case DrawOpcode::EndRecordLayer:
+                        if (stack.empty() || stack.back() != DrawCommandKind::BeginRecordLayer) throw std::invalid_argument("RenderLayer 录制结束不匹配");
+                        stack.pop_back();
+                        command.kind = DrawCommandKind::EndRecordLayer;
+                        break;
+                    case DrawOpcode::DrawLayer: {
+                        command.kind = DrawCommandKind::DrawLayer;
+                        ScopedValue snapVal(context_, ref(cursor));
+                        command.layerSnapshot = QuickJsEffectsReader(context_, effects_, layers_).readRenderLayerSnapshot(snapVal.get());
+                        break;
+                    }
                     case DrawOpcode::PopClip:
                     case DrawOpcode::PopTransform: {
                         const auto clip = opcode == DrawOpcode::PopClip;
@@ -95,6 +190,7 @@ namespace canton::quickjs {
                         command.kind = DrawCommandKind::Content;
                         break;
                     case DrawOpcode::Path:
+                        consumePaintEffect(command);
                         command.kind = DrawCommandKind::Path;
                         paint(cursor, command);
                         command.strokeWidth = cursor.number(true);
@@ -109,6 +205,7 @@ namespace canton::quickjs {
                         stack.push_back(command.kind);
                         break;
                     case DrawOpcode::Text: {
+                        consumePaintEffect(command);
                         command.kind = DrawCommandKind::Text;
                         ScopedValue text(context_, ref(cursor));
                         if (!JS_IsString(text.get())) throw std::invalid_argument("绘制文字需要字符串");
@@ -153,6 +250,7 @@ namespace canton::quickjs {
                         break;
                     }
                     case DrawOpcode::Painter: {
+                        consumePaintEffect(command);
                         command.kind = DrawCommandKind::Painter;
                         ScopedValue painter(context_, ref(cursor));
                         const auto snapshot = QuickJsPainterResources::read(context_, painter.get());
@@ -188,6 +286,8 @@ namespace canton::quickjs {
        private:
         JSContext* context_;
         const canton::core::NativePainterRegistry* local_;
+        const canton::core::RuntimeEffectRegistry* effects_ = nullptr;
+        const canton::core::RenderLayerRegistry* layers_ = nullptr;
         ScopedValue refs_{context_, JS_UNDEFINED};
         std::uint32_t refCount_ = 0;
 
@@ -307,9 +407,10 @@ namespace canton::quickjs {
             cursor.next();
             if (std::floor(value) != value || -value > refCount_) throw std::invalid_argument("绘制画笔引用无效");
             ScopedValue brush(context_, JS_GetPropertyUint32(context_, refs_.get(), static_cast<std::uint32_t>(-value - 1)));
-            auto result = QuickJsBrushReader(context_).read(brush.get());
+            auto result = QuickJsBrushReader(context_, effects_).read(brush.get());
             command.color = result.color;
             command.gradient = std::move(result.gradient);
+            command.shader = std::move(result.shader);
         }
 
         // 路径：填充规则、动词数，随后每个动词带各自参数；同时求端点、控制点与弧矩形的外包盒

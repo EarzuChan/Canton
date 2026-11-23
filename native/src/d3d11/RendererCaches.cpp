@@ -364,6 +364,8 @@ namespace canton::d3d11 {
         std::erase_if(images, [](const auto& item) { return item.second.owner.expired(); });
         // 矢量图按像素尺寸各存一份，缩放动画会留下一串不再用的尺寸
         std::erase_if(vectors, [&](const auto& item) { return item.second.owner.expired() || item.second.lastUsedFrame + 120 < frameNumber; });
+        // 离屏 RT 池空闲回收：连续 60 帧未使用的槽位释放显存
+        std::erase_if(offscreenPool, [&](const OffscreenTarget& rt) { return !rt.inUse && rt.lastUsedFrame + 60 < frameNumber; });
         if (dedicatedBytes > dedicatedBudget) resetAtlas();
     }
 }

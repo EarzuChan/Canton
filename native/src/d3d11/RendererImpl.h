@@ -77,7 +77,93 @@ namespace canton::d3d11 {
         ComPtr<ID3D11Texture2D> texture;
         ComPtr<ID3D11RenderTargetView> target;
         ComPtr<ID3D11ShaderResourceView> view;
+        int width = 0, height = 0;
         bool used = false;
+    };
+
+    struct OffscreenTarget {
+        ComPtr<ID3D11Texture2D> texture;
+        ComPtr<ID3D11RenderTargetView> rtv;
+        ComPtr<ID3D11ShaderResourceView> srv;
+        int width = 0, height = 0;
+        bool inUse = false;
+        std::uint64_t lastUsedFrame = 0;
+    };
+
+    struct UserShaderKey {
+        std::uint64_t identity = 0;
+        std::uint64_t revision = 0;
+        bool operator==(const UserShaderKey&) const = default;
+    };
+
+    struct UserShaderKeyHash {
+        std::size_t operator()(const UserShaderKey& key) const noexcept {
+            auto seed = std::hash<std::uint64_t>()(key.identity);
+            seed ^= std::hash<std::uint64_t>()(key.revision) + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+            return seed;
+        }
+    };
+
+    struct RecordedLayer {
+        int rtIndex = -1;
+        int contentWidth = 0;
+        int contentHeight = 0;
+    };
+
+    struct SavedTargetState {
+        ID3D11RenderTargetView* targetView = nullptr;
+        int targetWidth = 0;
+        int targetHeight = 0;
+        std::vector<RenderState> states;
+        std::size_t savedDepth = 0;
+        std::uint64_t layerId = 0;
+        int rtIndex = -1;
+        int contentWidth = 0;
+        int contentHeight = 0;
+    };
+
+    struct UserVsConstants {
+        float rect[4]{};
+        float xform0[4]{1, 0, 0, 1};
+        float xform1[4]{};
+        float fragRect[4]{};
+    };
+
+    struct CantonConstants {
+        float resolution[2]{};
+        float invResolution[2]{};
+    };
+
+    struct PostVsConstants {
+        float rect[4]{};
+        float xform0[4]{1, 0, 0, 1};
+        float xform1[4]{};
+        float uvRect[4]{0, 0, 1, 1};
+        float dstUvRect[4]{0, 0, 1, 1};
+    };
+
+    struct BlurParamsConstants {
+        float sizeAndInv[4]{};
+        float dirSigma[4]{};
+        float tileShift[4]{};
+    };
+
+    struct CompositeParamsConstants {
+        float clipRow0[4]{};
+        float clipRow1[4]{};
+        float clipShape[4]{};
+        float clipRadii[4]{};
+        float clipFlags[4]{};
+        float blendAlpha[4]{};
+        float boxShape[4]{};
+        float filterMeta[4]{};
+        float filterColor[4]{};
+        float filterAdd[4]{};
+        float matrixRow0[4]{};
+        float matrixRow1[4]{};
+        float matrixRow2[4]{};
+        float matrixRow3[4]{};
+        float matrixBias[4]{};
     };
 
     // 图集里或独立纹理上的一块覆盖率，origin 是它相对取整后设备原点的位置
@@ -174,19 +260,35 @@ namespace canton::d3d11 {
         ComPtr<ID3D11DeviceContext> context;
         ComPtr<ID3D11VertexShader> vertexShader;
         ComPtr<ID3D11PixelShader> pixelShader;
+        ComPtr<ID3D11VertexShader> userVertexShader;
+        ComPtr<ID3D11VertexShader> postVertexShader;
+        ComPtr<ID3D11PixelShader> blurPixelShader;
+        ComPtr<ID3D11PixelShader> colorFilterPixelShader;
+        ComPtr<ID3D11PixelShader> compositePixelShader;
         ComPtr<ID3D11InputLayout> inputLayout;
         ComPtr<ID3D11Buffer> instanceBuffer;
         ComPtr<ID3D11Buffer> constantBuffer;
+        ComPtr<ID3D11Buffer> userVsBuffer;
+        ComPtr<ID3D11Buffer> cantonCbuffer;
+        ComPtr<ID3D11Buffer> postVsBuffer;
+        ComPtr<ID3D11Buffer> postPsBuffer;
+        std::array<ComPtr<ID3D11Buffer>, 12> userCbuffers;
+        std::array<std::uint32_t, 12> userCbufferSizes{};
         ComPtr<ID3D11BlendState> blend;
         ComPtr<ID3D11BlendState> replace;
+        ComPtr<ID3D11BlendState> clearPunchOutBlend;
+        std::array<ComPtr<ID3D11BlendState>, 15> hardwareBlends;
         ComPtr<ID3D11RasterizerState> rasterizer;
         ComPtr<ID3D11SamplerState> sampler;
+        std::array<ComPtr<ID3D11SamplerState>, 32> samplers;
         ComPtr<ID3D11Texture2D> atlasTexture;
         ComPtr<ID3D11ShaderResourceView> atlasView;
         ComPtr<ID3D11Texture2D> gradientTexture;
         ComPtr<ID3D11ShaderResourceView> gradientView;
         ComPtr<ID3D11ShaderResourceView> whiteView;
         std::vector<MaskTarget> masks;
+        std::vector<OffscreenTarget> offscreenPool;
+        std::unordered_map<UserShaderKey, ComPtr<ID3D11PixelShader>, UserShaderKeyHash> userShaders;
         int maskWidth = 0, maskHeight = 0;
         // 设备每重建一次加一，呈现目标据此重建自己的缓冲
         std::uint64_t deviceGeneration = 0;
@@ -241,12 +343,23 @@ namespace canton::d3d11 {
         ID3D11ShaderResourceView* batchCoverage = nullptr;
         core::ModifierHandle focused;
         std::span<const core::DrawOp> focusedOps;
+        std::unordered_map<std::uint64_t, RecordedLayer> frameRecordedLayers;
+        std::vector<SavedTargetState> layerRecordStack;
+        std::vector<std::uint64_t> activeRecordingLayers;
 
         [[nodiscard]] RenderState& state() {
             return states.back();
         }
 
         void ensureMasks();
+        void bindQuadPipeline(ID3D11BlendState* blendState = nullptr);
+        [[nodiscard]] ID3D11SamplerState* samplerFor(core::TileMode tileX, core::TileMode tileY, bool nearest);
+        [[nodiscard]] ID3D11PixelShader* resolveUserShader(const core::RuntimeEffectProgramRef& program);
+        void ensureUserCbuffer(std::uint32_t slot, std::uint32_t byteSize);
+        [[nodiscard]] int acquireOffscreen(int width, int height, bool exactSize = false);
+        void releaseOffscreen(int index) noexcept;
+        void releaseFrameLayers() noexcept;
+
         void drawFrame(TargetImpl& output, const FrameInput& frame);
         void flush();
         void add(const QuadInstance& instance, ID3D11ShaderResourceView* image = nullptr, ID3D11ShaderResourceView* coverage = nullptr);
@@ -254,6 +367,7 @@ namespace canton::d3d11 {
         void popState();
 
         void replayFragment(const core::PlacedPaintFragment& placed, float alpha);
+        void replayOffscreenGroup(const core::PaintFragment& fragment, float alpha);
         void replayOps(std::span<const core::DrawOp> ops, float alpha, std::size_t& depth);
         void replayScoped(std::span<const core::DrawOp> ops, float alpha);
         void replayEffect(const core::EffectModifier& effect, core::Rect rect, float alpha);
@@ -264,6 +378,24 @@ namespace canton::d3d11 {
         void clipToRect(core::Rect rect);
         // 把形状画进新的裁剪掩码：与当前掩码和解析裁剪相乘
         void clipToCoverage(const std::function<void()>& draw);
+
+        void runUserShaderPass(const core::RuntimeShaderData& shader, core::Rect localQuad, const core::Affine& transform, int vpWidth, int vpHeight, core::Rect fragBox, ID3D11ShaderResourceView* extraTexture = nullptr, std::string_view extraTextureName = {});
+        struct EffectChainResult {
+            int rtIndex = -1;
+            int contentWidth = 0;
+            int contentHeight = 0;
+            float offsetX = 0.0f;
+            float offsetY = 0.0f;
+            bool ownsRt = false;
+        };
+        [[nodiscard]] EffectChainResult runRenderEffectChain(int srcRt, bool ownsSrc, int contentW, int contentH, const core::RenderEffectRef& effect, bool clipped);
+        void compositeOffscreen(int srcRt, int contentW, int contentH, core::Rect localRect, const core::Affine& transform, float alpha, core::BlendMode blendMode, const core::ColorFilter& colorFilter, ID3D11ShaderResourceView* coverageMask = nullptr, int covOriginX = 0, int covOriginY = 0, bool useBoxAA = false);
+
+        void drawOpWithShaderBrush(const core::DrawOp& op, float alpha);
+        void drawOpIsolated(const core::DrawOp& op, float alpha);
+        void beginRecordLayer(const core::DrawOp& op, std::size_t& depth);
+        void endRecordLayer(std::size_t& depth);
+        void drawRenderLayer(const core::DrawOp& op, float alpha);
 
         [[nodiscard]] QuadInstance instanceFor(QuadKind kind, const core::Affine& transform) const;
         void setBrush(QuadInstance& instance, std::uint32_t color, float alpha, const core::GradientRef& gradient, core::Rect box, const core::Affine* toLocal = nullptr);

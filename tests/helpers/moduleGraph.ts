@@ -58,6 +58,16 @@ export function packageImports(sourceRoot: string): ReadonlySet<string> {
     return result
 }
 
+// 包外依赖中的完整 @canton/* 导入路径（含子路径，用于校验不得触碰 /internal 等私有入口）
+export function packageSpecifiers(sourceRoot: string): ReadonlySet<string> {
+    const result = new Set<string>()
+    for (const file of sourceFiles(sourceRoot))
+        for (const edge of moduleEdges(file)) {
+            if (edge.specifier.startsWith('@canton/')) result.add(edge.specifier)
+        }
+    return result
+}
+
 export function findCycles(graph: ModuleGraph, valueOnly = false): string[][] {
     const cycles: string[][] = []
     const state = new Map<string, 'visiting' | 'done'>()

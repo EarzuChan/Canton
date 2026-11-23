@@ -1,6 +1,7 @@
 #include "RenderRegression.h"
 
 #include <core/Modifier.h>
+#include <d3d11/ShaderCompiler.h>
 #include <runtime/PainterResources.h>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -678,6 +679,332 @@ namespace render_regression {
             framed({326, 120, 48, 82}, ContentScale::FillBounds, 104);
             return context.renderOps(std::move(ops));
         }
+        Image shaderBrushCase(CaseContext& context) {
+            canton::d3d11::D3DShaderCompiler compiler;
+            const std::string hlsl =
+                "#include <canton.hlsl>\n"
+                "cbuffer Params : register(b0) { float4 c1; float4 c2; float freq; };\n"
+                "float4 main(CantonInput input) : SV_Target {\n"
+                "    float wave = 0.5 + 0.5 * sin(input.uv.x * freq + input.uv.y * 5.0);\n"
+                "    return lerp(c1, c2, wave);\n"
+                "}\n";
+            const auto compiled = compiler.compileHlsl(hlsl, "main", "regression_brush.hlsl");
+            auto program = std::make_shared<RuntimeEffectProgram>();
+            program->identity = 9001;
+            program->revision = 1;
+            program->debugName = "regression_brush.hlsl";
+            program->entryPoint = "main";
+            program->dxbc = compiled.dxbc;
+            program->reflection = compiled.reflection;
+
+            auto makeShader = [&](std::uint32_t c1, std::uint32_t c2, float freq) {
+                RuntimeShaderData data;
+                data.program = program;
+                data.version = 1;
+                std::vector<ShaderUniformInput> uniforms{
+                    {"c1", ShaderUniformInputKind::Color, {}, {}, c1},
+                    {"c2", ShaderUniformInputKind::Color, {}, {}, c2},
+                    {"freq", ShaderUniformInputKind::Float, {freq}, {}, 0},
+                };
+                data.packedBuffers = packRuntimeShaderUniforms(program->reflection, uniforms);
+                return RuntimeShaderRef(std::move(data));
+            };
+
+            const auto brushA = makeShader(0xff0ea5e9u, 0xfff43f5eu, 9.0f);
+            const auto brushB = makeShader(0xfffbbf24u, 0xff22c55eu, 14.0f);
+
+            std::vector<DrawOp> ops;
+            // 圆角矩形背景
+            auto bg = fill({16, 16, 140, 96}, 0xffffffffu, DrawShapeType::Rounded, CornerRadii::uniform(18));
+            bg.shader = brushA;
+            ops.push_back(bg);
+
+            // 粗边框描边
+            auto br = border({176, 16, 140, 96}, 0xffffffffu, 8.0f, DrawShapeType::Rounded, {24, 6, 24, 6});
+            br.shader = brushB;
+            ops.push_back(br);
+
+            // 粗线段
+            auto ln = line({340, 26}, {496, 102}, 0xffffffffu, 14.0f, StrokeCap::Round);
+            ln.shader = brushA;
+            ops.push_back(ln);
+
+            // 自定义五角星 Path 填充 + 描边
+            PathData star;
+            constexpr float cx = 110.0f, cy = 200.0f;
+            for (int i = 0; i < 10; ++i) {
+                const float angle = -1.5707963f + static_cast<float>(i) * 0.62831853f;
+                const float r = (i % 2 == 0) ? 58.0f : 26.0f;
+                star.verbs.push_back(i == 0 ? PathVerb::MoveTo : PathVerb::LineTo);
+                star.values.push_back(cx + std::cos(angle) * r);
+                star.values.push_back(cy + std::sin(angle) * r);
+            }
+            star.verbs.push_back(PathVerb::Close);
+            star.bounds = {52, 142, 116, 116};
+            const PathRef starRef(std::move(star));
+
+            DrawOp starFill;
+            starFill.type = DrawOpType::DrawPath;
+            starFill.shape = DrawShapeType::Path;
+            starFill.rect = {52, 142, 116, 116};
+            starFill.path = starRef;
+            starFill.color = 0xffffffffu;
+            starFill.shader = brushB;
+            ops.push_back(starFill);
+
+            DrawOp starStroke = starFill;
+            starStroke.rect = {240, 142, 116, 116};
+            starStroke.strokeWidth = 6.0f;
+            starStroke.join = StrokeJoin::Round;
+            starStroke.shader = brushA;
+            ops.push_back(starStroke);
+
+            return context.renderOps(std::move(ops));
+        }
+
+        Image renderEffectsCase(CaseContext& context) {
+            canton::d3d11::D3DShaderCompiler compiler;
+            const std::string waveHlsl =
+                "#include <canton.hlsl>\n"
+                "Texture2D content : register(t0);\n"
+                "float4 main(CantonInput input) : SV_Target {\n"
+                "    float2 uv = input.uv;\n"
+                "    uv.x += sin(uv.y * 18.0) * 0.04;\n"
+                "    return content.SampleLevel(cantonLinearClamp, uv, 0);\n"
+                "}\n";
+            const auto compiled = compiler.compileHlsl(waveHlsl, "main", "regression_wave.hlsl");
+            auto program = std::make_shared<RuntimeEffectProgram>();
+            program->identity = 9002;
+            program->revision = 1;
+            program->debugName = "regression_wave.hlsl";
+            program->entryPoint = "main";
+            program->dxbc = compiled.dxbc;
+            program->reflection = compiled.reflection;
+
+            auto root = std::make_shared<PaintFragment>();
+            root->bounds = {{0, 0, 520, 320}, true, false};
+
+            auto makeCard = [&](float x, float y, RenderEffectRef effect, bool clipCard) {
+                auto frag = std::make_shared<PaintFragment>();
+                auto ops = std::make_shared<std::vector<DrawOp>>();
+                ops->push_back(fill({0, 0, 96, 96}, 0xff1e293bu));
+                ops->push_back(fill({0, 0, 48, 48}, 0xfff43f5eu));
+                ops->push_back(fill({48, 48, 48, 48}, 0xff38bdf8u));
+                ops->push_back(fill({22, 22, 52, 52}, 0xfffbbf24u, DrawShapeType::Circle));
+                frag->content = ops;
+
+                auto layer = std::make_shared<PaintLayerFragment>();
+                layer->bounds = {0, 0, 96, 96};
+                layer->useOffscreenGroup = true;
+                layer->groupAlpha = 1.0f;
+                layer->groupRenderEffect = std::move(effect);
+                if (clipCard) {
+                    TransformModifierSemantics t;
+                    t.clip = true;
+                    layer->value = t;
+                    layer->before.push_back(pushClip({0, 0, 96, 96}, DrawShapeType::Rounded, CornerRadii::uniform(12)));
+                    layer->after.push_back(pop(DrawOpType::PopClip));
+                }
+                frag->layer = layer;
+                frag->bounds = {{-40, -40, 176, 176}, true, false};
+                root->children.push_back({frag, {x, y}});
+            };
+
+            // 顶排：blur 四种 TileMode（Clamp / Repeated / Mirror / Decal）
+            const TileMode modes[4]{TileMode::Clamp, TileMode::Repeated, TileMode::Mirror, TileMode::Decal};
+            for (int i = 0; i < 4; ++i) {
+                RenderEffectData re;
+                RenderEffectStep step;
+                step.kind = RenderEffectStepKind::Blur;
+                step.radiusX = 10.0f;
+                step.radiusY = 10.0f;
+                step.edgeTreatment = modes[i];
+                re.steps.push_back(step);
+                makeCard(18.0f + static_cast<float>(i) * 124.0f, 20.0f, RenderEffectRef(std::move(re)), modes[i] != TileMode::Decal);
+            }
+
+            // 底排：ColorFilter(Tint) / ColorFilter(ColorMatrix) / RenderEffect.shader / RenderEffect.chain
+            {
+                RenderEffectData re;
+                RenderEffectStep s;
+                s.kind = RenderEffectStepKind::ColorFilter;
+                s.colorFilter.kind = ColorFilterKind::Tint;
+                s.colorFilter.color = 0xaa22c55eu;
+                s.colorFilter.blendMode = BlendMode::SrcAtop;
+                re.steps.push_back(s);
+                makeCard(18.0f, 168.0f, RenderEffectRef(std::move(re)), true);
+            }
+            {
+                RenderEffectData re;
+                RenderEffectStep s;
+                s.kind = RenderEffectStepKind::ColorFilter;
+                s.colorFilter.kind = ColorFilterKind::ColorMatrix;
+                s.colorFilter.matrix = {0.213f, 0.715f, 0.072f, 0, 15, 0.213f, 0.715f, 0.072f, 0, 15, 0.213f, 0.715f, 0.072f, 0, 15, 0, 0, 0, 1, 0};
+                re.steps.push_back(s);
+                makeCard(142.0f, 168.0f, RenderEffectRef(std::move(re)), true);
+            }
+            {
+                RenderEffectData re;
+                RenderEffectStep s;
+                s.kind = RenderEffectStepKind::Shader;
+                RuntimeShaderData sd;
+                sd.program = program;
+                sd.version = 1;
+                s.shader = RuntimeShaderRef(std::move(sd));
+                s.uniformShaderName = "content";
+                re.steps.push_back(s);
+                makeCard(266.0f, 168.0f, RenderEffectRef(std::move(re)), true);
+            }
+            {
+                RenderEffectData re;
+                RenderEffectStep blurStep;
+                blurStep.kind = RenderEffectStepKind::Blur;
+                blurStep.radiusX = 6.0f;
+                blurStep.radiusY = 6.0f;
+                blurStep.edgeTreatment = TileMode::Clamp;
+                RenderEffectStep lightStep;
+                lightStep.kind = RenderEffectStepKind::ColorFilter;
+                lightStep.colorFilter.kind = ColorFilterKind::Lighting;
+                lightStep.colorFilter.multiply = 0xffffc080u;
+                lightStep.colorFilter.add = 0x00101830u;
+                re.steps.push_back(blurStep);
+                re.steps.push_back(lightStep);
+                makeCard(390.0f, 168.0f, RenderEffectRef(std::move(re)), true);
+            }
+
+            PublishedFrameContent content;
+            content.scenePaint = {root, {0, 0}};
+            return context.render(content);
+        }
+
+        Image blendModesCase(CaseContext& context) {
+            auto root = std::make_shared<PaintFragment>();
+            root->bounds = {{0, 0, 520, 288}, true, false};
+            const BlendMode modes[8]{
+                BlendMode::Multiply, BlendMode::Screen, BlendMode::Overlay, BlendMode::Plus,
+                BlendMode::Difference, BlendMode::Hue, BlendMode::DstIn, BlendMode::Clear,
+            };
+            for (int i = 0; i < 8; ++i) {
+                const float x = 16.0f + static_cast<float>(i % 4) * 124.0f;
+                const float y = 16.0f + static_cast<float>(i / 4) * 136.0f;
+
+                auto bg = std::make_shared<PaintFragment>();
+                auto bgOps = std::make_shared<std::vector<DrawOp>>();
+                bgOps->push_back(fill({0, 0, 110, 120}, 0xff1e293bu, DrawShapeType::Rounded, CornerRadii::uniform(12)));
+                bg->content = bgOps;
+                bg->bounds = {{0, 0, 110, 120}, true, false};
+                root->children.push_back({bg, {x, y}});
+
+                // 将两圆混合放进独立离屏组（尤其 DstIn / Clear 仅作用于两圆自身，不穿透卡片背景）
+                auto fg = std::make_shared<PaintFragment>();
+                auto fgOps = std::make_shared<std::vector<DrawOp>>();
+                fgOps->push_back(fill({12, 20, 62, 62}, 0xff38bdf8u, DrawShapeType::Circle));
+                auto second = fill({36, 36, 62, 62}, 0xfff472b6u, DrawShapeType::Circle);
+                second.blendMode = modes[i];
+                fgOps->push_back(second);
+                fg->content = fgOps;
+                fg->bounds = {{0, 0, 110, 120}, true, false};
+                if (modes[i] == BlendMode::DstIn || modes[i] == BlendMode::Clear) {
+                    auto layer = std::make_shared<PaintLayerFragment>();
+                    layer->bounds = {0, 0, 110, 120};
+                    layer->useOffscreenGroup = true;
+                    layer->groupAlpha = 1.0f;
+                    fg->layer = layer;
+                }
+                root->children.push_back({fg, {x, y}});
+            }
+            PublishedFrameContent content;
+            content.scenePaint = {root, {0, 0}};
+            return context.render(content);
+        }
+
+        Image groupOpacityAndLayersCase(CaseContext& context) {
+            auto root = std::make_shared<PaintFragment>();
+            root->bounds = {{0, 0, 520, 260}, true, false};
+
+            auto makeOpacityCard = [&](float x, bool offscreen) {
+                auto frag = std::make_shared<PaintFragment>();
+                auto ops = std::make_shared<std::vector<DrawOp>>();
+                ops->push_back(fill({0, 0, 140, 140}, 0xff1e293bu, DrawShapeType::Rounded, CornerRadii::uniform(14)));
+                ops->push_back(fill({14, 24, 72, 72}, 0xffef4444u, DrawShapeType::Circle));
+                ops->push_back(fill({54, 44, 72, 72}, 0xff3b82f6u, DrawShapeType::Circle));
+                frag->content = ops;
+                auto layer = std::make_shared<PaintLayerFragment>();
+                layer->bounds = {0, 0, 140, 140};
+                layer->useOffscreenGroup = offscreen;
+                layer->groupAlpha = 0.5f;
+                layer->contentAlpha = offscreen ? 1.0f : 0.5f;
+                frag->layer = layer;
+                frag->bounds = {{0, 0, 140, 140}, true, false};
+                root->children.push_back({frag, {x, 20}});
+            };
+            makeOpacityCard(18.0f, true);
+            makeOpacityCard(176.0f, false);
+
+            // 右侧：RenderLayer 录制复用 + DstIn 渐变遮罩倒影
+            auto reflectFrag = std::make_shared<PaintFragment>();
+            auto ops = std::make_shared<std::vector<DrawOp>>();
+
+            DrawOp beginCard;
+            beginCard.type = DrawOpType::BeginRecordLayer;
+            beginCard.layerHandle = {77, 1};
+            beginCard.rect = {0, 0, 140, 72};
+            ops->push_back(beginCard);
+            ops->push_back(withGradient(fill({0, 0, 140, 72}, 0xffffffffu, DrawShapeType::Rounded, CornerRadii::uniform(14)), linear({0, 0}, {1, 1}, {{0, 0xff38bdf8u}, {1, 0xffa855f7u}})));
+            ops->push_back(fill({18, 16, 40, 40}, 0xfffbbf24u, DrawShapeType::Circle));
+            ops->push_back(fill({70, 22, 54, 10}, 0xffffffffu, DrawShapeType::Rounded, CornerRadii::uniform(4)));
+            ops->push_back(fill({70, 40, 38, 8}, 0xbbffffffu, DrawShapeType::Rounded, CornerRadii::uniform(4)));
+            DrawOp endRec;
+            endRec.type = DrawOpType::EndRecordLayer;
+            ops->push_back(endRec);
+
+            // 绘制原层
+            DrawOp drawCard;
+            drawCard.type = DrawOpType::DrawLayer;
+            RenderLayerSnapshot cardSnap;
+            cardSnap.handle = {77, 1};
+            cardSnap.topLeftX = 350;
+            cardSnap.topLeftY = 20;
+            drawCard.layerSnapshot = RenderLayerSnapshotRef(cardSnap);
+            ops->push_back(drawCard);
+
+            // 录制倒影层（上下翻转 + DstIn 渐变遮罩）
+            DrawOp beginRefl;
+            beginRefl.type = DrawOpType::BeginRecordLayer;
+            beginRefl.layerHandle = {78, 1};
+            beginRefl.rect = {0, 0, 140, 72};
+            ops->push_back(beginRefl);
+            ops->push_back(pushTransform({0, 0, 140, 72}, 0, 1, -1));
+            DrawOp drawFlipped;
+            drawFlipped.type = DrawOpType::DrawLayer;
+            RenderLayerSnapshot flipSnap;
+            flipSnap.handle = {77, 1};
+            drawFlipped.layerSnapshot = RenderLayerSnapshotRef(flipSnap);
+            ops->push_back(drawFlipped);
+            ops->push_back(pop(DrawOpType::PopTransform));
+            auto maskOp = withGradient(fill({0, 0, 140, 72}, 0xffffffffu), linear({0, 0}, {0, 1}, {{0, 0xffffffffu}, {1, 0x00ffffffu}}));
+            maskOp.blendMode = BlendMode::DstIn;
+            ops->push_back(maskOp);
+            ops->push_back(endRec);
+
+            DrawOp drawRefl;
+            drawRefl.type = DrawOpType::DrawLayer;
+            RenderLayerSnapshot reflSnap;
+            reflSnap.handle = {78, 1};
+            reflSnap.alpha = 0.7f;
+            reflSnap.topLeftX = 350;
+            reflSnap.topLeftY = 100;
+            drawRefl.layerSnapshot = RenderLayerSnapshotRef(reflSnap);
+            ops->push_back(drawRefl);
+
+            reflectFrag->content = ops;
+            reflectFrag->bounds = {{0, 0, 520, 260}, false, false};
+            root->children.push_back({reflectFrag, {0, 0}});
+
+            PublishedFrameContent content;
+            content.scenePaint = {root, {0, 0}};
+            return context.render(content);
+        }
     }
 
     void addDrawCases(std::vector<Case>& cases) {
@@ -690,5 +1017,9 @@ namespace render_regression {
         cases.push_back({"svg", 520, 220, svg});
         cases.push_back({"text", 520, 320, text});
         cases.push_back({"device-rebuild", 520, 220, deviceRebuild});
+        cases.push_back({"shader-brush", 520, 280, shaderBrushCase});
+        cases.push_back({"render-effects", 520, 300, renderEffectsCase});
+        cases.push_back({"blend-modes", 520, 288, blendModesCase});
+        cases.push_back({"group-opacity-and-layers", 520, 220, groupOpacityAndLayersCase});
     }
 }

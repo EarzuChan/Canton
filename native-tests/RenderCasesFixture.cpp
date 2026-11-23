@@ -2,9 +2,11 @@
 #include "TextFixtures.h"
 
 #include <d3d11/DWriteText.h>
+#include <d3d11/ShaderCompiler.h>
 #include <runtime/AppSession.h>
 #include <runtime/DiagnosticsScene.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -84,6 +86,26 @@ namespace render_regression {
                 return target.render(frame.content);
             }
 
+            void verifyGlassCursors() {
+                const auto& win = windowAt(0);
+                const auto& regions = win.pipeline.publishedFrame().content.hitTest->regions;
+                const auto drag = std::find_if(regions.begin(), regions.end(), [](const auto& region) { return region.target.input == core::InputModifierKind::Draggable; });
+                if (drag == regions.end()) throw std::runtime_error("玻璃面板没有可拖动热区");
+                const auto [x, y, w, h] = drag->bounds;
+                using Icon = core::PointerIcon;
+                const std::pair<core::Point, Icon> samples[]{
+                    {{x + 5, y + 5}, Icon::ResizeNwse}, {{x + w - 5, y + 5}, Icon::ResizeNesw},
+                    {{x + 5, y + h - 5}, Icon::ResizeNesw}, {{x + w - 5, y + h - 5}, Icon::ResizeNwse},
+                    {{x + w / 2, y + 5}, Icon::ResizeVertical}, {{x + w / 2, y + h - 5}, Icon::ResizeVertical},
+                    {{x + 5, y + h / 2}, Icon::ResizeHorizontal}, {{x + w - 5, y + h / 2}, Icon::ResizeHorizontal},
+                    {{x + w / 2, y + h / 2}, Icon::Grab},
+                };
+                for (const auto& [point, expected] : samples) {
+                    app_.pointerMove(win.windowId, {point, {}, now_});
+                    if (app_.pointerIcon(win.windowId) != expected) throw std::runtime_error("玻璃光标与拖拽热区不符");
+                }
+            }
+
             [[nodiscard]] bool hasError() const noexcept { return app_.globalDiagnostics().hasError(); }
             [[nodiscard]] double now() const noexcept { return now_; }
 
@@ -97,6 +119,7 @@ namespace render_regression {
             runtime::AppSessionOptions options(const CaseContext& context) {
                 runtime::AppSessionOptions result;
                 result.diagnosticsFontFamily = {test_support::testFontFamily};
+                result.shaderCompiler = std::make_shared<d3d11::D3DShaderCompiler>();
                 if (context.width > 0 && context.height > 0) {
                     result.platform.onWindowCreated = [this, width = context.width, height = context.height](core::WindowId id, const core::WindowConfigSpec&) {
                         if (app_.windowIds().front() == id) app_.notifyWindowResized(id, width, height);
@@ -216,5 +239,19 @@ namespace render_regression {
                              if (!session.hasError()) throw std::runtime_error("脚本抛错后没有进入错误屏");
                              return session.capture();
                          }});
+        // 着色器与液态玻璃夹具（消费 @canton/kyant-glass、.hlsl 预编译 DXBC 与离屏合成）
+        const auto shaderPage = [](std::string name, std::string instruction) {
+            return Case{std::move(name), 640, 420, [instruction](CaseContext& context) {
+                            FixtureSession session(context, "shader-effects");
+                            session.command(instruction);
+                            session.advanceTo(session.now() + 64);
+                            session.settle();
+                            if (instruction == "glass:1") session.verifyGlassCursors();
+                            return session.capture();
+                        }};
+        };
+        cases.push_back(shaderPage("shader-effects-glass", "glass:1"));
+        cases.push_back(shaderPage("shader-effects-brushes", "brushes"));
+        cases.push_back(shaderPage("shader-effects-compositing", "compositing"));
     }
 }

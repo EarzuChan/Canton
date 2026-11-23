@@ -36,7 +36,11 @@ export type HotUpdateContext = {
 
 export type TransformWarning = { id: string; message: string }
 
-export type TransformThis = { warn: (warning: TransformWarning) => void; addWatchFile?: (file: string) => void }
+export type TransformThis = {
+    warn: (warning: TransformWarning) => void
+    addWatchFile?: (file: string) => void
+    emitFile?: (file: { type: 'asset'; fileName: string; source: Uint8Array }) => string
+}
 
 export type ConfigEnv = { command?: string; mode?: string }
 
@@ -67,6 +71,7 @@ export type CantonTransformPluginOptions = {
 export type CantonTransformPlugin = {
     name: string
     enforce: "pre"
+    buildStart?: () => void
     load: (id: string) => string | null
     transform: (this: TransformThis, code: string, id: string) => string | Promise<{ code: string; map?: object | null } | null> | null
 }

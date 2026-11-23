@@ -19,7 +19,8 @@
       "@canton/framework/internal": ["packages/framework/src/internal.ts"],
       "@canton/framework/vite": ["packages/framework/src/vite.ts"],
       "@canton/framework/hot-runtime": ["packages/framework/src/app/hotRuntime.ts"],
-      "@canton/compiler": ["packages/compiler/src/index.ts"]
+      "@canton/compiler": ["packages/compiler/src/index.ts"],
+      "@canton/kyant-glass": ["packages/kyant-glass/src/index.ts"]
     }
   },
   "include": [

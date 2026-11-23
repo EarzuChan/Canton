@@ -37,7 +37,9 @@ inline constexpr std::string_view fillParentMaxSizeFields[]{"fraction"};
 inline constexpr std::string_view animateItemFields[]{"fadeInSpec", "placementSpec", "fadeOutSpec"};
 inline constexpr std::string_view offsetFields[]{"x", "y"};
 inline constexpr std::string_view absoluteOffsetFields[]{"x", "y"};
-inline constexpr std::string_view graphicsLayerFields[]{"translationX", "translationY", "scaleX", "scaleY", "rotationZ", "transformOrigin", "alpha", "clip"};
+inline constexpr std::string_view graphicsLayerFields[]{"translationX", "translationY", "scaleX", "scaleY", "rotationZ", "transformOrigin", "alpha", "clip", "shape", "renderEffect", "blendMode", "colorFilter", "compositingStrategy"};
+inline constexpr std::string_view onGloballyPositionedFields[]{"callback"};
+inline constexpr ModifierCallbackField onGloballyPositionedCallbacks[]{{"callback", canton::core::EventSlotKind::GloballyPositioned}};
 inline constexpr std::string_view drawBehindFields[]{"prepare", "revision", "transactional"};
 inline constexpr ModifierCallbackField drawBehindCallbacks[]{{"prepare", canton::core::EventSlotKind::DrawPrepare}};
 inline constexpr std::string_view drawWithContentFields[]{"prepare", "revision", "transactional"};
@@ -112,6 +114,7 @@ inline constexpr ModifierProtocolEntry modifierProtocolEntries[]{
     {"offset", offsetFields, {}},
     {"absoluteOffset", absoluteOffsetFields, {}},
     {"graphicsLayer", graphicsLayerFields, {}},
+    {"onGloballyPositioned", onGloballyPositionedFields, onGloballyPositionedCallbacks},
     {"drawBehind", drawBehindFields, drawBehindCallbacks},
     {"drawWithContent", drawWithContentFields, drawWithContentCallbacks},
     {"drawWithCache", drawWithCacheFields, drawWithCacheCallbacks},

@@ -1,10 +1,14 @@
 import { modifierUnitFields, unitFieldContracts, type UnitFields } from '@canton/shared'
 import type { Density } from '../layout/density.ts'
+import type { LayoutCoordinatesAttachToken } from '../layout/coordinates.ts'
 import type { Modifier, ModifierElement } from '../modifier/modifier.ts'
 import type { MeasurePolicy } from '../layout/measurePolicy.ts'
 import { normalizeFontStyle } from '../draw/font.ts'
 import { defaultFontSize, type ArrangementProp } from '../native/protocol.ts'
 import { DrawInstance, type DrawDeclaration } from '../draw/draw.ts'
+import { isRuntimeShader, runtimeShaderSnapshot } from '../draw/shader.ts'
+import { renderEffectSnapshot, type RenderEffect } from '../draw/renderEffect.ts'
+import { blendModeToIndex, compositingStrategyToIndex, normalizeColorFilter, type BlendMode, type ColorFilter, type CompositingStrategy, type ShaderBrush } from '../values/graphics.ts'
 import { EventAdapters } from './eventAdapters.ts'
 import { assertWindowModifierOwner } from '../modifier/window.ts'
 import type { ArrangableInstance } from '../runtime/internal.ts'
@@ -13,23 +17,30 @@ export interface PxModifier {
     readonly elements: readonly ModifierElement[]
 }
 
-// 每个 Layout 的修饰降解：按 Modifier 原生协议表把双通道长度与 SP 求成原生 PX，并管理绘制实例的事务生命；回调载荷适配交给 EventAdapters
+// 每个 Layout 的修饰降解：按 Modifier 原生协议表把双通道长度与 SP 求成原生 PX，并管理绘制实例与坐标令牌的事务生命；回调载荷适配交给 EventAdapters
 export class ModifierLowering {
     private previous: PxModifier | undefined
     private policy: MeasurePolicy | undefined
     private draws: readonly { index: number; instance: DrawInstance }[] = []
+    private positionedTokens: readonly { index: number; token: LayoutCoordinatesAttachToken }[] = []
 
     private readonly events: EventAdapters
 
     constructor(private readonly density: Density, private readonly owner?: ArrangableInstance, private readonly windowId?: number) {
-        this.events = new EventAdapters(density)
+        this.events = new EventAdapters(density, windowId ?? 0)
+        this.owner?.scope.cleanups.push(() => {
+            for (const item of this.positionedTokens) item.token.attached = false
+        })
     }
 
     modifier(declaration: Modifier): PxModifier {
         const previousDraws = this.draws
+        const previousTokens = this.positionedTokens
         const previousModifier = this.previous
         const draws: { index: number; instance: DrawInstance }[] = []
+        const tokens: { index: number; token: LayoutCoordinatesAttachToken }[] = []
         const used = new Set<DrawInstance>()
+        const usedTokens = new Set<LayoutCoordinatesAttachToken>()
         const matched = new Set<number>()
         let cursor = 0
         const elements = declaration.elements.map((element, index) => {
@@ -49,10 +60,19 @@ export class ModifierLowering {
             if (element.type === 'drawBehind' || element.type === 'drawWithContent' || element.type === 'drawWithCache') {
                 const retained = previousDraws.find(item => item.index === match)?.instance
                 const declaration = input as DrawDeclaration
-                const instance = retained && retained.declaration.draw === declaration.draw && retained.declaration.invalidation === declaration.invalidation && retained.declaration.controller === declaration.controller ? retained : new DrawInstance(element.type, declaration, this.owner)
+                const instance = retained && retained.declaration.draw === declaration.draw && retained.declaration.invalidation === declaration.invalidation && retained.declaration.controller === declaration.controller ? retained : new DrawInstance(element.type, declaration, this.owner, this.density)
                 used.add(instance)
                 draws.push({ index, instance })
                 const value = Object.freeze({ prepare: instance.prepare, revision: instance.revision.value, transactional: true })
+                const previous = this.previous?.elements[index]
+                return previous && previous.type === element.type && previous.key === element.key && sameValue(previous.value, value) ? previous : Object.freeze({ ...element, value })
+            }
+            if (element.type === 'onGloballyPositioned') {
+                const retained = previousTokens.find(item => item.index === match)?.token
+                const token: LayoutCoordinatesAttachToken = retained && retained.attached ? retained : { attached: true }
+                usedTokens.add(token)
+                tokens.push({ index, token })
+                const value = Object.freeze({ callback: this.events.adaptPositioned(token, input.callback as (coords: unknown) => void) })
                 const previous = this.previous?.elements[index]
                 return previous && previous.type === element.type && previous.key === element.key && sameValue(previous.value, value) ? previous : Object.freeze({ ...element, value })
             }
@@ -65,17 +85,28 @@ export class ModifierLowering {
         })
 
         this.draws = draws
+        this.positionedTokens = tokens
         const removed = previousDraws.filter(item => !used.has(item.instance))
         const created = draws.filter(item => !previousDraws.some(old => old.instance === item.instance))
+        const removedTokens = previousTokens.filter(item => !usedTokens.has(item.token))
+        const createdTokens = tokens.filter(item => !previousTokens.some(old => old.token === item.token))
         const session = this.owner?.rearrangeSession
         if (session?.preparing) {
-            session.onCommit(() => { for (const item of removed) item.instance.stop() })
+            session.onCommit(() => {
+                for (const item of removed) item.instance.stop()
+                for (const item of removedTokens) item.token.attached = false
+            })
             session.onRollback(() => {
                 for (const item of created) item.instance.stop()
+                for (const item of createdTokens) item.token.attached = false
                 this.draws = previousDraws
+                this.positionedTokens = previousTokens
                 this.previous = previousModifier
             })
-        } else for (const item of removed) item.instance.stop()
+        } else {
+            for (const item of removed) item.instance.stop()
+            for (const item of removedTokens) item.token.attached = false
+        }
 
         if (this.previous && elements.length === this.previous.elements.length && elements.every((element, index) => element === this.previous!.elements[index])) return this.previous
         return this.previous = Object.freeze({ elements: Object.freeze(elements) })
@@ -116,7 +147,34 @@ export class ModifierLowering {
 
     private resolveModifierValue(type: string, input: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> {
         const units = Object.hasOwn(modifierUnitFields, type) ? modifierUnitFields[type] : undefined
-        return this.events.adapt(type, units ? this.lower(input, units) : input)
+        let lowered = units ? this.lower(input, units) : input
+        if ((type === 'background' || type === 'border') && lowered.brush && typeof lowered.brush === 'object' && (lowered.brush as ShaderBrush).type === 'shader') {
+            const brush = lowered.brush as ShaderBrush
+            if (!isRuntimeShader(brush.shader)) throw new TypeError('shaderBrush 需要有效的 RuntimeShader')
+            lowered = Object.freeze({ ...lowered, brush: runtimeShaderSnapshot(brush.shader) })
+        } else if (type === 'paint' && lowered.colorFilter !== undefined) {
+            normalizeColorFilter(lowered.colorFilter as ColorFilter | Readonly<{ tint: number }>)
+        } else if (type === 'graphicsLayer') {
+            let next: Record<string, unknown> | undefined
+            if (lowered.renderEffect !== undefined) {
+                next ??= { ...lowered }
+                if (lowered.renderEffect === null) delete next.renderEffect
+                else next.renderEffect = renderEffectSnapshot(lowered.renderEffect as RenderEffect)
+            }
+            if (lowered.colorFilter !== undefined) {
+                next ??= { ...lowered }
+                if (lowered.colorFilter === null) delete next.colorFilter
+                else next.colorFilter = normalizeColorFilter(lowered.colorFilter as ColorFilter)
+            }
+            if (lowered.blendMode !== undefined) {
+                blendModeToIndex(lowered.blendMode as BlendMode)
+            }
+            if (lowered.compositingStrategy !== undefined) {
+                compositingStrategyToIndex(lowered.compositingStrategy as CompositingStrategy)
+            }
+            if (next) lowered = Object.freeze(next)
+        }
+        return this.events.adapt(type, lowered)
     }
 
     // length 字段由 xxxDp / xxxPx 双通道合成 PX，sp 换算为 PX，其余单位原样；未变化时保留原对象

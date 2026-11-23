@@ -1,0 +1,23 @@
+{
+  "name": "@canton/kyant-glass",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "canton-ts": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@canton/framework": "0.1.0"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=24"
+  }
+}

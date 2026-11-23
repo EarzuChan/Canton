@@ -9,16 +9,24 @@ export async function createFixtureServer(fixture: string, port = 0): Promise<Vi
     const fixtureRoot = resolve(repoRoot, 'tests/fixtures', fixture)
     const entry = ['main.ts', 'src/main.ts'].map(path => resolve(fixtureRoot, path)).find(path => existsSync(path))
     if (!entry) throw new Error(`找不到夹具入口：${fixtureRoot}`)
-    // 夹具直接放在仓库里，不是一个装了依赖的工程：@canton/framework 按框架包自己的导出表解析到源码
+    // 夹具直接放在仓库里，不是一个装了依赖的工程：@canton/framework 与私有旁包 @canton/kyant-glass 按各自导出表解析到源码
     const frameworkRoot = resolve(repoRoot, 'packages/framework')
     const frameworkExports = JSON.parse(readFileSync(resolve(frameworkRoot, 'package.json'), 'utf8')).exports as Record<string, { import?: string }>
+    const kyantGlassRoot = resolve(repoRoot, 'packages/kyant-glass')
+    const kyantGlassExports = JSON.parse(readFileSync(resolve(kyantGlassRoot, 'package.json'), 'utf8')).exports as Record<string, { import?: string }>
     const workspacePackages: Plugin = {
         name: 'canton-fixture-workspace-packages',
         enforce: 'pre',
         resolveId(id) {
-            if (id !== '@canton/framework' && !id.startsWith('@canton/framework/')) return null
-            const target = frameworkExports['.' + id.slice('@canton/framework'.length)]?.import
-            return target ? resolve(frameworkRoot, target).split(sep).join('/') : null
+            if (id === '@canton/framework' || id.startsWith('@canton/framework/')) {
+                const target = frameworkExports['.' + id.slice('@canton/framework'.length)]?.import
+                return target ? resolve(frameworkRoot, target).split(sep).join('/') : null
+            }
+            if (id === '@canton/kyant-glass' || id.startsWith('@canton/kyant-glass/')) {
+                const target = kyantGlassExports['.' + id.slice('@canton/kyant-glass'.length)]?.import
+                return target ? resolve(kyantGlassRoot, target).split(sep).join('/') : null
+            }
+            return null
         },
     }
     return createServer({

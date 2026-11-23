@@ -248,9 +248,10 @@ namespace canton::quickjs {
         }
         if (JS_IsUndefined(brush.get())) return;
         try {
-            auto value = QuickJsBrushReader(context_).read(brush.get());
+            auto value = QuickJsBrushReader(context_, effects_).read(brush.get());
             style.color = value.color;
             style.gradient = std::move(value.gradient);
+            style.shader = std::move(value.shader);
         } catch (const std::exception& error) {
             JS_ThrowTypeError(context_, "%s", error.what());
         }
@@ -506,15 +507,29 @@ namespace canton::quickjs {
                 }
                 ScopedValue filter(context_, JS_GetPropertyStr(context_, payload, "colorFilter"));
                 if (!JS_IsUndefined(filter.get())) {
-                    if (!JS_IsObject(filter.get()) || !fieldsMatch(context_, filter.get(), {"tint"}, "colorFilter")) {
-                        failed_ = true;
+                    if (!JS_IsObject(filter.get()) || JS_IsArray(filter.get())) {
+                        (void)throwTypeError("colorFilter 需要对象");
                         return {};
                     }
-                    ScopedValue tint(context_, JS_GetPropertyStr(context_, filter.get(), "tint"));
-                    item.tint = reader_.colorValue(tint.get());
-                    if (JS_HasException(context_)) {
-                        failed_ = true;
-                        return {};
+                    ScopedValue typeVal(context_, JS_GetPropertyStr(context_, filter.get(), "type"));
+                    if (JS_IsUndefined(typeVal.get())) {
+                        if (!fieldsMatch(context_, filter.get(), {"tint"}, "colorFilter")) {
+                            failed_ = true;
+                            return {};
+                        }
+                        ScopedValue tint(context_, JS_GetPropertyStr(context_, filter.get(), "tint"));
+                        item.tint = reader_.colorValue(tint.get());
+                        if (JS_HasException(context_)) {
+                            failed_ = true;
+                            return {};
+                        }
+                    } else {
+                        try {
+                            item.colorFilter = QuickJsEffectsReader(context_, effects_).readColorFilter(filter.get());
+                        } catch (const std::exception& error) {
+                            (void)throwTypeError(error.what());
+                            return {};
+                        }
                     }
                 }
                 result.push_back({item, key});
@@ -583,6 +598,31 @@ namespace canton::quickjs {
                 item.transformOriginY = origin.second;
                 item.alpha = numberField(payload, "alpha", 1.0f);
                 item.clip = boolField(payload, "clip", false);
+                item.shape = paintStyle(payload, canton::core::PaintStyleKind::Background);
+                if (!enumField(payload, "blendMode", canton::core::parseBlendMode, item.blendMode)) return {};
+                if (!enumField(payload, "compositingStrategy", canton::core::parseCompositingStrategy, item.compositingStrategy)) return {};
+                try {
+                    ScopedValue cf(context_, JS_GetPropertyStr(context_, payload, "colorFilter"));
+                    if (!JS_IsUndefined(cf.get()) && !JS_IsNull(cf.get())) {
+                        item.colorFilter = QuickJsEffectsReader(context_, effects_).readColorFilter(cf.get());
+                    }
+                    ScopedValue re(context_, JS_GetPropertyStr(context_, payload, "renderEffect"));
+                    if (!JS_IsUndefined(re.get()) && !JS_IsNull(re.get())) {
+                        item.renderEffect = QuickJsEffectsReader(context_, effects_).readRenderEffect(re.get());
+                    }
+                } catch (const std::exception& error) {
+                    (void)throwTypeError(error.what());
+                    return {};
+                }
+                result.push_back({item, key});
+            } else if (type == "onGloballyPositioned") {
+                canton::core::PositionedModifier item;
+                ScopedValue callback(context_, JS_GetPropertyStr(context_, payload, "callback"));
+                if (!JS_IsFunction(context_, callback.get())) {
+                    (void)throwTypeError("onGloballyPositioned 需要函数");
+                    return {};
+                }
+                callbacks.push_back({result.size(), eventKind("callback"), std::move(callback)});
                 result.push_back({item, key});
             } else if (type == "zIndex") {
                 result.push_back({canton::core::ZIndexModifier{requiredNumberField(payload, "value", type)}, key});
@@ -723,7 +763,7 @@ namespace canton::quickjs {
                 } else if (type == "pointerIcon") {
                     item.kind = InputKind::PointerIcon;
                     const auto icon = reader_.stringField(payload, "icon");
-                    constexpr std::string_view icons[]{"default", "hand", "text", "crosshair", "resizeHorizontal", "resizeVertical", "grab", "grabbing", "none"};
+                    constexpr std::string_view icons[]{"default", "hand", "text", "crosshair", "resizeHorizontal", "resizeVertical", "grab", "grabbing", "none", "resizeNwse", "resizeNesw"};
                     const auto found = std::find(std::begin(icons), std::end(icons), icon);
                     if (found == std::end(icons)) {
                         (void)throwTypeError("pointerIcon 光标名称无效");
@@ -795,6 +835,8 @@ namespace canton::quickjs {
             auto& input = result[pending.index].value;
             if (auto* draw = std::get_if<canton::core::DrawModifier>(&input))
                 draw->prepare = slot;
+            else if (auto* positioned = std::get_if<canton::core::PositionedModifier>(&input))
+                positioned->callback = slot;
             else if (auto* scroll = std::get_if<canton::core::LayoutModifierSemantics>(&input))
                 scroll->eventSlot = slot;
             else if (auto* field = std::get_if<canton::core::TextFieldModifier>(&input)) {

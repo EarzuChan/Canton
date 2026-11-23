@@ -41,6 +41,7 @@
     "source-map-js": "1.2.2",
     "vite": "8.3.5",
     "lru-cache": "10.1.0",
+    "koffi": "2.14.1",
     "typescript": "^5.9.0",
     "@canton/reactivity": "0.1.0",
     "@canton/shared": "0.1.0",

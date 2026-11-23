@@ -45,7 +45,8 @@ namespace canton::runtime {
         using LiveResources = std::function<RuntimeLoadResources(std::string_view)>;
         using DistResources = std::function<RuntimeLoadResources(std::shared_ptr<const core::UiPackage>)>;
 
-        RuntimePackageLoader(DistResources distResources, std::shared_ptr<core::FontRegistry> fonts, std::shared_ptr<const core::NativePainterRegistry> painters) : distResources_(std::move(distResources)), fonts_(std::move(fonts)), painters_(std::move(painters)) {}
+        RuntimePackageLoader(DistResources distResources, std::shared_ptr<core::FontRegistry> fonts, std::shared_ptr<const core::NativePainterRegistry> painters, std::shared_ptr<const core::ShaderCompiler> shaderCompiler = {})
+            : distResources_(std::move(distResources)), fonts_(std::move(fonts)), painters_(std::move(painters)), shaderCompiler_(std::move(shaderCompiler)) {}
 
         [[nodiscard]] std::unique_ptr<quickjs::QuickJsScriptHost> createHost(RuntimeLoadResources resources) const;
         RuntimePackageLoadResult loadDist(const ResolvedDist& dist) const;
@@ -54,6 +55,7 @@ namespace canton::runtime {
         DistResources distResources_;
         std::shared_ptr<core::FontRegistry> fonts_;
         std::shared_ptr<const core::NativePainterRegistry> painters_;
+        std::shared_ptr<const core::ShaderCompiler> shaderCompiler_;
     };
 
 }

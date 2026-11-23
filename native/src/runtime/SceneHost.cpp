@@ -22,7 +22,7 @@ namespace canton::runtime {
         }
     }
 
-    SceneHost::SceneHost(const core::TextMeasurer& measurer, std::shared_ptr<core::FontRegistry> fonts, SceneHostOptions options) : diagnosticsFontFamily_(std::move(options.diagnosticsFontFamily)), detailedErrorScreen_(options.detailedErrorScreen), textLayout_(measurer, 256, 8 * 1024 * 1024, fonts.get()), runtime_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))), source_(AppResolver(mounter(options)), RuntimePackageLoader(distResources(options), fonts, options.painters), std::move(options.live)) {
+    SceneHost::SceneHost(const core::TextMeasurer& measurer, std::shared_ptr<core::FontRegistry> fonts, SceneHostOptions options) : diagnosticsFontFamily_(std::move(options.diagnosticsFontFamily)), detailedErrorScreen_(options.detailedErrorScreen), textLayout_(measurer, 256, 8 * 1024 * 1024, fonts.get()), runtime_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))), source_(AppResolver(mounter(options)), RuntimePackageLoader(distResources(options), fonts, options.painters, options.shaderCompiler), std::move(options.live)) {
         diagnostics_.setHud(std::move(options.hud));
     }
 

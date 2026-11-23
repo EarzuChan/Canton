@@ -4,6 +4,7 @@
 #include "QuickJsModuleLoader.h"
 #include "QuickJsPainterResources.h"
 #include <quickjs/QuickJsScriptHost.h>
+#include <core/GraphicsEffects.h>
 #include <core/Mutation.h>
 #include <core/MutationTransaction.h>
 #include <core/WindowTypes.h>
@@ -75,6 +76,10 @@ namespace canton::quickjs {
         canton::core::PainterLoader painterLoader;
         std::shared_ptr<core::FontRegistry> fonts = std::make_shared<core::FontRegistry>();
         std::shared_ptr<const core::NativePainterRegistry> nativePainters;
+        std::shared_ptr<const core::ShaderCompiler> shaderCompiler;
+        std::shared_ptr<const core::UiPackage> uiPackage;
+        core::RuntimeEffectRegistry runtimeEffects;
+        core::RenderLayerRegistry renderLayers;
         core::AssetLoader assetLoader;
 
         struct AssetRequest {

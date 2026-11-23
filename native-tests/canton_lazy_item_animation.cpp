@@ -122,7 +122,10 @@ namespace {
         Shown shown(const std::shared_ptr<const PaintFragment>& fragment) const {
             for (const auto& child : tree.node(1).contentFragment->children) {
                 if (child.fragment == fragment) return {child.offset.y, 1};
-                if (child.fragment->layer && child.fragment->children.size() == 1 && child.fragment->children.front().fragment == fragment) return {child.offset.y, child.fragment->layer->contentAlpha};
+                if (child.fragment->layer && child.fragment->children.size() == 1 && child.fragment->children.front().fragment == fragment) {
+                    const auto& l = *child.fragment->layer;
+                    return {child.offset.y, l.useOffscreenGroup ? l.groupAlpha : l.contentAlpha};
+                }
             }
             return {};
         }

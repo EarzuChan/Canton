@@ -24,6 +24,9 @@ namespace canton::core {
         ContentMarker,
         DrawPath,
         DrawNative,
+        BeginRecordLayer,
+        EndRecordLayer,
+        DrawLayer,
     };
 
     enum class DrawShapeType {
@@ -44,8 +47,11 @@ namespace canton::core {
         TextStyle textStyle;
         DrawShapeType shape = DrawShapeType::Rectangle;
         CornerRadii corners;
-        // 渐变存在时 color 只携带不透明度
+        // 渐变或着色器存在时 color 只携带不透明度
         GradientRef gradient;
+        RuntimeShaderRef shader;
+        BlendMode blendMode = BlendMode::SrcOver;
+        ColorFilter colorFilter;
         PathRef path;
         StrokeCap cap = StrokeCap::Butt;
         StrokeJoin join = StrokeJoin::Miter;
@@ -74,6 +80,10 @@ namespace canton::core {
         float rotationZ = 0.0f;
         float transformOriginX = 0.5f;
         float transformOriginY = 0.5f;
+        bool useMatrix = false;
+        Affine matrix;
+        RenderLayerHandle layerHandle;
+        RenderLayerSnapshotRef layerSnapshot;
         bool operator==(const DrawOp&) const = default;
     };
 
@@ -84,6 +94,11 @@ namespace canton::core {
         // 构建时的字体环境代际：含文字的命令在代际推进后重建
         std::uint64_t fontEnvironment = 0;
         float contentAlpha = 1;
+        bool useOffscreenGroup = false;
+        float groupAlpha = 1.0f;
+        BlendMode groupBlendMode = BlendMode::SrcOver;
+        ColorFilter groupColorFilter;
+        RenderEffectRef groupRenderEffect;
         std::vector<DrawOp> before;
         std::vector<DrawOp> after;
         std::shared_ptr<const DrawCommands> drawCommands;
@@ -115,6 +130,7 @@ namespace canton::core {
     // 文字是否发生视觉溢出：被截断，或排版尺寸超出文字框。只有溢出且 overflow 不是 Visible 才裁到文字框，
     // 字形（如斜体）伸出前进量的部分不算溢出，对齐 Compose 的 hasVisualOverflow
     bool textHasVisualOverflow(const DrawOp& op);
+    void validateRenderLayerCycles(const PlacedPaintFragment& root);
     std::vector<DrawOp> exportDrawOps(const PlacedPaintFragment& root);
 
     struct PaintWorkCounters {

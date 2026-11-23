@@ -94,20 +94,21 @@
 
 ---
 
-## M5：HLSL 着色器、离屏合成与视觉进阶（ADR B1：6 高阶）
+## M5：HLSL 着色器、离屏合成与视觉进阶（ADR B1：6 高阶 / B3：1）：已完成
 
-目标：释放纯 D3D11 架构的完整 GPU 表现力，交付标准 HLSL 像素着色器与 Compose 粒度离屏合成原语。
+目标：释放纯 D3D11 架构的完整 GPU 表现力，交付标准 HLSL 像素着色器与 Compose 粒度离屏合成原语。施工清单与实测笔记见 [m5.md](m5.md)。
 
 范围：
-- **`RuntimeEffect` & `RuntimeShader`**：100% 标准 HLSL SM 5.0 像素着色器 + `D3DReflect` 自动解析 `cbuffer` 与纹理槽；Dev 期 `d3dcompiler_47.dll` 编译与 Vite `.hlsl` 热更新（报错保留上一版）；Dist 期静态 `.hlsl` 预编译 DXBC 与动态源码兜底。
-- **双落点与离屏原语**：`Brush.shaderBrush`、`RenderEffect`（GPU 两 Pass `blur`、`colorFilter`、`shader`、`chain` + 离屏 RT 池）、`RenderLayer`（`createRenderLayer` / `recordLayer` / `drawLayer`）、`BlendMode` 与 `onGloballyPositioned`。
-- **M3 移交**：用户着色器的运行期编译（M3 的内置着色器在构建期编译嵌入）；组透明度（M3 的 `alpha` 与 `animateItem` 淡入淡出按元素分别乘透明度）。
+- **`RuntimeEffect` & `RuntimeShader`**：100% 标准 HLSL SM 5.0 像素着色器 + 共享 `<canton.hlsl>` 虚拟头 + `D3DReflect` 自动解析 `cbuffer`（含跨 16 字节边界、数组、矩阵、预乘颜色）与纹理/采样器槽；Live 态 `d3dcompiler_47.dll` 编译与 Vite `.hlsl` 自接受热替换（保留 uniform、报错保留上一版并弹 Toast）；Dist 态构建期由 `koffi` 直调 `d3dcompiler_47.dll` 预编译为 `assets/<name>-<hash>.dxbc` 并登记进 `canton-ui.json`，动态源码留系统 `d3dcompiler_47.dll` 兜底；设备丢失后自动从缓存 DXBC 重建。
+- **双落点与离屏原语**：`shaderBrush`（覆及矩形/圆角/椭圆/边框/线段/矢量 `Path`）、D3D11 按桶离屏 RT 池、`RenderEffect`（两 Pass 可分离高斯 `blur` 含四种 `TileMode`、`offset`、`colorFilter`、`shader`、`chain`）、全量 29 种 `BlendMode`（硬件 15 种 + 拷出背景 `Load` 着色器 14 种）、`CompositingStrategy`、`M.graphicsLayer` 完备化、组透明度（升级 `M.alpha` 与 Lazy `animateItem` 淡入淡出）、`RenderLayer`（`createRenderLayer` / `recordLayer` 捕获 C++ 保留子片段树 / `drawLayer` 与直接/间接环引用检测）、`DrawScope` / `DrawCacheScope` 补齐与 `M.onGloballyPositioned` + `LayoutCoordinates` 同帧绘前零滞后派发。
+- **私有旁包 `@canton/kyant-glass`**：严格仅消费 `@canton/framework` 公开出口（由 `package-layers.test.ts` 锁死），完整落地液态玻璃圆角 SDF 折射、七段光谱色散、方向/环境高光、内外阴影与 `exportedBackdrop` 双层玻璃级联。
 
 验收夹具：
-- 「着色器与视觉特效」夹具，并以独立旁包形态跑通**液态玻璃 / 折射模糊**实景演示，验收热更与帧率表现。
+- `shader-effects`（「着色器与视觉特效」夹具）：涵盖液态玻璃实景与双层 `exportedBackdrop` 级联、`.hlsl` 生成型 `shaderBrush` 试验场、多级 `RenderEffect.chain` / `BlendMode` / `RenderLayer` 实时倒影与组透明度对比。
 
 验收：
-- `.hlsl` 修改即时热替换、Dist DXBC 零冷启卡顿、`RenderLayer` + `RenderEffect` + `BlendMode` 组合正确，液态玻璃旁包流畅运行。
+- WARP 与硬件显卡（RTX 5070 Ti）32/32 无头像素回归、全套 TS/Native/QuickJS/宿主/Live 验证通过；Dist 四形态包全部含预编译 `.dxbc` 且冷启首帧 296–346ms；真窗口 `.hlsl` 热替换、语法错误保留旧版与恢复在 76–83ms 内无重载生效。
+- 移交后续里程碑：M6（Windows Shell 集成与 `@canton/framework/fs`）、M7（`EXT=1` 扩展宿主、`canton-sdk`、`drawNative` 与外部 `ID3D11Texture2D` 零拷贝 `Painter`）、M8（CLI 重造、`demo/center` 迁入本期场景与 `demo/hello`）。
 
 ---
 

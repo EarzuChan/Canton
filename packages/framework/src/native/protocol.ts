@@ -131,6 +131,12 @@ export type NativeTransactionTarget = {
     createPixelBuffer: (width: number, height: number) => NativeBindingHandle
     // 返回提交后的内容版本
     commitPixelBuffer: (handle: NativeBindingHandle, pixels: Uint32Array) => number
+    compileRuntimeEffect: (source: string, entryPoint: string, debugName: string) => NativeBindingHandle
+    loadRuntimeEffectAsset: (assetPath: string, entryPoint: string, debugName: string) => NativeBindingHandle
+    updateRuntimeEffect: (handle: NativeBindingHandle, source: string, entryPoint: string, debugName: string) => Readonly<{ ok: boolean; error?: string }>
+    releaseRuntimeEffect: (handle: NativeBindingHandle) => void
+    createRenderLayer: () => NativeBindingHandle
+    releaseRenderLayer: (handle: NativeBindingHandle) => void
     registerBinding: (id: NodeId, input: string) => NativeBindingHandle
     updateBinding: (handle: NativeBindingHandle, value: NativeBindingValue) => void
     releaseBinding: (handle: NativeBindingHandle) => void

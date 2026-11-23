@@ -1,15 +1,8 @@
 import { reactive } from '@canton/reactivity'
 import type { InjectionKey } from '../runtime/apiInject.ts'
+import type { Density } from '../values/density.ts'
 
-export interface Density {
-    dpToPx(value: number): number
-
-    spToPx(value: number): number
-
-    pxToDp(value: number): number
-
-    pxToSp(value: number): number
-}
+export type { Density }
 
 export const DensityKey: InjectionKey<Density> = Symbol('Canton.Density') // 建立一个单独内建keys文件，并移动这个过去
 

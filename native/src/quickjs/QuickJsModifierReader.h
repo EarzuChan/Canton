@@ -12,7 +12,8 @@ extern "C" {
 namespace canton::quickjs {
     class QuickJsModifierReader {
        public:
-        QuickJsModifierReader(JSContext* context, QuickJsEventRegistry& events, canton::core::MutationTransaction* transaction) : context_(context), reader_(context), events_(events), transaction_(transaction) {}
+        QuickJsModifierReader(JSContext* context, QuickJsEventRegistry& events, canton::core::MutationTransaction* transaction, const canton::core::RuntimeEffectRegistry* effects = nullptr)
+            : context_(context), reader_(context), events_(events), transaction_(transaction), effects_(effects) {}
 
         [[nodiscard]] canton::core::ModifierDescriptors read(canton::core::NodeId id, JSValueConst modifier, const canton::core::ModifierValue* instanceInput = nullptr, std::span<const canton::core::ModifierDescriptor* const> previous = {});
 
@@ -57,6 +58,7 @@ namespace canton::quickjs {
         QuickJsValueReader reader_;
         QuickJsEventRegistry& events_;
         canton::core::MutationTransaction* transaction_ = nullptr;
+        const canton::core::RuntimeEffectRegistry* effects_ = nullptr;
         bool failed_ = false;
     };
 }

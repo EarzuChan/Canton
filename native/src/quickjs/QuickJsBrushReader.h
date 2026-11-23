@@ -1,6 +1,8 @@
 #pragma once
+#include "QuickJsEffectsReader.h"
 #include "QuickJsValueReader.h"
 #include <core/Brush.h>
+#include <core/GraphicsEffects.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -10,15 +12,17 @@
 #include <string_view>
 
 namespace canton::quickjs {
-    // 修饰器与绘制命令共用的 Brush 读取：数值或 solidColor 得到颜色，渐变得到共享渐变；失败抛异常
+    // 修饰器与绘制命令共用的 Brush 读取：数值或 solidColor 得到颜色，渐变得到共享渐变，shader 得到着色器实例；失败抛异常
     struct BrushValue {
         std::uint32_t color = 0;
         canton::core::GradientRef gradient;
+        canton::core::RuntimeShaderRef shader;
     };
 
     class QuickJsBrushReader {
        public:
-        explicit QuickJsBrushReader(JSContext* context) : context_(context) {}
+        explicit QuickJsBrushReader(JSContext* context, const canton::core::RuntimeEffectRegistry* effects = nullptr)
+            : context_(context), effects_(effects) {}
 
         BrushValue read(JSValueConst brush) const {
             using namespace canton::core;
@@ -29,6 +33,9 @@ namespace canton::quickjs {
                 only(brush, {"type", "color"});
                 ScopedValue value(context_, JS_GetPropertyStr(context_, brush, "color"));
                 return {color(value.get())};
+            }
+            if (type == "shader") {
+                return {0xffffffffu, {}, QuickJsEffectsReader(context_, effects_).readRuntimeShader(brush)};
             }
             Gradient gradient;
             if (type == "linearGradient") {
@@ -48,7 +55,7 @@ namespace canton::quickjs {
                 gradient.center = point(brush, "center");
                 gradient.startAngle = number(brush, "startAngle");
             } else
-                throw std::invalid_argument("brush.type 需要 solidColor、linearGradient、radialGradient 或 sweepGradient");
+                throw std::invalid_argument("brush.type 需要 solidColor、linearGradient、radialGradient、sweepGradient 或 shader");
             ScopedValue colors(context_, JS_GetPropertyStr(context_, brush, "colors"));
             ScopedValue stops(context_, JS_GetPropertyStr(context_, brush, "stops"));
             if (!JS_IsArray(colors.get()) || !JS_IsArray(stops.get())) throw std::invalid_argument("渐变需要 colors 与 stops 数组");
@@ -68,6 +75,7 @@ namespace canton::quickjs {
 
        private:
         JSContext* context_;
+        const canton::core::RuntimeEffectRegistry* effects_ = nullptr;
 
         // 只接受列出的字段，多余字段按名报错
         void only(JSValueConst object, std::initializer_list<std::string_view> fields) const {

@@ -1,7 +1,7 @@
 import { unitShapes, type UnitFields, type ValueUnit } from './unitContract.ts'
 
 // 原生事件种类名，与 C++ EventSlotKind 的枚举名首字母小写一致
-export type ModifierEventKind = | 'click' | 'doubleClick' | 'contextClick' | 'hoverEnter' | 'hoverExit' | 'interaction' | 'key' | 'wheel' | 'pointerInput' | 'dragStart' | 'dragDelta' | 'dragStop' | 'verticalScroll' | 'horizontalScroll' | 'inputUpdate' | 'inputSubmit' | 'inputChange' | 'inputBlur' | 'drawPrepare' | 'focusChanged' | 'semanticsIncrement' | 'semanticsDecrement'
+export type ModifierEventKind = | 'click' | 'doubleClick' | 'contextClick' | 'hoverEnter' | 'hoverExit' | 'interaction' | 'key' | 'wheel' | 'pointerInput' | 'dragStart' | 'dragDelta' | 'dragStop' | 'verticalScroll' | 'horizontalScroll' | 'inputUpdate' | 'inputSubmit' | 'inputChange' | 'inputBlur' | 'drawPrepare' | 'focusChanged' | 'semanticsIncrement' | 'semanticsDecrement' | 'globallyPositioned'
 
 export interface ModifierProtocolEntry {
     // 交给原生的描述字段，原生只接受这些字段
@@ -14,9 +14,9 @@ export interface ModifierProtocolEntry {
     readonly events?: Readonly<Record<string, ModifierEventKind>>
 }
 
-const { shape, brush, style, offset, size, range, sizeRange, padding, graphics } = unitShapes
+const { shape, brush, style, offset, size, range, sizeRange, padding, graphics, colorFilter: colorFilterShape } = unitShapes
 const length = (name: string) => ({ fields: [name], units: { [name]: 'length' }, arguments: ['length'] }) as const
-const colorFilter: UnitFields = { colorFilter: { tint: 'color' } }
+const colorFilter: UnitFields = { colorFilter: colorFilterShape }
 const scroll = (kind: ModifierEventKind) => ({ fields: ['value', 'onScroll', 'enabled'], events: { onScroll: kind } }) as const
 const draw: ModifierProtocolEntry = { fields: ['prepare', 'revision', 'transactional'], events: { prepare: 'drawPrepare' } }
 const shadowUnits: UnitFields = { shape, radius: 'length', spread: 'length', offset, color: 'color' }
@@ -55,7 +55,8 @@ export const modifierNativeProtocol: Readonly<Record<string, ModifierProtocolEnt
     animateItem: { fields: ['fadeInSpec', 'placementSpec', 'fadeOutSpec'] },
     offset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
     absoluteOffset: { fields: ['x', 'y'], units: offset, arguments: [offset] },
-    graphicsLayer: { fields: ['translationX', 'translationY', 'scaleX', 'scaleY', 'rotationZ', 'transformOrigin', 'alpha', 'clip'], units: graphics, arguments: [graphics] },
+    graphicsLayer: { fields: ['translationX', 'translationY', 'scaleX', 'scaleY', 'rotationZ', 'transformOrigin', 'alpha', 'clip', 'shape', 'renderEffect', 'blendMode', 'colorFilter', 'compositingStrategy'], units: graphics, arguments: [graphics] },
+    onGloballyPositioned: { fields: ['callback'], events: { callback: 'globallyPositioned' } },
     drawBehind: draw, drawWithContent: draw, drawWithCache: draw,
     background: { fields: ['color', 'brush', 'shape'], units: { brush, shape }, arguments: [brush, shape] },
     border: { fields: ['width', 'color', 'brush', 'shape'], units: { width: 'length', brush, shape }, arguments: ['length', brush, shape] },

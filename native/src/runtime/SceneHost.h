@@ -25,6 +25,7 @@ namespace canton::runtime {
         RuntimePackageLoader::DistResources distResources;
         AppResolver::MountPackage mountPackage;
         std::shared_ptr<const core::NativePainterRegistry> painters;
+        std::shared_ptr<const core::ShaderCompiler> shaderCompiler;
     };
 
     // 一个视口的全部编排：脚本运行时、帧泵、诊断与应用来源。不含窗口和渲染，宿主与无头回归共用。

@@ -710,15 +710,18 @@ function nativeModifierKind(element: ModifierElement): string {
 function sameDescriptorFields(left: unknown, right: unknown): boolean {
     if (Object.is(left, right)) return true
     if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false
+    if (Array.isArray(left) || Array.isArray(right)) {
+        return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((item, idx) => sameDescriptorFields(item, right[idx]))
+    }
     const a = left as Record<string, unknown>
     const b = right as Record<string, unknown>
     const keys = Object.keys(a)
-    return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]))
+    return keys.length === Object.keys(b).length && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && sameDescriptorFields(a[key], b[key]))
 }
 
 // 只比较正式 Modifier 的值字段，业务对象与回调仍按身份判断，不递归探测任意对象
 const descriptorFields: Readonly<Record<string, readonly string[]>> = {
-    background: ['brush', 'shape'], border: ['brush', 'shape'], clip: ['shape'], graphicsLayer: ['transformOrigin'],
+    background: ['brush', 'shape'], border: ['brush', 'shape'], clip: ['shape'], graphicsLayer: ['transformOrigin', 'shape', 'renderEffect', 'colorFilter'],
     text: ['style'], textField: ['textStyle'], paint: ['painter', 'colorFilter'],
     animateContentSize: ['animationSpec'],
     animateItem: ['fadeInSpec', 'placementSpec', 'fadeOutSpec'],

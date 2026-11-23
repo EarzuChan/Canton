@@ -124,8 +124,8 @@ namespace canton::core {
             return pointer_.gesture().icon();
         }
 
-        [[nodiscard]] bool pointerDragging() const noexcept {
-            return pointer_.gesture().dragging();
+        [[nodiscard]] bool pointerPressed() const noexcept {
+            return pointer_.gesture().pressed();
         }
 
         void notePointerEffects(const PointerGestureOutput& output) noexcept;

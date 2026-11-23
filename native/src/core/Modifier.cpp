@@ -37,6 +37,7 @@ namespace canton::core {
             if (std::holds_alternative<AnimateItemModifier>(value)) return kPaint;
             if (std::holds_alternative<PaintStyleSemantics>(value) || std::holds_alternative<EffectModifier>(value)) return kPaint;
             if (std::holds_alternative<DrawModifier>(value)) return kPaint | dirtyMask(DirtyFlag::EventSlot);
+            if (std::holds_alternative<PositionedModifier>(value)) return kPlace | dirtyMask(DirtyFlag::EventSlot);
             if (std::holds_alternative<InputModifierSemantics>(value)) return kHit | dirtyMask(DirtyFlag::EventSlot) | dirtyMask(DirtyFlag::Focus);
             if (std::holds_alternative<FocusModifier>(value)) return dirtyMask(DirtyFlag::Focus) | dirtyMask(DirtyFlag::EventSlot);
             if (std::holds_alternative<SemanticsModifier>(value)) return dirtyMask(DirtyFlag::Accessibility) | dirtyMask(DirtyFlag::EventSlot);
@@ -86,6 +87,7 @@ namespace canton::core {
                     constexpr std::string_view names[]{"drawBehind", "drawWithContent", "drawWithCache"};
                     return names[static_cast<std::size_t>(input.kind)];
                 }
+                if constexpr (std::is_same_v<T, PositionedModifier>) return "onGloballyPositioned";
                 return "";
             },
             value);
@@ -149,6 +151,7 @@ namespace canton::core {
                 else if constexpr (std::is_same_v<T, TransformModifierSemantics>) {
                     for (auto number : {input.translationX, input.translationY, input.scaleX, input.scaleY, input.rotationZ, input.transformOriginX, input.transformOriginY, input.alpha}) finite(number);
                     if (input.alpha < 0 || input.alpha > 1) throw std::invalid_argument("Canton graphicsLayer alpha must be within [0, 1]");
+                    validateModifierValue(input.shape);
                 } else if constexpr (std::is_same_v<T, OffsetModifier>) {
                     finite(input.x);
                     finite(input.y);
@@ -216,8 +219,16 @@ namespace canton::core {
             if (const auto* b = std::get_if<TransformModifierSemantics>(&after)) {
                 auto previous = *a;
                 previous.alpha = b->alpha;
+                previous.renderEffect = b->renderEffect;
+                previous.blendMode = b->blendMode;
+                previous.colorFilter = b->colorFilter;
+                previous.compositingStrategy = b->compositingStrategy;
                 if (previous == *b) return kPaint;
+                return kPaint | kHit | dirtyMask(DirtyFlag::Transform);
             }
+        }
+        if (const auto* a = std::get_if<PositionedModifier>(&before)) {
+            if (const auto* b = std::get_if<PositionedModifier>(&after)) return dirtyMask(DirtyFlag::EventSlot);
         }
         if (const auto* a = std::get_if<ParentDataModifierSemantics>(&before)) {
             if (const auto* b = std::get_if<ParentDataModifierSemantics>(&after); b && a->kind == ParentDataKind::Align && b->kind == ParentDataKind::Align) return kPlace;
