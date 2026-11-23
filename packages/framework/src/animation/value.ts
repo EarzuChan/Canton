@@ -231,6 +231,7 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
     let from = [...current], target = infinite ? converter.to(infinite.target) : current, initialVelocity = velocity
     const state = shallowRef(converter.from(current)) as Ref<T>, running = shallowRef(false)
     let startTime = 0, stopped = false, generation = 0
+    let lastSampleTime: number | undefined
     let pausedAt = 0
     let resumed = false
     const spec = args.animationSpec ?? spring()
@@ -250,6 +251,7 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
             if (infinite.repeatMode === 'reverse' && cycle % 2 === 1) progress = 1 - progress
             progress = finite(spec.easing(progress), "缓动结果")
             for (let index = 0; index < current.length; index++) current[index] = from[index] + (target[index] - from[index]) * progress
+            lastSampleTime = time
             state.value = converter.from(current)
             return
         }
@@ -282,6 +284,9 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
             velocity.fill(0)
             scheduler.remove(sample)
             running.value = false
+            lastSampleTime = undefined
+        } else {
+            lastSampleTime = time
         }
         state.value = converter.from(current)
         if (done) {
@@ -294,18 +299,21 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
         if (stopped) return
         if (next.length !== target.length) throw new RangeError("动画数值数组的长度不能改变")
         if (next.every((item, index) => item === target[index])) return
-        // 从最近采样值重定向，保留弹簧动量
+        // 运行中的动画在帧采样前被重定向时，保留上次采样时刻作为起点，避免本帧 elapsed 被归零
+        const origin = running.value && !resumed && !scope?.paused && lastSampleTime !== undefined && lastSampleTime <= time ? lastSampleTime : time
         from = converter.to(state.value)
         target = next
         generation++
         initialVelocity = [...velocity]
-        startTime = time
+        startTime = origin
         resumed = false
         if (from.every((item, index) => item === target[index]) && velocity.every(value => value === 0)) {
             scheduler.remove(sample)
             running.value = false
+            lastSampleTime = undefined
             return
         }
+        lastSampleTime = origin
         running.value = true
         scheduler.add(sample, () => !scope || scope.active && !scope.paused)
     }
@@ -315,6 +323,7 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
         if (!spec || spec.kind !== 'tween' || !spec.durationMillis) throw new RangeError('无限动画需要 durationMillis 大于 0 的 tween')
         if (target.length !== current.length) throw new RangeError('动画数值数组的长度不能改变')
         startTime = clock.now()
+        lastSampleTime = startTime
         running.value = true
         scheduler.add(sample, () => !scope || scope.active && !scope.paused)
     }
@@ -332,6 +341,7 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
     if (scope) onScopeDispose(() => {
         scope.pauseCallbacks.delete(pause)
         scope.resumeCallbacks.delete(resume)
+        lastSampleTime = undefined
         scheduler.remove(sample)
     })
 
@@ -345,6 +355,7 @@ function channel<T>(initial: T, converter: Converter<T>, args: AnimationArgs, in
             configurable: true, value: () => {
                 if (stopped) return
                 stopped = true
+                lastSampleTime = undefined
                 scheduler.remove(sample)
                 running.value = false
             }

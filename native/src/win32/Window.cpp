@@ -431,6 +431,20 @@ namespace canton::win32 {
     int MessageDispatcher::runMessageLoop() {
         MSG message{};
         while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+            // PostMessage(kWakeMessage) 在 Win32 队列中优先级高于 WM_MOUSEMOVE 等输入消息；
+            // 连续动画帧期间若不先排空输入队列，会导致鼠标拖拽事件被周期性饿死。
+            if (message.message == kWakeMessage) {
+                MSG input{};
+                int drained = 0;
+                while (drained++ < 64 && PeekMessageW(&input, nullptr, 0, 0, PM_REMOVE | PM_QS_INPUT)) {
+                    if (input.message == WM_QUIT) {
+                        PostQuitMessage(static_cast<int>(input.wParam));
+                        return static_cast<int>(input.wParam);
+                    }
+                    TranslateMessage(&input);
+                    DispatchMessageW(&input);
+                }
+            }
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }

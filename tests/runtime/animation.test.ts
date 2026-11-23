@@ -347,3 +347,46 @@ test('重定向到当前静止值取消帧需求，同批完成后再重定向�
     assert.equal(retiredCompletions, 0)
     clock.stop()
 })
+
+test('语义时钟在每帧采样前推进时，连续重定向的弹簧、补间与级联速度通道仍逐帧前进', async () => {
+    const { spring } = await import('../../packages/framework/src/animation.ts')
+    const { FrameScheduler } = await import('../../packages/framework/src/runtime/scheduler.ts')
+    const { bindFrameScheduler } = await import('../../packages/framework/src/runtime/animationOwner.ts')
+    let semanticNow = 0
+    const scope = effectScope()
+    const scheduler = new FrameScheduler(() => { }, () => semanticNow)
+    bindFrameScheduler(scope, scheduler)
+
+    const target = ref(0)
+    const speedTarget = ref(0)
+    const position = scope.run(() => animatedNumberAsRef(target, { animationSpec: spring({ stiffness: 1000, dampingRatio: 1, visibilityThreshold: 0.001 }) }))!
+    const linear = scope.run(() => animatedNumberAsRef(target, { animationSpec: tween({ durationMillis: 200, easing: linearEasing }) }))!
+    const speed = scope.run(() => animatedNumberAsRef(speedTarget, { animationSpec: spring({ stiffness: 300, dampingRatio: 0.5, visibilityThreshold: 0.01 }) }))!
+    let lastSample = 0
+    scope.run(() => watch(position, (value, previous) => {
+        if (semanticNow > lastSample) speedTarget.value = (value - previous) * 1000 / (semanticNow - lastSample)
+        lastSample = semanticNow
+    }, { flush: 'sync' }))
+
+    let previousPos = 0
+    let previousLinear = 0
+    for (let frame = 1; frame <= 10; frame++) {
+        const time = frame * 16
+        // 模拟 AppSession::pumpFrame：先在当前帧时间戳下派发输入改目标，再以同一时间戳采样动画
+        semanticNow = time
+        target.value = frame * 0.1
+        scheduler.prepare(time)
+        scheduler.complete(true)
+        if (frame >= 2) {
+            assert.ok(position.value > previousPos, `第 ${frame} 帧弹簧被重定向冻结`)
+            assert.ok(linear.value > previousLinear, `第 ${frame} 帧补间被重定向冻结`)
+        }
+        previousPos = position.value
+        previousLinear = linear.value
+    }
+    assert.ok(position.value > 0.5, `连续拖拽 10 帧后弹簧进度过低: ${position.value}`)
+    assert.ok(speed.value > 1, `级联速度弹簧未随连续位移推进: ${speed.value}`)
+
+    scope.stop()
+    scheduler.dispose()
+})

@@ -41,7 +41,7 @@ const pressTarget = ref(0)
 const speedTarget = ref(0)
 const target = computed(() => (props.value - props.min) / (props.max - props.min))
 const quickSpring = spring({ stiffness: 1000, dampingRatio: 1, visibilityThreshold: 0.001 })
-const position = animatedNumberAsRef(target, { animationSpec: quickSpring })
+const position = animatedNumberAsRef(target, { animationSpec: quickSpring, finished: () => { speedTarget.value = 0 } })
 const press = animatedNumberAsRef(pressTarget, { animationSpec: quickSpring })
 const scaleX = animatedNumberAsRef(() => 1 + pressTarget.value * 0.5, { animationSpec: spring({ stiffness: 250, dampingRatio: 0.6, visibilityThreshold: 0.001 }) })
 const scaleY = animatedNumberAsRef(() => 1 + pressTarget.value * 0.5, { animationSpec: spring({ stiffness: 250, dampingRatio: 0.7, visibilityThreshold: 0.001 }) })
@@ -168,11 +168,13 @@ const thumbGlass = drawBackdrop({
     },
 })
 
-const thumbMod = computed(() => {
-    const width = thumbWidth * stretchX.value
-    const height = thumbHeight * stretchY.value
-    return M.offset({ x: (thumbCenter.value - width / 2).dp })
-        .requiredSize(width.dp, height.dp)
-        .then(thumbGlass)
-})
+const thumbMod = computed(() =>
+    M.graphicsLayer({
+        translationX: density.dpToPx(thumbCenter.value - thumbWidth / 2).px,
+        scaleX: stretchX.value,
+        scaleY: stretchY.value,
+    })
+        .size(thumbWidth.dp, thumbHeight.dp)
+        .then(thumbGlass),
+)
 </script>

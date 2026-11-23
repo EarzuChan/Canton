@@ -106,6 +106,7 @@
                         </Row>
                     </Box>
                 </Row>
+                <LiquidSlider label="丝滑耍起美味滑块" :displayValue="dummyValue.toFixed(0)" :value="dummyValue" :min="0" :max="100" :onValueChange="v => { dummyValue = v }" :modifier="M.fillMaxWidth()" />
             </Column>
         </Box>
     </Box>
@@ -149,6 +150,7 @@ const blurRadius = ref(4)
 const highlightAngle = ref(45)
 const saturation = ref(1.4)
 const dispersion = ref(true)
+const dummyValue = ref(50)
 
 const resizeBorderDp = 10
 const cornerSize = M.size(resizeBorderDp.dp, resizeBorderDp.dp)
