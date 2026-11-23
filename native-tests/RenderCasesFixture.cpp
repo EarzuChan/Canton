@@ -88,10 +88,7 @@ namespace render_regression {
 
             void verifyGlassCursors() {
                 const auto& win = windowAt(0);
-                const auto& regions = win.pipeline.publishedFrame().content.hitTest->regions;
-                const auto drag = std::find_if(regions.begin(), regions.end(), [](const auto& region) { return region.target.input == core::InputModifierKind::Draggable; });
-                if (drag == regions.end()) throw std::runtime_error("玻璃面板没有可拖动热区");
-                const auto [x, y, w, h] = drag->bounds;
+                const auto [x, y, w, h] = glassBounds();
                 using Icon = core::PointerIcon;
                 const std::pair<core::Point, Icon> samples[]{
                     {{x + 5, y + 5}, Icon::ResizeNwse}, {{x + w - 5, y + 5}, Icon::ResizeNesw},
@@ -106,10 +103,75 @@ namespace render_regression {
                 }
             }
 
+            void verifyLiquidSlider(const Image& rest) {
+                const auto& win = windowAt(0);
+                const auto& regions = win.pipeline.publishedFrame().content.hitTest->regions;
+                const auto slider = std::find_if(regions.begin(), regions.end(), [](const auto& region) { return region.target.input == core::InputModifierKind::PointerInput; });
+                if (slider == regions.end()) throw std::runtime_error("找不到玻璃滑杆热区");
+                const auto [x, y, width, height] = slider->bounds;
+                const core::Point center{x + width / 2, y + height / 2};
+                const auto red = [&](const Image& image, core::Point point) {
+                    return (image.pixels.at(static_cast<int>(point.y) * image.width + static_cast<int>(point.x)) >> 16) & 0xff;
+                };
+                app_.pointerDown(win.windowId, {center, {}, now_});
+                advanceTo(now_ + 32);
+                const auto transitioning = red(capture(), center);
+                advanceTo(now_ + 224);
+                const auto pressed = red(capture(), center);
+                app_.pointerUp(win.windowId, {center, {}, now_});
+                advanceTo(now_ + 640);
+                const auto white = red(rest, center);
+                if (!(white >= 250 && white > transitioning && transitioning > pressed && red(capture(), center) == white))
+                    throw std::runtime_error("滑块应逐帧从白色转为玻璃，并在松手后恢复白色");
+
+                const core::Point tap{x + width * 0.85f, center.y};
+                app_.pointerDown(win.windowId, {tap, {}, now_});
+                app_.pointerUp(win.windowId, {tap, {}, now_});
+                advanceTo(now_ + 16);
+                if (red(capture(), tap) >= 250) throw std::runtime_error("点按轨道后，滑块不可直接跳到目标位置");
+                advanceTo(now_ + 640);
+                if (red(capture(), tap) != white) throw std::runtime_error("点按轨道后，滑块应滑到目标位置并恢复白色");
+            }
+
+            void verifyGlassDragBounds() {
+                const auto id = windowAt(0).windowId;
+                const auto start = [&](core::Point point) { app_.pointerDown(id, {point, {}, now_}); };
+                const auto move = [&](core::Point point) {
+                    app_.pointerMove(id, {point, {}, now_});
+                    advanceTo(now_ + 16);
+                    return glassBounds();
+                };
+
+                const auto [x, y, w, h] = glassBounds();
+                const core::Point center{x + w / 2, y + h / 2};
+                start(center);
+                const auto pinned = move({center.x - 320, center.y});
+                if (pinned.x != 12 || move({center.x - 120, center.y}).x != pinned.x || move({center.x - 80, center.y}).x <= pinned.x)
+                    throw std::runtime_error("玻璃移动到左限位后，应等鼠标回到抓取点再反向");
+                app_.pointerUp(id, {{center.x - 80, center.y}, {}, now_});
+
+                const auto bounds = glassBounds();
+                const core::Point edge{bounds.x + 5, center.y};
+                start(edge);
+                const auto narrow = move({edge.x + 100, edge.y});
+                const auto returning = move({edge.x + 60, edge.y});
+                const auto wider = move({edge.x + 15, edge.y});
+                if (narrow.width != 275 || returning.width != narrow.width || wider.width <= narrow.width || wider.x + wider.width != bounds.x + bounds.width)
+                    throw std::runtime_error("玻璃缩到最小宽度后，应等鼠标回到左边再放宽，并固定右边");
+                app_.pointerUp(id, {{edge.x + 15, edge.y}, {}, now_});
+            }
+
             [[nodiscard]] bool hasError() const noexcept { return app_.globalDiagnostics().hasError(); }
             [[nodiscard]] double now() const noexcept { return now_; }
 
            private:
+            [[nodiscard]] core::Rect glassBounds() {
+                const auto& regions = windowAt(0).pipeline.publishedFrame().content.hitTest->regions;
+                const auto drag = std::find_if(regions.begin(), regions.end(), [](const auto& region) { return region.target.input == core::InputModifierKind::Draggable; });
+                if (drag == regions.end()) throw std::runtime_error("玻璃面板没有可拖动热区");
+                return drag->bounds;
+            }
+
             [[nodiscard]] runtime::WindowSurfaceState& windowAt(std::size_t index) {
                 const auto ids = app_.windowIds();
                 if (index >= ids.size()) throw std::runtime_error("目标窗口索引越界");
@@ -246,8 +308,13 @@ namespace render_regression {
                             session.command(instruction);
                             session.advanceTo(session.now() + 64);
                             session.settle();
-                            if (instruction == "glass:1") session.verifyGlassCursors();
-                            return session.capture();
+                            auto image = session.capture();
+                            if (instruction == "glass:1") {
+                                session.verifyGlassCursors();
+                                session.verifyLiquidSlider(image);
+                                session.verifyGlassDragBounds();
+                            }
+                            return image;
                         }};
         };
         cases.push_back(shaderPage("shader-effects-glass", "glass:1"));

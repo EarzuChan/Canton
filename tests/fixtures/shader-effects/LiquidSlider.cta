@@ -1,0 +1,178 @@
+<template>
+    <Column :modifier="props.modifier" :verticalArrangement="Arrangement.spacedBy(2.dp)">
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.SpaceBetween">
+            <Text :text="props.label" :style="subheading" />
+            <Text :text="props.displayValue" :style="valueStyle" />
+        </Row>
+        <Box :modifier="sliderMod" contentAlignment="CenterStart">
+            <Box :modifier="trackMod" />
+            <Box :modifier="thumbMod" />
+        </Box>
+    </Column>
+</template>
+
+<script>
+import { computed, inject, ref, watch } from '@canton/framework'
+import { animatedNumberAsRef, spring } from '@canton/framework/animation'
+import { Arrangement, Color, DensityKey, M, TileMode, createDensity, rounded, type Modifier, type PointerInputEvent } from '@canton/framework/ui'
+import { Highlight, InnerShadow, Shadow, createBackdrop, createCanvasBackdrop, createCombinedBackdrop, createLayerBackdrop, drawBackdrop, layerBackdrop } from '@canton/kyant-glass'
+import { caption, controlCardColor, subheading } from './theme.ts'
+
+const props = defineProps<{
+    label: string
+    displayValue: string
+    value: number
+    min: number
+    max: number
+    onValueChange: (value: number) => void
+    modifier: Modifier
+}>()
+
+const valueStyle = { ...caption, fontSize: 12 }
+const trackColor = Color(0xff484853)
+const accent = Color(0xff0a84ff)
+const thumbWidth = 40
+const thumbHeight = 24
+const thumbInset = thumbWidth / 4
+const capsule = rounded(100.dp)
+const density = inject(DensityKey, createDensity())
+const trackWidth = ref(0)
+const pressTarget = ref(0)
+const speedTarget = ref(0)
+const target = computed(() => (props.value - props.min) / (props.max - props.min))
+const quickSpring = spring({ stiffness: 1000, dampingRatio: 1, visibilityThreshold: 0.001 })
+const position = animatedNumberAsRef(target, { animationSpec: quickSpring })
+const press = animatedNumberAsRef(pressTarget, { animationSpec: quickSpring })
+const scaleX = animatedNumberAsRef(() => 1 + pressTarget.value * 0.5, { animationSpec: spring({ stiffness: 250, dampingRatio: 0.6, visibilityThreshold: 0.001 }) })
+const scaleY = animatedNumberAsRef(() => 1 + pressTarget.value * 0.5, { animationSpec: spring({ stiffness: 250, dampingRatio: 0.7, visibilityThreshold: 0.001 }) })
+const speed = animatedNumberAsRef(speedTarget, { animationSpec: spring({ stiffness: 300, dampingRatio: 0.5, visibilityThreshold: 0.01 }) })
+const progress = computed(() => clamp(position.value, 0, 1))
+const glass = computed(() => clamp(press.value, 0, 1))
+const thumbCenter = computed(() => clamp(trackWidth.value * progress.value, thumbInset, Math.max(thumbInset, trackWidth.value - thumbInset)))
+const stretchX = computed(() => scaleX.value / (1 - clamp(speed.value * 0.075, -0.2, 0.2)))
+const stretchY = computed(() => scaleY.value * (1 - clamp(speed.value * 0.025, -0.2, 0.2)))
+
+let pointerDown = false
+let dragging = false
+let downX = 0
+let dragOrigin = 0
+let lastSample = 0
+
+function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value))
+}
+
+watch(position, (value, previous) => {
+    const now = performance.now()
+    if (pressTarget.value && now > lastSample) speedTarget.value = (value - previous) * 1000 / (now - lastSample)
+    lastSample = now
+}, { flush: 'sync' })
+
+function pressThumb() {
+    if (pressTarget.value) return
+    lastSample = performance.now()
+    pressTarget.value = 1
+}
+
+function releaseThumb() {
+    pressTarget.value = 0
+    speedTarget.value = 0
+}
+
+watch([press, position, target], () => {
+    if (!pointerDown && pressTarget.value && glass.value >= 0.8 && Math.abs(position.value - target.value) < 0.025) releaseThumb()
+}, { flush: 'sync' })
+
+function setProgress(fraction: number) {
+    props.onValueChange(props.min + clamp(fraction, 0, 1) * (props.max - props.min))
+}
+
+function handlePointer(event: PointerInputEvent) {
+    if (trackWidth.value <= 0) return
+    if (event.type === 'down') {
+        pointerDown = true
+        downX = event.xDp
+        dragging = Math.abs(downX - thumbCenter.value) <= thumbWidth * stretchX.value / 2
+        dragOrigin = dragging ? target.value : downX / trackWidth.value
+        if (dragging) pressThumb()
+    } else if (event.type === 'move' && pointerDown) {
+        const dx = event.xDp - downX
+        if (!dragging && Math.abs(dx) < 4) return
+        dragging = true
+        pressThumb()
+        setProgress(dragOrigin + dx / trackWidth.value)
+    } else if (event.type === 'up' && pointerDown) {
+        if (!dragging) pressThumb()
+        setProgress(dragging ? dragOrigin + (event.xDp - downX) / trackWidth.value : event.xDp / trackWidth.value)
+        pointerDown = false
+        if (glass.value >= 0.8 && Math.abs(position.value - target.value) < 0.025) releaseThumb()
+    } else if (event.type === 'cancel') {
+        pointerDown = false
+        releaseThumb()
+    }
+}
+
+const sliderMod = M.fillMaxWidth().height(30.dp)
+    .onGloballyPositioned(coords => {
+        if (coords.isAttached) trackWidth.value = density.pxToDp(coords.size.width)
+    })
+    .pointerInput(handlePointer)
+    .pointerIcon('hand')
+
+const trackBackdrop = createLayerBackdrop()
+const trackMod = M.fillMaxSize().then(layerBackdrop(trackBackdrop)).drawBehind(scope => {
+    const height = scope.density.dpToPx(6)
+    const width = scope.size.width
+    const y = (scope.size.height - height) / 2
+    scope.drawRoundRect({ x: 0.px, y: y.px, width: width.px, height: height.px, radius: (height / 2).px, color: trackColor })
+    if (progress.value > 0) {
+        scope.drawRoundRect({ x: 0.px, y: y.px, width: (width * progress.value).px, height: height.px, radius: (height / 2).px, color: accent })
+    }
+})
+
+const thumbBackdrop = createCombinedBackdrop(
+    createCanvasBackdrop(scope => scope.drawRect({ color: Color(controlCardColor) })),
+    createBackdrop(context => {
+        const phase = glass.value
+        if (phase === 0) return
+        context.scope.withTransform({ scaleX: 2 / 3 + phase / 3, scaleY: phase, originX: 0.5, originY: 0.5 }, () => {
+            trackBackdrop.drawBackdrop(context)
+        })
+    }),
+)
+
+const thumbGlass = drawBackdrop({
+    backdrop: thumbBackdrop,
+    shape: () => capsule,
+    effects: scope => {
+        const phase = glass.value
+        if (phase === 0) return
+        scope.blur(scope.dpToPx(8 * (1 - phase)), TileMode.Clamp)
+        scope.lens({
+            refractionHeight: scope.dpToPx(10 * phase),
+            refractionAmount: scope.dpToPx(14 * phase),
+            chromaticAberration: true,
+        })
+    },
+    highlight: () => glass.value > 0 ? Highlight.create({
+        ...Highlight.Ambient,
+        widthDp: Highlight.Ambient.widthDp / 1.5,
+        blurRadiusDp: Highlight.Ambient.blurRadiusDp / 1.5,
+        alpha: glass.value,
+    }) : null,
+    shadow: () => Shadow.create({ radiusDp: 4, color: Color(0x0d000000) }),
+    innerShadow: () => glass.value > 0 ? InnerShadow.create({ radiusDp: 4 * glass.value, alpha: glass.value }) : null,
+    onDrawSurface: scope => {
+        const alpha = Math.round(255 * (1 - glass.value))
+        if (alpha > 0) scope.drawRect({ color: Color(((alpha << 24) | 0xffffff) >>> 0) })
+    },
+})
+
+const thumbMod = computed(() => {
+    const width = thumbWidth * stretchX.value
+    const height = thumbHeight * stretchY.value
+    return M.offset({ x: (thumbCenter.value - width / 2).dp })
+        .requiredSize(width.dp, height.dp)
+        .then(thumbGlass)
+})
+</script>
