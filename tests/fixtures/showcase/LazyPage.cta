@@ -1,16 +1,16 @@
 <template>
     <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
         <Text :text="`Lazy from ${list.firstVisibleItemIndex} of ${list.layoutInfo.totalItemsCount}`" :style="title" />
-        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <!-- 一万项的列表：只有视口里的项会被组合 -->
             <LazyColumn :items="items" :itemKey="keyOf" :state="list" :modifier="rowHandle.weight(1).height(230.dp).background(palette.panel, rounded(8.dp))" &item>
-                <Row :modifier="M.fillMaxWidth().height((item.tall ? 44 : 30).dp).padding({ horizontal: 8.dp, vertical: 3.dp }).background(item.id % 2 ? palette.line : palette.canvas, rounded(4.dp)).padding({ horizontal: 8.dp })" &row-handle="innerHandle">
+                <Row :modifier="M.fillMaxWidth().height((item.tall ? 44 : 30).dp).padding({ horizontal: 8.dp, vertical: 3.dp }).background(item.id % 2 ? palette.line : palette.canvas, rounded(4.dp)).padding({ horizontal: 8.dp })" &rowHandle="innerHandle">
                     <Text :text="`item ${item.id}`" :style="body" :modifier="innerHandle.align(Alignment.CenterVertically)" />
                 </Row>
             </LazyColumn>
             <!-- 网格：三列，个别项占满一行 -->
             <LazyVerticalGrid :items="items" :itemKey="keyOf" :span="spanOf" :state="grid" :cells="GridCells.Fixed(3)" :modifier="rowHandle.weight(1).height(230.dp).background(palette.panel, rounded(8.dp))" &item>
-                <Box :modifier="M.fillMaxWidth().height(40.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &box-handle>
+                <Box :modifier="M.fillMaxWidth().height(40.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &boxHandle>
                     <Text :text="`${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
                 </Box>
             </LazyVerticalGrid>

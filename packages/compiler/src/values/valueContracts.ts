@@ -13,7 +13,6 @@ export interface CtaValueContract {
     checkProps?: boolean
     unref?: boolean
     parameterInputs?: boolean
-    parameterObject?: boolean
     resolve?: boolean
 }
 
@@ -108,7 +107,6 @@ export function createCtaValueContracts(checker: ts.TypeChecker, source: ts.Sour
     register(exported(internal, 'cantonModifier'), { modifierCall: true })
     register(exported(internal, 'callArrangable'), { call: true })
     register(exported(internal, 'parameterInputs'), { parameterInputs: true })
-    register(exported(internal, 'parameterObject'), { parameterObject: true })
     register(exported(internal, 'resolveArrangable'), { resolve: true })
     register(exported(ui, 'colorToHex'), { arguments: ['color'] })
     register(exported(ui, 'solidColor'), { arguments: ['color'] })

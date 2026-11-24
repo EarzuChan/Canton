@@ -35,7 +35,7 @@ test('多行模板表达式改写按完整原始表达式计算标识符位置',
 })
 
 test('模板内容和指令只接受正式语法，空白不改变结构', () => {
-    for (const source of ['<Row>正文</Row>', '<Text>{{ title }}</Text>', '<Xxx :value />', '<Xxx :someValue="a" :some-value="b" />']) assert.throws(() => compile(source), SyntaxError)
+    for (const source of ['<Row>正文</Row>', '<Text>{{ title }}</Text>', '<Xxx :value />', '<Xxx :="obj" />', '<Xxx :[]="obj" />', '<Xxx c-bind="obj" />', '<Xxx c-bind:value="a" />', '<Xxx someValue="a" :someValue="b" />']) assert.throws(() => compile(source), SyntaxError)
     const options = { mode: 'module' as const, prefixIdentifiers: true }
     assert.equal(compile('<Row><Spacer/> <Spacer/></Row>', options).code.replace(/模板.cta:\d+:\d+/g, '位置'), compile('<Row>\n    <Spacer/>\n    <Spacer/>\n</Row>', options).code.replace(/模板.cta:\d+:\d+/g, '位置'))
     assert.match(compile('<Xxx enabled />', options).code, /"enabled": \(\) => true/)
@@ -71,7 +71,7 @@ test('参数提取类型通过正式入口解析别名和导入类型，默认�
 
     const reference = runtime.ref('业务引用')
     const Receiver = evaluateCta('<template><Text :text="props.ref" /></template><script>const props = defineProps<{ ref: string }>()</script>')
-    const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Receiver :ref="reference" /></Window></App></template><script>import { Receiver, reference } from "harness"</script>', { harness: { Receiver, reference } })
+    const Page = evaluateCta('<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Receiver :ref="reference" /></Window></App></template><script>import { Receiver, reference } from "harness"</script>', { harness: { Receiver, reference } })
     const native = recordingNative(), app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     const id = native.textNodes()[0].id
     assert.deepEqual(native.textNodes(), [{ id, text: '业务引用' }])
@@ -81,11 +81,18 @@ test('参数提取类型通过正式入口解析别名和导入类型，默认�
     app.unmount()
 })
 
-test('参数对象按同一 camelize 规则拒绝重复，不合并回调', () => {
-    assert.throws(() => internal.parameterInputs([['someValue', () => 1], ['some-value', () => 2]]), /重复参数/)
+test('参数对象按精确名称拒绝重复，不转换连字符也不合并回调', () => {
+    assert.throws(() => internal.parameterInputs([['someValue', () => 1], ['someValue', () => 2]]), /重复参数/)
     assert.throws(() => internal.parameterInputs([['onSubmit', () => () => { }], ['onSubmit', () => () => { }]]), /重复参数/)
-    assert.throws(() => internal.cantonParameterName(undefined), /非空字符串/)
-    assert.equal(internal.parameterInputs([['some-value', () => 1]]).someValue(), 1)
+    assert.throws(() => internal.cantonParameterName(undefined), /合法标识符/)
+    assert.throws(() => internal.cantonParameterName('some-value'), /合法标识符/)
+    for (const invalid of ['×', '\u0301start', '\u200Cstart']) {
+        assert.throws(() => internal.cantonParameterName(invalid), /合法标识符/)
+    }
+    for (const valid of ['中文', '𐐀', 'a\u0301', 'a\u200Cb\u200D', 'class']) {
+        assert.equal(internal.cantonParameterName(valid), valid)
+    }
+    assert.equal(internal.parameterInputs([['someValue', () => 1]]).someValue(), 1)
 })
 
 test('真实 CTA 命令行类型检查保留脚本和跨文件参数契约', () => {
@@ -135,15 +142,38 @@ test('CTA 模板支持独占行与行末 // 彩蛋注释且不进入产物', () 
     assert.equal((result.code.match(/_callArrangable\(/g) ?? []).length, 3)
 })
 
-test('对象参数类型检查保留字段类型、必需性与未声明字段', () => {
-    const directory = mkdtempSync(resolve('tmp-refs/cta-object-typecheck-'))
+test('参数、槽位与取参统一要求合法 JS 标识符，非小驼峰合法标识符原样放行，非法标识符在编译期和定义期拒绝', () => {
+    for (const badTemplate of ['<Text single-line />', '<Text :single-line="true" />', '<Text :×="true" />', '<Slot :row-handle="1" />', '<Slot name="bad-slot" />', '<Box><Template #bad-slot><Text text="x" /></Template></Box>']) {
+        assert.throws(() => compileCantonCta(`<template>${badTemplate}</template>`, '非法模板.cta'), /合法.*标识符/)
+    }
+    for (const badScript of ["defineProps<{ 'kebab-name': string }>()", "defineProps({ 'kebab-name': String })", "defineProps(['kebab-name'])", "defineProps<{ '×': string }>()"]) {
+        assert.throws(() => compileCantonCta(`<script>${badScript}</script>`, '非法脚本.cta'), /合法标识符/)
+    }
+    assert.throws(() => internal.defineArrangable({ props: { 'kebab-name': String }, setup: () => () => { } }), /合法标识符/)
+    assert.throws(() => internal.defineArrangable({ slots: { 'bad-slot': internal.slotParams() }, setup: () => () => { } }), /合法标识符/)
+
+    const directory = mkdtempSync(resolve('tmp-refs/cta-ident-symbol-'))
     try {
-        writeFileSync(join(directory, 'Target.cta'), '<script>defineProps<{ count: number }>()</script>')
-        writeFileSync(join(directory, 'Good.cta'), "<template><Target c-bind=\"values\" /></template><script>import Target from \"./Target.cta\";\n const values = { count: 1 }</script>")
+        const customSource = `<template><Slot name="header_slot" :class="snake_value + PascalValue + props.class + 中文" /></template>
+<script>
+const props = defineProps<{ snake_value: string; PascalValue: string; class: string; 中文: string }>()
+defineSlots<{ header_slot: { class: string } }>()
+</script>`
+        const goodSource = `<template>
+<Custom snake_value="甲" :PascalValue="'乙'" :class="'丙'" :中文="'丁'">
+    <Template #header_slot &class="classValue"><Text :text="classValue" /></Template>
+</Custom>
+</template>
+<script>import Custom from './Custom.cta'</script>`
+        writeFileSync(join(directory, 'Custom.cta'), customSource)
+        writeFileSync(join(directory, 'Good.cta'), goodSource)
         assert.deepEqual(checkCtaProject(resolve('tsconfig.json'), [join(directory, 'Good.cta')]), [])
-        writeFileSync(join(directory, 'Bad.cta'), "<template>\n<Target c-bind=\"wrong\" />\n<Target c-bind=\"missing\" />\n<Target c-bind=\"extra\" />\n</template><script>import Target from \"./Target.cta\";\n const wrong = { count: \"错误\" }; const missing = {}; const extra = { count: 1, unknown: true }</script>")
-        const diagnostics = checkCtaProject(resolve('tsconfig.json'), [join(directory, 'Bad.cta')])
-        for (const line of [2, 3, 4]) assert.ok(diagnostics.some(item => item.line === line), JSON.stringify(diagnostics))
+
+        const Custom = evaluateCta(customSource)
+        const GoodPage = evaluateCta(`<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Custom snake_value="甲" :PascalValue="'乙'" :class="'丙'" :中文="'丁'"><Template #header_slot &class="classValue"><Text :text="classValue" /></Template></Custom></Window></App></template><script>import Custom from './Custom.cta'</script>`, { './Custom.cta': { default: Custom } })
+        const native = recordingNative(), running = mountFrame(runtime.appBuilder(GoodPage).build(), native.target)
+        assert.deepEqual(native.textNodes().map(node => node.text), ['甲乙丙丁'])
+        running.unmount()
     } finally {
         rmSync(directory, { recursive: true })
     }
@@ -152,8 +182,8 @@ test('对象参数类型检查保留字段类型、必需性与未声明字段',
 test('声明位置计划保留列表闭包与默认时机，固定调用减少名称解析', async () => {
     const run = async (attributes: string) => {
         const rows = runtime.ref([{ id: '甲', value: 0 }, { id: '乙', value: 1 }])
-        const Page = evaluateCta(`<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text c-for="row in rows" :key="row.id" ${attributes} /></Window></App></template><script>import { rows } from "harness"
-</script>`, { harness: { rows } })
+        const Page = evaluateCta(`<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Text c-for="row in rows" :key="row.id" ${attributes} /></Window></App></template><script>import { rows, propName } from "harness"
+</script>`, { harness: { rows, propName: 'text' } })
         const native = recordingNative()
         const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
         const identities = native.textNodes().map(node => node.id)
@@ -168,10 +198,10 @@ test('声明位置计划保留列表闭包与默认时机，固定调用减少�
         return { names: after.parameterNameChecks - before.parameterNameChecks, positions: after.parameterPositionReads - before.parameterPositionReads }
     }
     const fixed = await run(':text="String(row.value)"')
-    const dynamic = await run('c-bind="{ text: String(row.value) }"')
+    const dynamic = await run(':[propName]="String(row.value)"')
     assert.ok(fixed.names < dynamic.names, JSON.stringify({ fixed, dynamic }))
     assert.ok(fixed.positions > 0)
-    console.log('列表固定声明位置与动态对象对比：' + JSON.stringify({ fixed, dynamic }))
+    console.log('列表固定声明位置与动态参数名对比：' + JSON.stringify({ fixed, dynamic }))
 
     let defaults = 0
     let constants = 0
@@ -372,7 +402,7 @@ test('CTA 类型检查按 paths 解析定义并拒绝未声明具名内容', () 
     }
 })
 
-test('固定参数和对象参数纯值更新均不重排，默认值工厂按实例求值', async () => {
+test('固定参数和动态参数名纯值更新均不重排，默认值工厂按实例求值', async () => {
     const run = async (binding: string) => {
         let defaults = 0
         const Probe = internal.defineArrangable({
@@ -386,7 +416,7 @@ test('固定参数和对象参数纯值更新均不重排，默认值工厂按�
             },
             setup: (props, { call }) => () => call(0, foundation.Text, { text: () => props.label + props.amount }),
         })
-        const Wrapper = evaluateCta('<template><Probe ' + binding + ' /></template><script>defineProps<{ amount: number }>()</script>')
+        const Wrapper = evaluateCta('<template><Probe ' + binding + ' /></template><script>const propName = "amount"\ndefineProps<{ amount: number }>()</script>')
         const amount = runtime.ref(0)
         const native = recordingNative()
         const Root = internal.defineArrangable({
@@ -409,13 +439,12 @@ test('固定参数和对象参数纯值更新均不重排，默认值工厂按�
         return { names: after.parameterNameChecks - baseline.parameterNameChecks, evaluations: after.valueEvaluations - baseline.valueEvaluations, structure: after.structureRuns - baseline.structureRuns }
     }
     const fixed = await run(':amount="amount"')
-    const dynamic = await run('c-bind="{ amount }"')
+    const dynamic = await run(':[propName]="amount"')
     assert.equal(fixed.structure, 0)
     assert.equal(dynamic.structure, 0)
     assert.equal(fixed.names, 0)
     assert.equal(dynamic.names, 0)
-    assert.ok(dynamic.evaluations > fixed.evaluations)
-    console.log('固定参数与对象表达式求值对比：' + JSON.stringify({ fixed, dynamic }))
+    assert.equal(dynamic.evaluations, fixed.evaluations)
 })
 
 test('真实 CTA 原样 Ref 保留身份，切换本体退订旧值，只读状态不能传给可写声明', async () => {
@@ -424,7 +453,7 @@ test('真实 CTA 原样 Ref 保留身份，切换本体退订旧值，只读状�
     const selected = runtime.ref(false)
     const observed: unknown[] = []
     const Editor = evaluateCta("<template><Text :text=\"String(oriRef.value)\" /></template><script>import type { Ref } from '@canton/framework'\n import { observed } from \"harness\";\n const props = defineProps<{ oriRef: Ref<number> }>(); observed.push(props.oriRef)</script>", { harness: { observed } })
-    const Page = evaluateCta("<template><App &app-handle><Window :onCloseRequest=\"appHandle.exitApplication\"><Editor c-bind:ori-ref.camel=\"<selected.value ? second : first>\" /></Window></App></template><script>import Editor from \"./Editor.cta\";\n import { selected, first, second } from \"harness\"\n</script>", { './Editor.cta': { default: Editor }, harness: { selected, first, second } })
+    const Page = evaluateCta("<template><App &appHandle><Window :onCloseRequest=\"appHandle.exitApplication\"><Editor :oriRef=\"<selected.value ? second : first>\" /></Window></App></template><script>import Editor from \"./Editor.cta\";\n import { selected, first, second } from \"harness\"\n</script>", { './Editor.cta': { default: Editor }, harness: { selected, first, second } })
     const native = recordingNative()
     const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
     assert.equal(observed[0], first)
@@ -538,13 +567,14 @@ test('同一参数组同时改变时校验完整新值，无关表达式保留�
 test('稳定参数与内容描述跨外层重排复用，动态调用保持同一结果', async () => {
     const run = async (attributes: string) => {
         const amount = runtime.ref(1)
-        const visible = runtime.ref(false)
-        const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text ' + attributes + " /><Box><Text text=\"内容\" /></Box><Spacer c-if=\"visible\" /></Window></App></template><script>import { amount, visible } from \"harness\"\n</script>", { harness: { amount, visible } })
+        const revision = runtime.ref(0)
+        const View = evaluateCta('<template><Column><Text ' + attributes + " /><Box><Text text=\"内容\" /></Box><Spacer :key=\"revision\" /></Column></template><script>import { amount, revision, propName } from \"harness\"\n</script>", { harness: { amount, revision, propName: 'text' } })
+        const Page = evaluateCta('<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><View /></Window></App></template><script>import View from "./View.cta"\n</script>', { './View.cta': { default: View } })
         const native = recordingNative()
         const app = mountFrame(runtime.appBuilder(Page).build(), native.target)
         const before = internal.getCantonExecutionStats()
-        for (let index = 0; index < 12; index++) {
-            visible.value = !visible.value
+        for (let index = 1; index <= 12; index++) {
+            revision.value = index
             advanceFrames()
         }
         amount.value = 2
@@ -555,11 +585,10 @@ test('稳定参数与内容描述跨外层重排复用，动态调用保持同�
         return { evaluations: after.valueEvaluations - before.valueEvaluations, structure: after.structureRuns - before.structureRuns, names: after.parameterNameChecks - before.parameterNameChecks }
     }
     const fixed = await run(':text="String(amount)"')
-    const dynamic = await run('c-bind="{ text: String(amount) }"')
+    const dynamic = await run(':[propName]="String(amount)"')
     assert.equal(dynamic.structure, fixed.structure)
-    assert.equal(dynamic.names, fixed.names)
     assert.ok(dynamic.evaluations > fixed.evaluations)
-    console.log('局部条件与参数求值对比：' + JSON.stringify({ fixed, dynamic }))
+    assert.ok(dynamic.names > fixed.names)
 })
 
 test('Painter 资源状态保留版本、失败、取消和所属作用域释放', () => {
@@ -683,9 +712,9 @@ test('错误处理器接收挂载失败后不产生成功生命周期，后续�
     }
 })
 
-test('固定参数及动态参数组拒绝时保留真实 CTA 位置', () => {
-    for (const parameters of ['unknown="误传"', 'text="文字" :singleLine="123"', 'c-bind="{ text: 123 }"', 'c-bind="{ text: 1, Text: 2 }"']) {
-        const Page = evaluateCta('<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication">\n    <Text ' + parameters + ' />\n</Window></App></template>')
+test('固定参数及动态参数拒绝时保留真实 CTA 位置', () => {
+    for (const parameters of ['unknown="误传"', 'text="文字" :singleLine="123"', ':[badName]="123"', ':[kebabName]="true"', 'text="一" :[dupName]="\'二\'"']) {
+        const Page = evaluateCta('<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication">\n    <Text ' + parameters + ' />\n</Window></App></template><script>const badName = "unknown"\nconst kebabName = "single-line"\nconst dupName = "text"\n</script>')
         assert.throws(() => mountFrame(runtime.appBuilder(Page).build(), recordingNative().target), error => error instanceof Error && /契约.cta:2:/.test(error.message))
     }
 })

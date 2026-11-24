@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Layout" :onCloseRequest="appHandle.exitApplication">
             <Column>
                 <Row :modifier="M.height(IntrinsicSize.Min)">
@@ -12,12 +12,12 @@
                 <FlowColumn :modifier="M.height(30.dp)" :verticalArrangement="Arrangement.spacedBy(5.dp)" :horizontalArrangement="Arrangement.spacedBy(7.dp)" :maxItemsInEachColumn="2">
                     <Spacer c-for="index in indices" :key="index" :modifier="M.size(30.dp, 10.dp)" />
                 </FlowColumn>
-                <FlowRow :modifier="M.width(95.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :maxItemsInEachRow="2" &flow-row-handle>
+                <FlowRow :modifier="M.width(95.dp)" :horizontalArrangement="Arrangement.spacedBy(5.dp)" :maxItemsInEachRow="2" &flowRowHandle>
                     <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
                     <Spacer :modifier="flowRowHandle.weight(2).size(20.dp, 10.dp)" />
                     <Spacer :modifier="flowRowHandle.weight(1).size(20.dp, 10.dp)" />
                 </FlowRow>
-                <Box &box-handle>
+                <Box &boxHandle>
                     <Spacer :modifier="M.size(20.dp, 10.dp)" />
                     <Spacer :modifier="boxHandle.matchParentSize().size(200.dp, 100.dp)" />
                 </Box>

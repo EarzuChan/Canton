@@ -91,6 +91,4 @@ namespace canton::core {
        private:
         const PropValue* value_ = nullptr;
     };
-
-    std::string kebabCase(std::string_view key);
 }

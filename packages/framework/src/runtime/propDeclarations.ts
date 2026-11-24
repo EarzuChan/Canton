@@ -13,7 +13,6 @@ export function normalizeDeclaredProps(raw: ArrangablePropsOptions | undefined):
 
     const names = isArray(raw) ? raw : Object.keys(raw ?? EMPTY_OBJ)
     for (const original of names) {
-        if (typeof original !== 'string' || !original) throw new TypeError('参数声明名称必须为非空字符串')
         const name = cantonParameterName(original)
         if (name === 'key') throw new TypeError('key 是组合身份，不能声明为业务参数')
         if (hasOwn(declarations, name)) throw new TypeError(`重复参数声明：${name}`)

@@ -1,3 +1,4 @@
+import { isIdentifier } from '@canton/shared'
 import type { ArrangableDefinition, SetupContext, SlotDeclaration, SlotDeclarations, SlotParams, StructureProgram } from './arrangable.ts'
 import type { ArrangableObjectPropsOptions, ExtractPropTypes } from './propTypes.ts'
 import { normalizeDeclaredProps } from './propDeclarations.ts'
@@ -31,6 +32,7 @@ export function defineArrangable<const P extends ArrangableObjectPropsOptions = 
 
     const slots = options.slots ?? {}
     if (typeof slots !== 'object' || Array.isArray(slots)) throw new TypeError('内容声明必须是以槽位名为键的对象')
+    for (const name of Object.keys(slots)) if (!isIdentifier(name)) throw new TypeError(`槽位名称必须是合法标识符：${name}`)
 
     const props = Object.fromEntries(Object.entries(options.props ?? {}).map(([name, value]) => {
         if (Array.isArray(value)) return [name, Object.freeze([...value])]

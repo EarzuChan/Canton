@@ -20,9 +20,9 @@ export default appBuilder(App).build()
 ` },
         {
             path: resolve(root, "src/App.cta"), content: `<template>
-    <App &app-handle>
-        <Window :title="projectTitle" :on-close-request="appHandle.exitApplication">
-            <Column :modifier="M.fillMaxSize().background(Color(0xff17212e)).padding(24.dp)" :vertical-arrangement="Arrangement.spacedBy(16.dp)">
+    <App &appHandle>
+        <Window :title="projectTitle" :onCloseRequest="appHandle.exitApplication">
+            <Column :modifier="M.fillMaxSize().background(Color(0xff17212e)).padding(24.dp)" :verticalArrangement="Arrangement.spacedBy(16.dp)">
                 <Text :text="projectTitle" :style="{ fontSize: 28.sp, color: Color(0xfff4f6fa) }"/>
 
                 <Text :text="'点击次数：' + count" :modifier="M.clickable(increment).padding(12.dp).background(Color(0xff336699))" :style="{ fontSize: 18.sp, color: Color(0xffffffff) }"/>

@@ -1,4 +1,4 @@
-import { NO, extend } from '@canton/shared'
+import { NO, extend, isIdentifier } from '@canton/shared'
 import { type ParserOptions as BabelOptions, parseExpression } from '@babel/parser'
 import { decodeHTML } from 'entities/decode'
 import { type AttributeNode, ConstantTypes, type DirectiveNode, type ElementNode, ElementTypes, type ForParseResult, Namespaces, NodeTypes, type RootNode, type SimpleExpressionNode, type SourceLocation, type TemplateChildNode, createRoot, createSimpleExpression } from './ast.ts'
@@ -6,7 +6,7 @@ import { normalizeCtaUnitSyntax, restoreBabelNodePositions } from '../syntax/uni
 import { ErrorCodes, createCompilerError, defaultOnError, defaultOnWarn } from './errors.ts'
 import type { ParserOptions } from './options.ts'
 import Tokenizer, { CharCodes, ParseMode, QuoteType, Sequences, State, isWhitespace, toCharCodes } from './tokenizer.ts'
-import { forAliasRE, isAllWhitespace, isSimpleIdentifier } from './utils.ts'
+import { forAliasRE, isAllWhitespace } from './utils.ts'
 
 type OptionalOptions = 'whitespace' | 'expressionPlugins'
 
@@ -119,7 +119,6 @@ const tokenizer = new Tokenizer(stack, {
             rawName: name,
             exp: undefined,
             arg: createSimpleExpression(name.slice(1), true, getLoc(start + 1, end)),
-            modifiers: [],
             loc: getLoc(start),
         } : {
             type: NodeTypes.ATTRIBUTE,
@@ -135,7 +134,7 @@ const tokenizer = new Tokenizer(stack, {
 
         if (name === '') {
             emitError(ErrorCodes.X_MISSING_DIRECTIVE_NAME, start)
-        } else if (raw !== ':' && raw !== '#' && !['if', 'else-if', 'else', 'for', 'bind'].includes(name)) {
+        } else if (raw !== ':' && raw !== '#' && !['if', 'else-if', 'else', 'for'].includes(name)) {
             emitError(ErrorCodes.X_UNSUPPORTED_DIRECTIVE, start, raw)
         }
 
@@ -154,7 +153,6 @@ const tokenizer = new Tokenizer(stack, {
                 rawName: raw,
                 exp: undefined,
                 arg: undefined,
-                modifiers: [],
                 loc: getLoc(start),
             }
 
@@ -164,12 +162,9 @@ const tokenizer = new Tokenizer(stack, {
         if (start === end) return
         const arg = getSlice(start, end)
         const isStatic = arg[0] !== '['
+        if (!isStatic && !arg.endsWith(']')) emitError(ErrorCodes.X_MISSING_DYNAMIC_DIRECTIVE_ARGUMENT_END, end - 1)
         const directive = currentProp as DirectiveNode
         directive.arg = createExp(isStatic ? arg : arg.slice(1, -1), isStatic, getLoc(start, end), isStatic ? ConstantTypes.CAN_STRINGIFY : ConstantTypes.NOT_CONSTANT)
-    },
-    ondirmodifier(start, end) {
-        const directive = currentProp as DirectiveNode
-        directive.modifiers.push(createSimpleExpression(getSlice(start, end), true, getLoc(start, end)))
     },
     onattribdata(start, end) {
         currentAttrValue += getSlice(start, end)
@@ -269,7 +264,6 @@ const tokenizer = new Tokenizer(stack, {
                 case State.InDirName:
                 case State.InDirArg:
                 case State.InDirDynamicArg:
-                case State.InDirModifier:
                 case State.AfterAttrName:
                 case State.BeforeAttrValue:
                 case State.InAttrValueDq: // "
@@ -575,7 +569,7 @@ function createExp(content: SimpleExpressionNode['content'], isStatic: SimpleExp
     if (
         (!isStatic) && currentOptions.prefixIdentifiers && parseMode !== ExpParseMode.Skip && content.trim()
     ) {
-        if (isSimpleIdentifier(content)) {
+        if (isIdentifier(content)) {
             exp.ast = null
             return exp
         }

@@ -1,13 +1,12 @@
+import { isIdentifier } from '@canton/shared'
 import { ElementTypes, NodeTypes, type RootNode, type SimpleExpressionNode, type SourceLocation, type TemplateChildNode } from './ast.ts'
 import type { CompilerOptions } from './options.ts'
-import { isSimpleIdentifier } from './utils.ts'
-import { camelize } from '@canton/shared'
 
 // 在结构转换之前检查源码契约，不能让被转换掉的指令绕过校验
 export function validateTemplateContract(root: RootNode, options: CompilerOptions): string[] { // Options 未被使用喵
     const slots = new Set<string>()
 
-    const fail = (message: string, loc: SourceLocation): never => { throw Object.assign(new SyntaxError(message), { code: 'CANTON_TEMPLATE', loc }) }
+    const fail: (message: string, loc: SourceLocation) => never = (message, loc) => { throw Object.assign(new SyntaxError(message), { code: 'CANTON_TEMPLATE', loc }) }
 
     const visit = (children: TemplateChildNode[]) => {
         for (let index = children.length - 1; index >= 0; index--) {
@@ -22,26 +21,23 @@ export function validateTemplateContract(root: RootNode, options: CompilerOption
 
             if (!/^[A-Z][A-Za-z0-9]*$/.test(node.tag)) fail(`Arrangable 标签必须使用准确的 PascalCase 名称：${node.tag}`, node.loc)
             const names = new Set<string>()
-            const params = new Set<string>()
             for (const prop of node.props) {
                 if (prop.type === NodeTypes.DIRECTIVE) {
                     if (!['bind', 'if', 'else-if', 'else', 'for', 'slot', 'param'].includes(prop.name)) fail(`Canton 模板不支持 c-${prop.name}`, prop.loc)
-                    if (prop.modifiers.length && !(prop.name === 'bind' && prop.modifiers.every(modifier => modifier.content === 'camel'))) fail(`c-${prop.name} 不支持这些修饰符`, prop.loc)
+                    if (prop.name === 'bind' && (!prop.arg || prop.arg.type === NodeTypes.SIMPLE_EXPRESSION && !prop.arg.content.trim())) fail('参数绑定必须提供参数名', prop.loc)
                     if (prop.name === 'bind' && (!prop.exp || prop.exp.type === NodeTypes.SIMPLE_EXPRESSION && !prop.exp.content.trim())) fail('参数绑定必须显式提供表达式', prop.loc)
-                    if (prop.name === 'slot' && (node.tag !== 'Template' || prop.exp || prop.arg && (prop.arg.type !== NodeTypes.SIMPLE_EXPRESSION || !prop.arg.isStatic || prop.arg.content.includes('.')))) fail('具名内容必须使用 Template 和静态槽位名', prop.loc)
+                    if (prop.name === 'slot' && (node.tag !== 'Template' || prop.exp || prop.arg && (prop.arg.type !== NodeTypes.SIMPLE_EXPRESSION || !prop.arg.isStatic || !isIdentifier(prop.arg.content)))) fail('具名内容必须使用 Template 和合法槽位标识符', prop.loc)
                     if (prop.name === 'param') {
                         // 默认槽的参数绑在 Arrangable 标签上，具名槽的参数绑在选择该槽位的 Template 上
                         if (node.tag === 'Slot' || node.tag === 'Template' && !node.props.some(other => other.type === NodeTypes.DIRECTIVE && other.name === 'slot')) fail('槽位参数只能绑定在 Arrangable 标签或 <Template #name> 上', prop.loc)
-                        const name = camelize((prop.arg as SimpleExpressionNode).content)
-                        if (!isSimpleIdentifier(name)) fail(`槽位参数名不是合法标识符：${name}`, prop.loc)
-                        if (params.has(name)) fail(`重复绑定槽位参数：${name}`, prop.loc)
-                        params.add(name)
+                        const name = (prop.arg as SimpleExpressionNode).content
+                        if (!isIdentifier(name)) fail(`槽位参数名不是合法标识符：${name}`, prop.loc)
                     }
                 }
 
-                const original = prop.type === NodeTypes.ATTRIBUTE ? prop.name : prop.name === 'bind' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic ? prop.arg.content : undefined
-                if (original === undefined) continue
-                const name = camelize(original)
+                const name = prop.type === NodeTypes.ATTRIBUTE ? prop.name : prop.name === 'bind' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic ? prop.arg.content : undefined
+                if (name === undefined) continue
+                if (!isIdentifier(name)) fail(`参数名称必须是合法标识符：${name}`, prop.loc)
                 if (names.has(name)) fail(`重复参数：${name}`, prop.loc)
                 names.add(name)
             }
@@ -53,8 +49,9 @@ export function validateTemplateContract(root: RootNode, options: CompilerOption
                 for (const prop of node.props) {
                     if (prop.type === NodeTypes.ATTRIBUTE) {
                         if (prop.name !== 'name') continue
-                        if (!prop.value?.content) fail('Slot 的 name 不能为空', prop.loc)
-                        name = prop.value!.content
+                        const value = prop.value?.content
+                        if (!value || !isIdentifier(value)) fail(`Slot 的 name 必须是合法标识符：${value ?? ''}`, prop.loc)
+                        name = value
                     } else if (prop.name === 'bind' && !(prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic && prop.arg.content !== 'name')) fail('Slot 出口只接受静态 name 和具名实参', prop.loc)
                 }
 

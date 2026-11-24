@@ -206,8 +206,7 @@ export function validateValueUnits(program: ts.Program, source: ts.SourceFile, c
         else if (ts.isCallExpression(node) && contracts.forCall(node)?.checkProps) check(node.arguments[1], rule)
         else if (ts.isCallExpression(node) && contracts.forCall(node)?.parameterInputs && ts.isArrayLiteralExpression(node.arguments[0])) {
             for (const entry of node.arguments[0].elements) {
-                if (ts.isSpreadElement(entry) && ts.isCallExpression(entry.expression) && contracts.forCall(entry.expression)?.parameterObject) check(entry.expression.arguments[1], rule)
-                else if (ts.isArrayLiteralExpression(entry) && ts.isStringLiteral(entry.elements[0]) && rule[entry.elements[0].text]) check(entry.elements[1], rule[entry.elements[0].text])
+                if (ts.isArrayLiteralExpression(entry) && ts.isStringLiteral(entry.elements[0]) && rule[entry.elements[0].text]) check(entry.elements[1], rule[entry.elements[0].text])
             }
         } else {
             const type = checker.getTypeAtLocation(expression)

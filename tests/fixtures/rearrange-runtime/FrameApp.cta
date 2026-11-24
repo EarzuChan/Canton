@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Rearrange" :onCloseRequest="appHandle.exitApplication">
             <Column>
                 <Text c-if="shown" :text="`点了 ${clicks} 次`" :modifier="M.width(180.dp).offset({ x: offset }).background(color).clickable(tap)" />

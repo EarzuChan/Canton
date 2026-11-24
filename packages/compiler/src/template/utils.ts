@@ -1,9 +1,6 @@
 import type { Position } from './ast.ts'
 import { isWhitespace } from './tokenizer.ts'
 
-const nonIdentifierRE = /^$|^\d|[^\$\w\xA0-\uFFFF]/
-export const isSimpleIdentifier = (name: string): boolean => !nonIdentifierRE.test(name)
-
 export const forAliasRE: RegExp = /([\s\S]*?)\s+(?:in|of)\s+(\S[\s\S]*)/
 
 export function isAllWhitespace(str: string): boolean {

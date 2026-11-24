@@ -10,7 +10,7 @@
             <Image :painter="photo" contentScale="Crop" :modifier="M.size(64.dp, 64.dp).clip(CircleShape)" />
         </Row>
         <!-- SVG：放大不糊；Icon 着色；半透明 -->
-        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <Image :painter="logo" :modifier="M.size(32.dp, 32.dp)" />
             <Image :painter="logo" :modifier="M.size(64.dp, 64.dp)" />
             <Image :painter="logo" :modifier="M.size(112.dp, 112.dp)" />

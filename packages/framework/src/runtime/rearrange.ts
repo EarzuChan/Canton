@@ -1,5 +1,5 @@
-import { computed, effectScope, pauseTracking, ReactiveEffect, resetTracking, shallowRef, type EffectScope } from '@canton/reactivity'
-import { cantonParameterName, hasOwn } from '@canton/shared'
+import { effectScope, pauseTracking, ReactiveEffect, resetTracking, shallowRef, type EffectScope } from '@canton/reactivity'
+import { cantonParameterName, hasOwn, isIdentifier } from '@canton/shared'
 import { ArrangableInstance, setCurrentInstance, type AppContext, type InstanceSession, type RearrangeNode, type StructureScope, type ValueTask, type ArrangableDefinition, type ArrangableProps, type CallMetadata, type CallPosition, type RearrangeKey, type Content, type Contents, type Data, type StructureProgram } from './arrangable.ts'
 import { isArrangableDefinition } from './apiDefineArrangable.ts'
 import { PropStore } from './arrangableProps.ts'
@@ -8,7 +8,6 @@ import { LifecycleHooks } from './enums.ts'
 import { FrameScheduler, queueJob, queueRearrangeJob, SchedulerJobFlags, type SchedulerJob } from './scheduler.ts'
 import { cantonExecutionStats } from './executionStats.ts'
 import { callWithErrorHandling, ErrorCodes } from './errorHandling.ts'
-import { ValueBinding } from './valueBinding.ts'
 import { bindFrameScheduler } from './animationOwner.ts'
 import { resolveHotArrangable, inheritHotState, setupHotArrangable } from './arrangableHmr.ts'
 
@@ -48,8 +47,6 @@ export class RearrangeScope implements StructureScope {
     readonly job: SchedulerJob
     entries: Entry[] = []
     readonly retainedContents = new Map<CallPosition, RetainedContents>()
-    readonly parameterObjects = new Map<CallPosition, ObjectParameterBinding>()
-    readonly usedParameterObjects = new Set<CallPosition>()
     retired = false
     paused = false
     private candidateEffect: ReactiveEffect | undefined
@@ -158,7 +155,6 @@ export class RearrangeScope implements StructureScope {
         }
         this.rearrangeSession.preserve(this.index, () => () => this.publish(this.entries))
         this.used.clear()
-        this.usedParameterObjects.clear()
         this.next = []
         cantonExecutionStats.structureRuns++
         try {
@@ -166,16 +162,6 @@ export class RearrangeScope implements StructureScope {
             if (this.retired || this.rearrangeSession.isDisposed) return
             if (result !== undefined) throw new TypeError('结构程序只执行调用，不能返回节点描述、数组或文本')
             this.rearrangeSession.stage(this, this.next)
-            this.rearrangeSession.preserve(this.parameterObjects, () => {
-                this.rearrangeSession.onCommit(() => {
-                    for (const [position, parameter] of this.parameterObjects) {
-                        if (this.usedParameterObjects.has(position)) continue
-                        parameter.binding.stop()
-                        this.parameterObjects.delete(position)
-                    }
-                })
-                return () => { }
-            })
             this.rearrangeSession.changed(this)
         } finally {
             restore?.()
@@ -222,7 +208,6 @@ export class RearrangeScope implements StructureScope {
             cache.entries.clear()
         }
         this.retainedContents.clear()
-        this.parameterObjects.clear()
         this.entries = []
         this.index.clear()
         return entries
@@ -957,6 +942,7 @@ function normalizeInputs(inputs: PropInputs<Data>): PropInputs<Data> {
 
 function validateContents(definition: ArrangableDefinition, contents: Contents): void {
     for (const [name, content] of Object.entries(contents)) {
+        if (!isIdentifier(name)) throw new TypeError(`槽位名称必须是合法标识符：${name}`)
         if (!definition.contentTarget && !hasOwn(definition.slots, name)) throw new TypeError(`Arrangable 未声明内容：${name}`)
         if (typeof content !== 'function') throw new TypeError(`内容 ${name} 必须是结构函数`)
     }
@@ -967,55 +953,12 @@ export function cantonList<T>(position: CallPosition, collection: Iterable<T> | 
     for (const [value, key, index] of values) cantonScope(position, () => program(value, key, index), identity(value, key, index) ?? index)
 }
 
-export function parameterInputs(entries: readonly (readonly [string, () => unknown])[], source?: string): PropInputs<Data> {
+export function parameterInputs(entries: readonly (readonly [unknown, () => unknown])[], source?: string): PropInputs<Data> {
     const inputs: Record<string, () => unknown> = Object.create(null)
     for (const [original, getter] of entries) {
-        const name = cantonParameterName(original)
+        const name = cantonParameterName(original, source)
         if (Object.prototype.hasOwnProperty.call(inputs, name)) throw new TypeError(`重复参数：${name}${source ? `\n来源：${source}` : ''}`)
         inputs[name] = getter
     }
     return inputs
-}
-
-class ObjectParameterBinding {
-    readonly value = shallowRef<Record<string, unknown>>({})
-    readonly shape = computed<readonly string[]>((previous) => {
-        const names = Object.keys(this.value.value)
-        return previous && previous.length === names.length && names.every((name, index) => previous[index] === name) ? previous : names
-    })
-    readonly binding: ValueBinding
-
-    constructor(read: () => Record<string, unknown>, readonly scope: RearrangeScope) {
-        this.binding = scope.lifetime.run(() => new ValueBinding(read, scope.owner!, value => {
-            if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('对象参数绑定必须提供对象')
-            scope.rearrangeSession.preserve(this, () => {
-                const previous = this.value.value
-                return () => { this.value.value = previous }
-            })
-            this.value.value = value as Record<string, unknown>
-        }, scope.source))!
-    }
-}
-
-export function parameterObject(position: CallPosition, read: () => Record<string, unknown>): [string, () => unknown][] {
-    const scope = requireScope()
-    if (!scope.owner) throw new Error('对象参数绑定必须归属 Arrangable 调用')
-    scope.usedParameterObjects.add(position)
-    let parameter = scope.parameterObjects.get(position)
-    pauseTracking()
-    try {
-        if (parameter) parameter.binding.refresh(read)
-        else {
-            parameter = new ObjectParameterBinding(read, scope)
-            scope.parameterObjects.set(position, parameter)
-            scope.rearrangeSession.onRollback(() => {
-                parameter!.binding.stop()
-                scope.parameterObjects.delete(position)
-            })
-        }
-    } finally {
-        resetTracking()
-    }
-    const value = parameter.value
-    return parameter.shape.value.map(name => [name, () => value.value[name]])
 }

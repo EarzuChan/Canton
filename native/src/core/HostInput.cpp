@@ -11,7 +11,7 @@ namespace canton::core {
 
     std::optional<HostInput> hostInputFromName(std::string_view name) {
         for (std::size_t i = 0; i < kNames.size(); ++i)
-            if (kNames[i] == name || kebabCase(kNames[i]) == name) return static_cast<HostInput>(i);
+            if (kNames[i] == name) return static_cast<HostInput>(i);
         return std::nullopt;
     }
 

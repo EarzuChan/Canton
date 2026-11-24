@@ -57,12 +57,6 @@ const cacheStringFunction = <T extends (str: string) => string>(fn: T): T => {
     }) as T
 }
 
-const camelizeRE = /-\w/g
-export const camelize: (str: string) => string = cacheStringFunction((str: string): string => {
-    return str.replace(camelizeRE, c => c.slice(1).toUpperCase())
-}
-)
-
 export const capitalize: <T extends string>(str: T) => Capitalize<T> = cacheStringFunction(<T extends string>(str: T) => { return (str.charAt(0).toUpperCase() + str.slice(1)) as Capitalize<T> })
 
 
@@ -77,11 +71,11 @@ export const def = (obj: object, key: string | symbol, value: any, writable = fa
     })
 }
 
-const identRE = /^[_$a-zA-Z\xA0-\uFFFF][_$a-zA-Z0-9\xA0-\uFFFF]*$/
+const identRE = /^[$_\p{ID_Start}][$\u200C\u200D\p{ID_Continue}]*$/u
 
-export function genPropsAccessExp(name: string): string {
-    return identRE.test(name) ? `__props.${name}` : `__props[${JSON.stringify(name)}]`
-}
+export const isIdentifier = (name: string): boolean => identRE.test(name)
+
+export const genPropsAccessExp = (name: string): string => `__props.${name}`
 
 export function genCacheKey(source: string, options: any): string {
     return (source + JSON.stringify(options, (_, val) => typeof val === 'function' ? val.toString() : val))

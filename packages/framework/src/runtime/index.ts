@@ -14,7 +14,7 @@ export { useId } from './helpers/useId.ts'
 export { getCantonExecutionStats } from './executionStats.ts'
 
 // 编译产物使用的统一结构协议，包入口整理阶段再集中到内部子路径
-export { callArrangable, cantonScope, invokeContent, retainContent, cantonList, parameterInputs, parameterObject } from './rearrange.ts'
+export { callArrangable, cantonScope, invokeContent, retainContent, cantonList, parameterInputs } from './rearrange.ts'
 export { prepareParameters } from './propDeclarations.ts'
 export { resolveArrangable, resolveDynamicArrangable } from './helpers/resolveAssets.ts'
-export { cantonParameterName, camelize, capitalize } from '@canton/shared'
+export { cantonParameterName, capitalize } from '@canton/shared'

@@ -425,7 +425,7 @@ test('正式函数重导出与局部别名、readonly映射和联合字段契约
     const directory = mkdtempSync(resolve('tmp-refs/cta-contract-fields-'))
     try {
         writeFileSync(join(directory, 'contracts.ts'), "export { rounded as curve } from '@canton/framework/ui'")
-        const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :modifier="chain" /></Window></App></template><script>
+        const source = `<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Text :modifier="chain" /></Window></App></template><script>
 import { curve as corner } from './contracts'
 import { M, Color, Arrangement, type TextStyleProp, type GraphicsLayerOptions, type ArrangementProp } from '@canton/framework/ui'
 import { observe } from './observe'
@@ -454,7 +454,7 @@ observe({ shape, spacing, style, graphics, shadow: shadow(value => value + 1) })
 })
 
 test('真实CTA有限和无限过渡的别名方法按值与对象回调契约运行', () => {
-    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="String(width)" :modifier="M.width(distance)" /></Window></App></template><script>
+    const source = `<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Text :text="String(width)" :modifier="M.width(distance)" /></Window></App></template><script>
 import { createTransition, createInfiniteTransition, animatedNumberAsRef, animatedDpAsRef, tween, linearEasing } from '@canton/framework/animation'
 import { M, Color } from '@canton/framework/ui'
 import { ref } from '@canton/framework'

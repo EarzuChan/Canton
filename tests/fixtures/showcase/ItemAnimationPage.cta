@@ -1,16 +1,16 @@
 <template>
     <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
         <Text :text="`Lazy items ${items.map(item => item.id).join(' ')}`" :style="title" />
-        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <!-- 删一项、插一项、挪一项：被删的原地淡出，新来的淡入，其余滑到新位置 -->
-            <LazyColumn :items="items" :itemKey="keyOf" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazy-item-handle>
-                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(34.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(4.dp))" &box-handle>
+            <LazyColumn :items="items" :itemKey="keyOf" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazyItemHandle>
+                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(34.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(4.dp))" &boxHandle>
                     <Text :text="`item ${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
                 </Box>
             </LazyColumn>
             <!-- 网格项的 Handle 同样能做项动画 -->
-            <LazyVerticalGrid :items="items" :itemKey="keyOf" :cells="GridCells.Fixed(3)" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazy-item-handle>
-                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(56.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &box-handle>
+            <LazyVerticalGrid :items="items" :itemKey="keyOf" :cells="GridCells.Fixed(3)" :modifier="rowHandle.weight(1).height(290.dp).background(palette.panel, rounded(8.dp))" &item &lazyItemHandle>
+                <Box :modifier="lazyItemHandle.animateItem(specs).fillMaxWidth().height(56.dp).padding(3.dp).background(colors[item.id % colors.length]!, rounded(6.dp))" &boxHandle>
                     <Text :text="`${item.id}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
                 </Box>
             </LazyVerticalGrid>

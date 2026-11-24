@@ -77,14 +77,14 @@ test('多窗口共享响应式状态、同帧切窗单事务提交、私有身�
     let capturedLoginHandle!: WindowHandle
 
     const Root = evaluateCta(`<template>
-    <App :exitOnLastWindowClosed="true" appId="Canton.Test.MultiWindow" &app-handle>
-        <Window c-if="phase === 'login'" key="login" title="登录" :state="loginState" :onCloseRequest="() => { phase = 'main' }" &window-handle>
+    <App :exitOnLastWindowClosed="true" appId="Canton.Test.MultiWindow" &appHandle>
+        <Window c-if="phase === 'login'" key="login" title="登录" :state="loginState" :onCloseRequest="() => { phase = 'main' }" &windowHandle>
             <Column :modifier="windowHandle.draggableArea()">
                 <Text :text="capture(windowHandle, '登录:' + sharedCount)" />
             </Column>
         </Window>
         <Template c-else>
-            <Window key="main" title="主工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :onCloseRequest="appHandle.exitApplication" &window-handle>
+            <Window key="main" title="主工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :onCloseRequest="appHandle.exitApplication" &windowHandle>
                 <Box :modifier="windowHandle.captionButton('maximize')">
                     <Text :text="'主窗:' + sharedCount" />
                 </Box>
@@ -288,8 +288,8 @@ test('CTA 类型检查支持 <App> / <Window> 槽位句柄与 createWindowState 
     try {
         const good = join(directory, 'GoodWindow.cta')
         writeFileSync(good, `<template>
-    <App &app-handle>
-        <Window title="标题" chrome="customTitleBar" :state="win" :minSize="{ width: 320.dp, height: 240.dp }" :onCloseRequest="appHandle.exitApplication" &window-handle>
+    <App &appHandle>
+        <Window title="标题" chrome="customTitleBar" :state="win" :minSize="{ width: 320.dp, height: 240.dp }" :onCloseRequest="appHandle.exitApplication" &windowHandle>
             <Box :modifier="windowHandle.draggableArea().fillMaxWidth().height(36.dp)">
                 <Spacer :modifier="windowHandle.captionButton('close').size(40.dp, 36.dp)" />
             </Box>
@@ -306,7 +306,7 @@ const win = createWindowState({ size: { width: 800.dp, height: 600.dp }, positio
 
         const badUnit = join(directory, 'BadUnitWindow.cta')
         writeFileSync(badUnit, `<template>
-    <App &app-handle>
+    <App &appHandle>
         <Window :state="win" :onCloseRequest="appHandle.exitApplication" />
     </App>
 </template>
@@ -319,8 +319,8 @@ const win = createWindowState({ size: { width: 800, height: 600 } })
 
         const badButton = join(directory, 'BadButtonWindow.cta')
         writeFileSync(badButton, `<template>
-    <App &app-handle>
-        <Window :onCloseRequest="appHandle.exitApplication" &window-handle>
+    <App &appHandle>
+        <Window :onCloseRequest="appHandle.exitApplication" &windowHandle>
             <Spacer :modifier="windowHandle.captionButton('invalid')" />
         </Window>
     </App>

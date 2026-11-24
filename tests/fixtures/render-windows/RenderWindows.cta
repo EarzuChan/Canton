@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window :state="main" :onCloseRequest="appHandle.exitApplication">
             <Box :modifier="M.fillMaxSize().background(Color(0xff102030))" />
         </Window>

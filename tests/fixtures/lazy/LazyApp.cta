@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Lazy" :onCloseRequest="appHandle.exitApplication">
             <Column :modifier="M.fillMaxSize()">
                 <Input value="" :onSubmit="command" :modifier="M.height(30.dp)" />

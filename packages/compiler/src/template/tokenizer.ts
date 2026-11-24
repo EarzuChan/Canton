@@ -34,7 +34,6 @@ export enum CharCodes {
     UpperZ = 0x5a,
     LowerZ = 0x7a,
     LowerX = 0x78,
-    Dot = 0x2e, // "."
     Colon = 0x3a, // ":"
     LeftSquare = 91, // "["
     RightSquare = 93, // "]"
@@ -59,7 +58,6 @@ export enum State {
     InDirName,
     InDirArg,
     InDirDynamicArg,
-    InDirModifier,
     AfterAttrName,
     BeforeAttrValue,
     InAttrValueDq, // "
@@ -126,7 +124,6 @@ export interface Callbacks {
 
     ondirname(start: number, endIndex: number): void
     ondirarg(start: number, endIndex: number): void
-    ondirmodifier(start: number, endIndex: number): void
 
     oncomment(start: number, endIndex: number): void
     oncdata(start: number, endIndex: number): void
@@ -555,14 +552,6 @@ export default class Tokenizer {
         if (c === CharCodes.Eq || isEndOfTagSection(c)) {
             this.cbs.ondirname(this.sectionStart, this.index)
             this.handleAttrNameEnd(c)
-        } else if (c === CharCodes.Colon) {
-            this.cbs.ondirname(this.sectionStart, this.index)
-            this.state = State.InDirArg
-            this.sectionStart = this.index + 1
-        } else if (c === CharCodes.Dot) {
-            this.cbs.ondirname(this.sectionStart, this.index)
-            this.state = State.InDirModifier
-            this.sectionStart = this.index + 1
         }
     }
     private stateInDirArg(c: number): void {
@@ -571,10 +560,6 @@ export default class Tokenizer {
             this.handleAttrNameEnd(c)
         } else if (c === CharCodes.LeftSquare) {
             this.state = State.InDirDynamicArg
-        } else if (c === CharCodes.Dot) {
-            this.cbs.ondirarg(this.sectionStart, this.index)
-            this.state = State.InDirModifier
-            this.sectionStart = this.index + 1
         }
     }
     private stateInDynamicDirArg(c: number): void {
@@ -586,15 +571,6 @@ export default class Tokenizer {
             if (__DEV__ || !false) {
                 this.cbs.onerr(ErrorCodes.X_MISSING_DYNAMIC_DIRECTIVE_ARGUMENT_END, this.index)
             }
-        }
-    }
-    private stateInDirModifier(c: number): void {
-        if (c === CharCodes.Eq || isEndOfTagSection(c)) {
-            this.cbs.ondirmodifier(this.sectionStart, this.index)
-            this.handleAttrNameEnd(c)
-        } else if (c === CharCodes.Dot) {
-            this.cbs.ondirmodifier(this.sectionStart, this.index)
-            this.sectionStart = this.index + 1
         }
     }
     private handleAttrNameEnd(c: number): void {
@@ -794,10 +770,6 @@ export default class Tokenizer {
                     this.stateInDynamicDirArg(c)
                     break
                 }
-                case State.InDirModifier: {
-                    this.stateInDirModifier(c)
-                    break
-                }
                 case State.InCommentLike: {
                     this.stateInCommentLike(c)
                     break
@@ -925,7 +897,7 @@ export default class Tokenizer {
             if (this.currentSequence === Sequences.CdataEnd) this.cbs.oncdata(this.sectionStart, endIndex)
             else this.cbs.oncomment(this.sectionStart, endIndex)
         } else if (
-            this.state === State.InTagName || this.state === State.BeforeAttrName || this.state === State.BeforeAttrValue || this.state === State.AfterAttrName || this.state === State.InAttrName || this.state === State.InDirName || this.state === State.InDirArg || this.state === State.InDirDynamicArg || this.state === State.InDirModifier || this.state === State.InAttrValueSq || this.state === State.InAttrValueDq || this.state === State.InAttrValueNq || this.state === State.InClosingTagName
+            this.state === State.InTagName || this.state === State.BeforeAttrName || this.state === State.BeforeAttrValue || this.state === State.AfterAttrName || this.state === State.InAttrName || this.state === State.InDirName || this.state === State.InDirArg || this.state === State.InDirDynamicArg || this.state === State.InAttrValueSq || this.state === State.InAttrValueDq || this.state === State.InAttrValueNq || this.state === State.InClosingTagName
         ) {
             // 如果我们当前处于开始标签或结束标签中，而不调用相应的回调函数，则表明该标签应被忽略
         } else this.cbs.ontext(this.sectionStart, endIndex)

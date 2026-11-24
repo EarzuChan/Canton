@@ -4,12 +4,12 @@
         <Text text="Regular 400 The quick brown fox 0123456789" :style="body" />
         <Text text="Bold 700 The quick brown fox" :style="{ ...body, fontWeight: 700 }" />
         <Text text="Italic The quick brown fox" :style="{ ...body, fontStyle: 'italic' }" />
-        <Row :horizontalArrangement="Arrangement.spacedBy(12.dp)" &row-handle>
+        <Row :horizontalArrangement="Arrangement.spacedBy(12.dp)" &rowHandle>
             <Text text="Size 24" :style="{ ...body, fontSize: 24.sp, color: palette.sky }" :modifier="rowHandle.alignByBaseline()" />
             <Text text="size 16" :style="{ ...body, fontSize: 16.sp, color: palette.pink }" :modifier="rowHandle.alignByBaseline()" />
             <Text text="size 10 on one baseline" :style="{ ...body, fontSize: 10.sp, color: palette.amber }" :modifier="rowHandle.alignByBaseline()" />
         </Row>
-        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <Text text="Wrapped paragraph breaks at word boundaries and keeps the line height it was given" :style="{ ...body, lineHeight: 20.sp }" :modifier="rowHandle.weight(1).background(palette.panel, rounded(6.dp)).padding(8.dp)" />
             <Column :modifier="rowHandle.weight(1)" :verticalArrangement="Arrangement.spacedBy(6.dp)">
                 <Text text="Two lines at most then an ellipsis takes over the rest of this sentence" :style="body" :maxLines="2" overflow="ellipsis" :modifier="M.fillMaxWidth().background(palette.panel, rounded(6.dp)).padding(8.dp)" />

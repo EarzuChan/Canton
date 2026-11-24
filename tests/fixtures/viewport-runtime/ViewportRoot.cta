@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Viewport" :onCloseRequest="appHandle.exitApplication">
             <ViewportApp />
         </Window>

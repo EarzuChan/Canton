@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Canton Showcase" :onCloseRequest="appHandle.exitApplication">
             <Box :modifier="M.fillMaxSize().background(palette.canvas)">
                 <LayoutPage c-if="page === 'layout'" />

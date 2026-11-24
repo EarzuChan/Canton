@@ -15,8 +15,8 @@ Canton 是原生面向 Windows 的声明式 UI 框架，系同一作者的 Arran
 ```cta
 // app/src/MyApp.cta
 <template>
-    <App &app-handle>
-        <Window title="My App" :on-close-request="appHandle.exitApplication">
+    <App &appHandle>
+        <Window title="My App" :onCloseRequest="appHandle.exitApplication">
             <MainWindowView />
         </Window>
     </App>

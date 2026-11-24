@@ -111,18 +111,4 @@ namespace canton::core {
         const auto* value = prop(key);
         return value == nullptr ? fallback : value->uint32Or(fallback);
     }
-
-    std::string kebabCase(std::string_view key) {
-        std::string result;
-        for (char ch : key) {
-            if (ch >= 'A' && ch <= 'Z') {
-                result.push_back('-');
-                result.push_back(static_cast<char>(ch - 'A' + 'a'));
-            } else {
-                result.push_back(ch);
-            }
-        }
-        return result;
-    }
-
 }

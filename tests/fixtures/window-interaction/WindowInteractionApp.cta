@@ -1,9 +1,9 @@
 <template>
-    <App appId="Canton.WindowInteraction" &app-handle>
+    <App appId="Canton.WindowInteraction" &appHandle>
         // 登录窗 <-> 主工作台同帧切窗演练（活跃窗口数 1 -> 1，不误触发末窗退出）
-        <Window c-if="stage === 'login'" key="login" title="Canton 登录" chrome="customTitleBar" backdrop="micaAlt" :state="loginState" :resizable="false" :maximizable="false" :onCloseRequest="appHandle.exitApplication" &window-handle>
+        <Window c-if="stage === 'login'" key="login" title="Canton 登录" chrome="customTitleBar" backdrop="micaAlt" :state="loginState" :resizable="false" :maximizable="false" :onCloseRequest="appHandle.exitApplication" &windowHandle>
             <Column :modifier="M.fillMaxSize().background(Color(0xdd141923))">
-                <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(38.dp).background(Color(0x661e2636)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" &row-handle>
+                <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(38.dp).background(Color(0x661e2636)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" &rowHandle>
                     <Text text="Canton 登录入口（同帧切窗演练）" :style="{ fontSize: 13.sp, color: Color(0xffe2e8f0) }" :modifier="rowHandle.weight(1)" />
 
                     <Box :modifier="windowHandle.captionButton('close', { interactionState: loginCloseState }).size(44.dp, 38.dp).background(loginCloseState.hovered ? Color(0xffe81123) : Color(0x00000000))" contentAlignment="Center">
@@ -23,10 +23,10 @@
             </Column>
         </Window>
 
-        <Window c-else key="workbench" title="顶豪工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :minSize="{ width: 720.dp, height: 500.dp }" :onCloseRequest="requestMainClose" &window-handle>
+        <Window c-else key="workbench" title="顶豪工作台" chrome="customTitleBar" backdrop="mica" :state="mainState" :minSize="{ width: 720.dp, height: 500.dp }" :onCloseRequest="requestMainClose" &windowHandle>
             <Column :modifier="M.fillMaxSize().background(Color(0xd8111621))">
                 // 自绘标题栏：拖拽区 + 自动让位的内嵌搜索框 + 自绘三键
-                <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(40.dp).background(Color(0x881a2234)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+                <Row :modifier="windowHandle.draggableArea().fillMaxWidth().height(40.dp).background(Color(0x881a2234)).padding({ start: 14.dp })" verticalAlignment="CenterVertically" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
                     <Text text="Canton 真豪工作台" :style="{ fontSize: 13.sp, fontWeight: 600, color: Color(0xfff1f5f9) }" />
 
                     <Input :value="searchQuery" placeholder="标题栏搜索（自动 HTCLIENT 让位）" :onValueChange="updateSearch" :modifier="M.width(230.dp).height(26.dp).background(Color(0xff0f172a), rounded(5.dp)).padding({ horizontal: 8.dp, vertical: 4.dp })" :textStyle="{ fontSize: 12.sp, color: Color(0xffe2e8f0) }" />
@@ -51,9 +51,9 @@
                 </Row>
 
                 // 主体双栏
-                <Row :modifier="M.fillMaxSize().padding(16.dp)" :horizontalArrangement="Arrangement.spacedBy(16.dp)" &row-handle="bodyRow">
+                <Row :modifier="M.fillMaxSize().padding(16.dp)" :horizontalArrangement="Arrangement.spacedBy(16.dp)" &rowHandle="bodyRow">
                     // 左栏：窗口拓扑控制与 WindowState 实时面板
-                    <Column :modifier="bodyRow.weight(1).fillMaxHeight().background(Color(0x99192231), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)" &column-handle>
+                    <Column :modifier="bodyRow.weight(1).fillMaxHeight().background(Color(0x99192231), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)" &columnHandle>
                         <Text text="多窗口拓扑与状态面板" :style="{ fontSize: 14.sp, fontWeight: 600, color: Color(0xfff8fafc) }" />
 
                         <Text :text="`尺寸：${Math.round(mainState.size.width)} × ${Math.round(mainState.size.height)} dp  |  形态：${mainState.placement}`" :style="{ fontSize: 12.sp, color: Color(0xffcbd5e1) }" />
@@ -181,7 +181,7 @@
                 </Column>
             </Window>
 
-            <Window c-if="showSquare" key="square" title="方角无框窗" chrome="frameless" cornerPreference="square" :resizable="false" :minimizable="false" :maximizable="false" :state="squareState" :onCloseRequest="toggleSquare" &window-handle="squareHandle">
+            <Window c-if="showSquare" key="square" title="方角无框窗" chrome="frameless" cornerPreference="square" :resizable="false" :minimizable="false" :maximizable="false" :state="squareState" :onCloseRequest="toggleSquare" &windowHandle="squareHandle">
                 <Column :modifier="squareHandle.draggableArea().fillMaxSize().background(Color(0xff1e293b)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
                     <Text text="方角无框窗" :style="{ fontSize: 14.sp, fontWeight: 600, color: Color(0xffe2e8f0) }" />
 
@@ -191,12 +191,12 @@
                 </Column>
             </Window>
 
-            <Window c-if="showTransparent" key="transparent" title="透明异形浮层" chrome="frameless" :transparent="true" :resizable="false" :minimizable="false" :maximizable="false" :state="transparentState" :onCloseRequest="toggleTransparent" &window-handle="shapeHandle">
+            <Window c-if="showTransparent" key="transparent" title="透明异形浮层" chrome="frameless" :transparent="true" :resizable="false" :minimizable="false" :maximizable="false" :state="transparentState" :onCloseRequest="toggleTransparent" &windowHandle="shapeHandle">
                 <Canvas :modifier="shapeHandle.draggableArea().fillMaxSize()" :onDraw="drawTransparentShape" />
             </Window>
 
             // 无框圆角浮层窗（chrome="frameless" + cornerPreference="roundSmall"）
-            <Window c-if="showPopup" key="popup" title="圆角浮层" chrome="frameless" cornerPreference="roundSmall" :resizable="false" :maximizable="false" :minimizable="false" :state="popupState" :onCloseRequest="togglePopup" &window-handle="popupHandle">
+            <Window c-if="showPopup" key="popup" title="圆角浮层" chrome="frameless" cornerPreference="roundSmall" :resizable="false" :maximizable="false" :minimizable="false" :state="popupState" :onCloseRequest="togglePopup" &windowHandle="popupHandle">
                 <Column :modifier="popupHandle.draggableArea().fillMaxSize().background(Color(0xff1e293b)).border(1.dp, Color(0xff475569), rounded(8.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
                     <Text text="无框圆角浮层（frameless + roundSmall，整卡可拖拽）" :style="{ fontSize: 12.sp, fontWeight: 600, color: Color(0xfffbbf24) }" />
 

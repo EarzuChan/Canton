@@ -81,7 +81,7 @@
 
 范围：
 - **多窗口与入口模型**：落地 `appBuilder(App).build()`（全仓清零 `createApp`）、`<App>` 与 `<Window>` 生命周期、画区作用域自然分界、每窗独立 `NativeScene`/`SceneFramePipeline`/`Density`/`FocusManager`、`WindowState` 与 `WindowHandle`、私有 `WeakMap` → `WindowId` → `HWND` 映射、Win32 `owner` 拓扑逆序销毁、非阻塞模态（`EnableWindow` + 模态锁计数 + 防焦点跌落顺序）与 0 窗错误屏兜底。
-- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic，不支持环境静默回退深色底）与 `cornerPreference`、Per-Monitor V2 DPI 与 `WM_DPICHANGED` 驱动窗口级 `Density`、`&window-handle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与非客户区三键防复古按钮闪现托管、`AUMID` 与进程/窗口图标。
+- **原生窗口外观与标题栏**：`chrome`（`system` / `customTitleBar` / `frameless`）、能力开关与 `role`、Win11 `backdrop`（Mica / Mica Alt / Acrylic，不支持环境静默回退深色底）与 `cornerPreference`、Per-Monitor V2 DPI 与 `WM_DPICHANGED` 驱动窗口级 `Density`、`&windowHandle.draggableArea / nonDraggableArea / captionButton` 5 级 `WM_NCHITTEST` 与非客户区三键防复古按钮闪现托管、`AUMID` 与进程/窗口图标。
 - **原生输入**：鼠标多击与捕获、滚轮平滑与边界接力、键盘与焦点导航、光标形状、`Input` 词级操作/多击选词/`readOnly`/剪贴板接入宿主窗口；纯 Win32 IMM32 中文输入法与显式 `compositionRange` 组合模型接入 `InputTextSession`（按焦点动态启停 `HIMC`）；接通 DirectManipulation 精密触控板滚轮（`WindowsPrecisionWheelSource`）。
 - **M3 移交与 Dist 物理剥离**：Dev 窗口级调试交互（`F5` 重载、`F8` 帧率徽标、`F9` / `Shift+F9` `DiagnosticsOverlay`、错误屏点击重试与 `Ctrl+C` 复制诊断）经 `DevAssembly` 注入并在 Dist 宿主编译/链接期物理剥离；恢复并扩充 `canton_focus_input`、`canton_scroll_input`、`canton_frame_submission`、`canton_lazy_runtime` 与 `canton_window_runtime`。
 
@@ -117,7 +117,7 @@
 目标：打通桌面应用与 Windows Shell 深度融合，以及规范克制的只读资产与真实磁盘路径存储体系。
 
 范围：
-- **Windows Shell 集成**：App 级隐藏顶层 `HWND`（`WS_EX_TOOLWINDOW`）、`<TrayIcon>`（稳定 `NIF_GUID` 与 `TaskbarCreated` 重建）、双轨 `<SystemTrayMenu>`（原生 `HMENU`）与 `<CustomTrayMenu>`（自绘浮窗 + `&menu-handle.dismiss()`）、`<Window>` `ITaskbarList3` 进度/角标/7 槽缩略图按钮、单活跃 `<MediaSession>`（SMTC）、`LaunchRequestKey` 冷启动与单实例 IPC 热唤醒（`<App :on-second-instance>`）、Jump List、关机拦截。
+- **Windows Shell 集成**：App 级隐藏顶层 `HWND`（`WS_EX_TOOLWINDOW`）、`<TrayIcon>`（稳定 `NIF_GUID` 与 `TaskbarCreated` 重建）、双轨 `<SystemTrayMenu>`（原生 `HMENU`）与 `<CustomTrayMenu>`（自绘浮窗 + `&menuHandle.dismiss()`）、`<Window>` `ITaskbarList3` 进度/角标/7 槽缩略图按钮、单活跃 `<MediaSession>`（SMTC）、`LaunchRequestKey` 冷启动与单实例 IPC 热唤醒（`<App :onSecondInstance>`）、Jump List、关机拦截。
 - **资产与文件存储**：TS `assets.exists` 补齐与宿主只读资产直读接口；`@canton/framework/fs`（`SHGetKnownFolderPath` 用户标准目录、`dataDir`/`tempDir` 透明重定位、后台线程池异步文件 I/O 与可选 `atomic` 原子写）。
 
 验收夹具：
@@ -187,7 +187,7 @@ Demo 建立与总验收：
   2. **模板内作用域下直写代码**：在模板对应位置直接内联一次性局部 setup 块（无需起 `scope` 名、无需在文件上下跳转对照）。
 - **核心前提与红线**：两种设想都必须坚持**挂载期只执行一次**（编译降级为带外层词法闭包捕获的内联私有子 Arrangable），以与根 `<script>`“实例不死不重跑、天然无需 `remember`”的心智保持统一。**绝不引入随重排反复执行的模板语句**（否则将被迫引入 `remember` 与位置槽位表约束，与 `<script>` 心智直接冲突）。
 - **价值**：
-  - 在局部作用域内直接非空访问当前槽位的 `&handle`（如 `&app-handle`、`&window-handle`、`&column-handle`）及 `c-for` 迭代变量，无需改坏 [ADR 002](../adr/batch1/2：Slot句柄与父布局数据.md) 做带 `null` 风险的模板 `ref` 反向赋值；
+  - 在局部作用域内直接非空访问当前槽位的 `&handle`（如 `&appHandle`、`&windowHandle`、`&columnHandle`）及 `c-for` 迭代变量，无需改坏 [ADR 002](../adr/batch1/2：Slot句柄与父布局数据.md) 做带 `null` 风险的模板 `ref` 反向赋值；
   - 在 `c-if` / `c-for` 分支内声明随分支生灭的局部 `ref` / `watch` / 副作用，不必全提升到根 `<script>`。
 - **代价与待定取舍**：
   - **类型检查与 IDE 成本高**：`.cta` 类型检查需按模板嵌套树重组嵌套闭包、注入槽位参数和循环变量类型并维护精确 SourceMap；主流编辑器对单文件多 `<script scope="...">` 或模板内直写 TS 块默认高亮与语言服务支持弱；模板内直写代码还需额外处理 TS 泛型 `<T>` / 比较符与标签词法冲突。

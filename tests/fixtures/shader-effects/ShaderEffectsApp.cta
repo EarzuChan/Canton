@@ -1,7 +1,7 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Canton Shader & Liquid Glass" :state="windowState" :onCloseRequest="appHandle.exitApplication">
-            <Column &column-handle :modifier="M.fillMaxSize().background(palette.bg)">
+            <Column &columnHandle :modifier="M.fillMaxSize().background(palette.bg)">
                 <Row :modifier="M.fillMaxWidth().background(palette.bar).padding({ horizontal: 12.dp, vertical: 8.dp })" :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalAlignment="Alignment.CenterVertically">
                     <Text text="Canton Visual Lab" :style="subheading" :modifier="M.padding({ end: 12.dp })" />
 

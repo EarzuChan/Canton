@@ -1,16 +1,16 @@
 <template>
     <Column :modifier="M.fillMaxSize().padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
         <Text :text="`Scroll at ${offset}`" :style="title" />
-        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <!-- 竖向滚动：内容比视口高，位置由脚本设定 -->
             <Column :modifier="rowHandle.weight(1).height(220.dp).background(palette.panel, rounded(8.dp)).verticalScroll(vertical).padding(8.dp)" :verticalArrangement="Arrangement.spacedBy(6.dp)">
-                <Row c-for="row in rows" :key="row" :modifier="M.fillMaxWidth().height(28.dp).background(row % 2 ? palette.line : palette.canvas, rounded(4.dp)).padding({ horizontal: 8.dp })" &row-handle="innerHandle">
+                <Row c-for="row in rows" :key="row" :modifier="M.fillMaxWidth().height(28.dp).background(row % 2 ? palette.line : palette.canvas, rounded(4.dp)).padding({ horizontal: 8.dp })" &rowHandle="innerHandle">
                     <Text :text="`row ${row}`" :style="body" :modifier="innerHandle.align(Alignment.CenterVertically)" />
                 </Row>
             </Column>
             <!-- 横向滚动 -->
             <Row :modifier="rowHandle.weight(1).height(80.dp).background(palette.panel, rounded(8.dp)).horizontalScroll(horizontal).padding(8.dp)" :horizontalArrangement="Arrangement.spacedBy(6.dp)">
-                <Box c-for="column in rows" :key="column" :modifier="M.size(48.dp, 64.dp).background(colors[column % colors.length]!, rounded(6.dp))" &box-handle>
+                <Box c-for="column in rows" :key="column" :modifier="M.size(48.dp, 64.dp).background(colors[column % colors.length]!, rounded(6.dp))" &boxHandle>
                     <Text :text="`${column}`" :style="body" :modifier="boxHandle.align(Alignment.Center)" />
                 </Box>
             </Row>

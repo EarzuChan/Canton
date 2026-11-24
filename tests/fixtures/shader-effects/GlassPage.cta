@@ -1,5 +1,5 @@
 <template>
-    <Box :modifier="M.fillMaxSize()" &box-handle>
+    <Box :modifier="M.fillMaxSize()" &boxHandle>
         <!-- 底层彩色实景背景，供液态玻璃实时采样与折射 -->
         <Box :modifier="M.fillMaxSize().then(layerBackdrop(rootBackdrop))">
             <Column :modifier="M.fillMaxSize().verticalScroll(scrollState).background(bgGrad).padding(20.dp)" :verticalArrangement="Arrangement.spacedBy(16.dp)">
@@ -71,7 +71,7 @@
         </Box>
 
         <!-- 拖动内部移动，拖动边缘或角落缩放 -->
-        <Box :modifier="floatingGlassMod" &box-handle>
+        <Box :modifier="floatingGlassMod" &boxHandle>
             <Column :modifier="M.padding(18.dp)" :verticalArrangement="Arrangement.spacedBy(8.dp)">
                 <Row :horizontalArrangement="Arrangement.SpaceBetween" :verticalAlignment="Alignment.CenterVertically" :modifier="M.fillMaxWidth()">
                     <Text text="Draggable Liquid Glass" :style="heading" />
@@ -95,7 +95,7 @@
                         <Text text="Reset" :style="subheading" />
                     </Box>
                 </Row>
-                <Row c-for="(group, index) in controls" :key="index" &row-handle :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(16.dp)" :verticalAlignment="Alignment.CenterVertically">
+                <Row c-for="(group, index) in controls" :key="index" &rowHandle :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.spacedBy(16.dp)" :verticalAlignment="Alignment.CenterVertically">
                     <Box c-for="control in group" :key="control.label" :modifier="rowHandle.weight(1)">
                         <LiquidSlider c-if="control.slider" :label="control.label" :displayValue="control.slider.display()" :value="control.slider.value()" :min="control.slider.min" :max="control.slider.max" :onValueChange="control.slider.set" :modifier="M.fillMaxWidth()" />
                         <Row c-else :modifier="M.fillMaxWidth()" :horizontalArrangement="Arrangement.SpaceBetween" :verticalAlignment="Alignment.CenterVertically">

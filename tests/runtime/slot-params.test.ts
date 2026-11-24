@@ -12,7 +12,7 @@ import { recordingNative, mountFrame, advanceFrames } from './recordingNative.ts
 
 const container = `<template>
     <Slot name="header" :title="title" :actions="actions" />
-    <Slot :app-handle="appHandle" />
+    <Slot :appHandle="appHandle" />
     <Slot name="footer" />
 </template>
 <script>
@@ -24,9 +24,9 @@ test('零参、单参与多参槽位按值交付，同名、别名与解构都�
     const title = runtime.ref('标题')
     const Container = evaluateCta(container, { './state': { title, actions: { label: '刷新' }, appHandle: { name: '应用' } } })
     const Page = evaluateCta(`<template>
-    <App &app-handle>
+    <App &appHandle>
         <Window :onCloseRequest="appHandle.exitApplication">
-            <Container &app-handle="outerApp">
+            <Container &appHandle="outerApp">
                 <Template #header &title &actions="{ label }"><Text :text="title + label" /></Template>
                 <Text :text="outerApp.name + title" />
                 <Template #footer><Text text="页脚" /></Template>
@@ -60,7 +60,7 @@ defineSlots<{ default: { value: number } }>()
 </script>`, { './state': { first, second } })
     const runs: number[] = []
     const Page = evaluateCta(`<template>
-    <App &app-handle>
+    <App &appHandle>
         <Window :onCloseRequest="appHandle.exitApplication">
             <Pair &value="outer">
                 <Pair c-if="outer === 1" &value><Text :text="mark(outer * 10 + value)" /></Pair>
@@ -90,10 +90,19 @@ test('槽位参数绑定的位置与命名错误在编译期报出', () => {
     assert.throws(compile('<Slot &value />'), /槽位参数只能绑定在 Arrangable 标签或 <Template #name> 上/)
     assert.throws(compile('<Template &value><Text text="x" /></Template>'), /槽位参数只能绑定在 Arrangable 标签或 <Template #name> 上/)
     assert.throws(compile('<Box &a.b><Text text="x" /></Box>'), /槽位参数名不是合法标识符/)
-    assert.throws(compile('<Box &box-handle &boxHandle><Text text="x" /></Box>'), /重复绑定槽位参数/)
+    assert.throws(compile('<Box &box-handle><Text text="x" /></Box>'), /槽位参数名不是合法标识符/)
+    assert.throws(compile('<Box &×><Text text="x" /></Box>'), /槽位参数名不是合法标识符/)
+    for (const binding of ['&class', '&await', '&name="class"', '&name="eval"', '&name="{ value: arguments }"']) {
+        assert.throws(compile(`<Box ${binding}><Text text="x" /></Box>`), /槽位参数.*局部绑定/)
+    }
+    assert.throws(compile('<Box &boxHandle &boxHandle="alias"><Text text="x" /></Box>'), /重复参数/)
     assert.throws(compile('<Box &a="same" &b="{ same }"><Text text="x" /></Box>'), /局部名重复：same/)
     assert.throws(compile('<Box &a="{ broken"><Text text="x" /></Box>'), /TS 表达式解析失败/)
-    assert.throws(compile('<Slot c-bind="args" />'), /Slot 出口只接受静态 name 和具名实参/)
+    assert.throws(compile('<Slot :[name]="1" />'), /Slot 出口只接受静态 name 和具名实参/)
+    assert.throws(compile('<Slot :name="1" />'), /Slot 出口只接受静态 name 和具名实参/)
+    assert.throws(compile('<Slot :row-handle="1" />'), /参数名称必须是合法标识符/)
+    assert.throws(compile('<Slot name="bad-slot" />'), /Slot 的 name 必须是合法标识符/)
+    assert.throws(compile('<Box><Template #bad-slot><Text text="x" /></Template></Box>'), /合法槽位标识符/)
     assert.throws(() => compileCantonCta('<template><Slot /></template><script>const slots = defineSlots<{ default: {} }>()</script>', '槽位参数.cta'), /defineSlots.+只能写成顶层语句/)
 })
 
@@ -107,16 +116,16 @@ test('离线类型检查按槽位签名推导绑定类型，并诊断使用方�
         writeFileSync(join(directory, 'Container.cta'), container.replace("import { title, actions, appHandle } from './state'", "const title = '标题', actions = { label: '刷新' }, appHandle = { name: '应用' }"))
         const imports = "<script>\nimport { M, Alignment } from '@canton/framework/ui'\nimport Container from './Container.cta'\n</script>"
         assert.deepEqual(check('Good.cta', `<template>
-    <Container &app-handle="{ name }">
+    <Container &appHandle="{ name }">
         <Template #header &title &actions><Text :text="title.toUpperCase() + actions.label" /></Template>
-        <Column &column-handle><Text :text="name" :modifier="M.then(columnHandle.align(Alignment.End)).padding(8.dp)" /></Column>
+        <Column &columnHandle><Text :text="name" :modifier="M.then(columnHandle.align(Alignment.End)).padding(8.dp)" /></Column>
     </Container>
 </template>${imports}`), [])
 
         const consumer = check('Bad.cta', `<template>
     <Container &missing>
         <Template #header &title><Text :text="title.toFixed()" /></Template>
-        <Row &row-handle><Text text="x" :modifier="rowHandle.align(Alignment.End)" /></Row>
+        <Row &rowHandle><Text text="x" :modifier="rowHandle.align(Alignment.End)" /></Row>
     </Container>
 </template>${imports}`)
         assert.equal(consumer.length, 3, JSON.stringify(consumer))
@@ -148,11 +157,11 @@ import { M, type Modifier } from '@canton/framework/ui'
 defineProps<{ placement: Modifier }>()
 </script>`)
     const Page = evaluateCta(`<template>
-    <App &app-handle>
+    <App &appHandle>
         <Window :onCloseRequest="appHandle.exitApplication">
-            <Row &row-handle>
+            <Row &rowHandle>
                 <Text text="直接" :modifier="M.padding(8.dp).then(rowHandle.weight(2, { fill: false })).then(rowHandle.alignByBaseline())" />
-                <Box &box-handle><Item :placement="boxHandle.align(Alignment.Center).then(boxHandle.matchParentSize())" /></Box>
+                <Box &boxHandle><Item :placement="boxHandle.align(Alignment.Center).then(boxHandle.matchParentSize())" /></Box>
             </Row>
         </Window>
     </App>

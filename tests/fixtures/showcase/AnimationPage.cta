@@ -5,13 +5,13 @@
         <Box :modifier="M.fillMaxWidth().height(16.dp).background(palette.panel, rounded(8.dp))">
             <Box :modifier="M.fillMaxWidth(progress).fillMaxHeight().background(horizontalGradient([palette.sky, palette.violet]), rounded(8.dp))" />
         </Box>
-        <Row :modifier="M.fillMaxWidth().height(110.dp)" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &row-handle>
+        <Row :modifier="M.fillMaxWidth().height(110.dp)" :horizontalArrangement="Arrangement.spacedBy(10.dp)" &rowHandle>
             <!-- 位移、旋转与缩放 -->
             <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(palette.panel, rounded(8.dp))">
                 <Box :modifier="M.offset({ x: (12 + 150 * progress).dp, y: 30.dp }).size(48.dp, 48.dp).graphicsLayer({ rotationZ: 180 * progress, scaleX: 1 + 0.5 * progress, scaleY: 1 + 0.5 * progress }).background(palette.amber, rounded(10.dp))" />
             </Box>
             <!-- 颜色与透明度 -->
-            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(color, rounded(8.dp))" &box-handle>
+            <Box :modifier="rowHandle.weight(1).fillMaxHeight().background(color, rounded(8.dp))" &boxHandle>
                 <Text text="fading in" :style="body" :modifier="boxHandle.align(Alignment.Center).alpha(progress)" />
             </Box>
         </Row>

@@ -1,5 +1,5 @@
 // 按真实绑定来源改写表达式，并保留每个标识符的源码位置
-import { genPropsAccessExp, hasOwn, isGloballyAllowed, isString, makeMap } from '@canton/shared'
+import { genPropsAccessExp, hasOwn, isGloballyAllowed, isIdentifier, isString, makeMap } from '@canton/shared'
 import { parseExpression } from '@babel/parser'
 import type { AssignmentExpression, Identifier, Node, UpdateExpression } from '@babel/types'
 import { type CompoundExpressionNode, ConstantTypes, type ExpressionNode, NodeTypes, type SimpleExpressionNode, createCompoundExpression, createSimpleExpression } from '../ast.ts'
@@ -8,7 +8,7 @@ import { ErrorCodes, createCompilerError } from '../errors.ts'
 import { BindingTypes } from '../options.ts'
 import { IS_REF, UNREF } from '../runtimeHelpers.ts'
 import type { TransformContext } from '../transform.ts'
-import { advancePositionWithClone, isSimpleIdentifier } from '../utils.ts'
+import { advancePositionWithClone } from '../utils.ts'
 import { normalizeCtaUnitSyntax, restoreBabelNodePositions } from '../../syntax/unitSyntax.ts'
 
 const isLiteralWhitelisted = makeMap('true,false,null,this')
@@ -98,7 +98,7 @@ export function processExpression(node: SimpleExpressionNode, context: Transform
         return node
     }
 
-    if (ast === null || (!ast && isSimpleIdentifier(rawExp))) {
+    if (ast === null || (!ast && isIdentifier(rawExp))) {
         const isScopeVarReference = context.identifiers[rawExp]
         const isAllowedGlobal = isGloballyAllowed(rawExp)
         const isLiteral = isLiteralWhitelisted(rawExp)

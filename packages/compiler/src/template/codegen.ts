@@ -1,7 +1,6 @@
 import { parseExpression } from '@babel/parser'
-import type { Expression } from '@babel/types'
+import { getBindingIdentifiers, type Expression } from '@babel/types'
 import { SourceMapGenerator } from 'source-map-js'
-import { camelize } from '@canton/shared'
 import { NodeTypes, createSimpleExpression, type RootNode, type TemplateChildNode, type ElementNode, type DirectiveNode, type ExpressionNode, type SimpleExpressionNode, type SourceLocation } from './ast.ts'
 import { BindingTypes, type CompilerOptions } from './options.ts'
 import { processExpression, stringifyExpression } from './transforms/transformExpression.ts'
@@ -96,7 +95,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
     const key = (node: ElementNode): string => {
         for (const prop of node.props) {
             if (prop.type === NodeTypes.ATTRIBUTE && prop.name === 'key') return JSON.stringify(prop.value?.content ?? true)
-            if (prop.type === NodeTypes.DIRECTIVE && prop.name === 'bind' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.content === 'key') return expression(prop.exp)
+            if (prop.type === NodeTypes.DIRECTIVE && prop.name === 'bind' && prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic && prop.arg.content === 'key') return expression(prop.exp)
         }
 
         return 'undefined'
@@ -112,13 +111,28 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
         const locals: string[] = []
         const bindings = owner.props.flatMap(prop => {
             if (prop.type !== NodeTypes.DIRECTIVE || prop.name !== 'param') return []
-            const name = camelize((prop.arg as SimpleExpressionNode).content)
+            const name = (prop.arg as SimpleExpressionNode).content
             const pattern = prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION && prop.exp.content.trim() ? processExpression({ ...prop.exp }, context, true) : undefined
-            for (const local of pattern ? pattern.identifiers ?? [stringifyExpression(pattern)] : [name]) {
+            const binding = pattern ? `${name}: ${stringifyExpression(pattern)}` : name
+            const paramLoc = prop.exp?.loc ?? prop.loc
+            const fail = (message: string): never => {
+                throw Object.assign(new SyntaxError(`槽位参数 ${name} 的局部绑定不合法（TS 表达式解析失败）：${message}`), { code: 'CANTON_TEMPLATE', loc: paramLoc })
+            }
+            // 按生成的解构形参校验局部绑定，字段名仍可以使用关键字。
+            const source = normalizeCtaUnitSyntax(`({ ${binding} }) => {}`).content
+            let parsed: ReturnType<typeof parseExpression>
+            try {
+                parsed = parseExpression(source, { sourceType: 'module', plugins: context.expressionPlugins })
+            } catch (error) {
+                return fail((error as Error).message)
+            }
+            const param = parsed.type === 'ArrowFunctionExpression' && parsed.params.length === 1 ? parsed.params[0] : undefined
+            if (param?.type !== 'ObjectPattern' || param.properties.length !== 1) return fail('每个 & 只能绑定一个槽位字段')
+            for (const local of Object.keys(getBindingIdentifiers(param))) {
                 if (locals.includes(local)) throw Object.assign(new SyntaxError(`槽位参数的局部名重复：${local}`), { code: 'CANTON_TEMPLATE', loc: prop.loc })
                 locals.push(local)
             }
-            return [emit(pattern ? `${name}: ${stringifyExpression(pattern)}` : name, prop.loc)]
+            return [emit(binding, prop.loc)]
         })
         return `(${bindings.length ? `{ ${bindings.join(', ')} }` : ''}) => {\n${scoped(locals, () => children(nodes))}\n}`
     }
@@ -185,7 +199,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
                 const argument = prop.type === NodeTypes.ATTRIBUTE ? prop.name : (prop.arg as SimpleExpressionNode).content
                 if (argument === 'name' || argument === 'key') continue
                 const value = prop.type === NodeTypes.ATTRIBUTE ? JSON.stringify(prop.value?.content ?? true) : expression(prop.exp)
-                args.push(emit(`${JSON.stringify(camelize(argument))}: ${value}`, prop.loc))
+                args.push(emit(`${JSON.stringify(argument)}: ${value}`, prop.loc))
             }
             if (!args.length) return `${helper('invokeContent')}(${id}, __content${id})`
             // 实参在该出口的内容作用域内求值；不引用模板局部名时出口函数只建一次，父级重排不会连带重跑内容
@@ -211,7 +225,7 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
             if (prop.type === NodeTypes.ATTRIBUTE) {
                 if (prop.name === 'key') continue
 
-                const name = camelize(prop.name)
+                const name = prop.name
                 const value = emit(JSON.stringify(prop.value?.content ?? true), prop.loc)
                 parameters.push(`[${JSON.stringify(name)}, () => ${value}]`)
                 fixedParameters.push(`${JSON.stringify(name)}: () => ${value}`)
@@ -220,29 +234,25 @@ export function generate(ast: RootNode, options: CompilerOptions = {}): CodegenR
                 constants.push(name)
                 sources.push(`${JSON.stringify(name)}: ${location(prop.loc)}`)
             } else if (prop.name === 'bind') {
-                if (prop.arg?.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.content === 'key') continue
+                const arg = prop.arg!
+                if (arg.type === NodeTypes.SIMPLE_EXPRESSION && arg.isStatic && arg.content === 'key') continue
 
-                if (!prop.arg) {
-                    dynamicShape = true
-                    parameters.push(`...${helper('parameterObject')}(${position++}, () => (${expression(prop.exp)}))`)
-                    checkParameters.push(`...__cantonGetters(${definition}, ${expression(prop.exp)})`)
-                    continue
-                }
-                const staticName = prop.arg.type === NodeTypes.SIMPLE_EXPRESSION && prop.arg.isStatic
-                const name = staticName ? JSON.stringify(camelize((prop.arg as SimpleExpressionNode).content)) : `${helper('cantonParameterName')}(${expression(prop.arg)})`
+                const staticName = arg.type === NodeTypes.SIMPLE_EXPRESSION && arg.isStatic
+                const rawName = staticName ? (arg as SimpleExpressionNode).content : undefined
+                const name = staticName ? JSON.stringify(rawName) : expression(arg)
                 const value = emit(expression(prop.exp), prop.exp?.loc ?? prop.loc)
-                const getter = staticName && (prop.arg as SimpleExpressionNode).content === 'modifier' ? modifierGetter(prop.exp, position++) : undefined
+                const getter = rawName === 'modifier' ? modifierGetter(prop.exp, position++) : undefined
                 const read = getter ?? `() => (${value})`
                 parameters.push(`[${name}, ${read}]`)
-                checkParameters.push(`${staticName ? name : `[${name}]`}: ${read}`)
+                checkParameters.push(`${staticName ? name : `[String(${name})]`}: ${read}`)
 
                 if (staticName) fixedParameters.push(`${name}: ${read}`)
                 else dynamicShape = true
 
                 if (staticName) {
-                    parameterNames.push(camelize((prop.arg as SimpleExpressionNode).content))
+                    parameterNames.push(rawName!)
                     sources.push(`${name}: ${location(prop.loc)}`)
-                    if (prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION && (/^(?:true|false|null|undefined|-?\d+(?:\.\d+)?|"[^"\\]*"|'[^'\\]*'|`[^`$]*`)$/s.test(prop.exp.content.trim()) || bindings[prop.exp.content] === BindingTypes.LITERAL_CONST)) constants.push(camelize((prop.arg as SimpleExpressionNode).content))
+                    if (prop.exp?.type === NodeTypes.SIMPLE_EXPRESSION && (/^(?:true|false|null|undefined|-?\d+(?:\.\d+)?|"[^"\\]*"|'[^'\\]*'|`[^`$]*`)$/s.test(prop.exp.content.trim()) || bindings[prop.exp.content] === BindingTypes.LITERAL_CONST)) constants.push(rawName!)
                 }
             }
         }

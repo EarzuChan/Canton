@@ -72,14 +72,6 @@ export function normalizePath(p: string): string {
 
 export const joinPaths: (...paths: string[]) => string = (path.posix || path).join
 
-// 键名可能包含符号
-// 含非标识符字符的名称转换为字符串键
-export const propNameEscapeSymbolsRE: RegExp = /[ !"#$%&'()*+,./:;<=>?@[\\\]^`{|}~\-]/
-
-export function getEscapedPropName(key: string): string {
-    return propNameEscapeSymbolsRE.test(key) ? JSON.stringify(key) : key
-}
-
 export const isJS = (...langs: (string | null | undefined)[]): boolean => langs.some(lang => lang === 'js' || lang === 'jsx')
 export const isTS = (...langs: (string | null | undefined)[]): boolean => langs.some(lang => lang === 'ts' || lang === 'tsx')
 

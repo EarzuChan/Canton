@@ -1,5 +1,5 @@
 <template>
-    <App &app-handle>
+    <App &appHandle>
         <Window title="Draw" :onCloseRequest="appHandle.exitApplication">
             <Column>
                 <Layout :measurePolicy="BoxMeasurePolicy()" :modifier="M.size(width.dp, height.dp).then(shown ? drawing : M)">

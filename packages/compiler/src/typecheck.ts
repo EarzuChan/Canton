@@ -10,7 +10,6 @@ const declarations = `import * as __Canton from '@canton/framework'
 import * as __Foundation from '@canton/framework/foundation'
 type __Parameters<D> = D extends __Canton.ArrangableDefinition ? __Canton.ArrangableProps<D> : never
 type __Values<D> = { [K in keyof __Parameters<D>]: () => __Parameters<D>[K] }
-declare function __cantonGetters<D, P>(definition: D, parameters: P & Record<Exclude<keyof P, keyof __Parameters<D>>, never>): { [K in keyof P]: () => P[K] }
 type __Selected<D, P> = D extends { readonly contentTarget: infer K } ? K extends keyof P ? P[K] extends () => infer Target ? Target : never : never : never
 type __DynamicParameters<D, P> = D extends { readonly contentTarget: string } ? { props?: () => __Parameters<__Selected<D, P>> } : unknown
 declare function __cantonCheck<D, P extends __Values<D>>(definition: D, parameters: P & __DynamicParameters<D, P>, line: number, column: number): P

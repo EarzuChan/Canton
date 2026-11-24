@@ -1,24 +1,7 @@
-import { camelize } from './general.ts'
+import { isIdentifier } from './general.ts'
 
-export function cantonParameterName(value: unknown): string {
-    if (typeof value !== 'string' || !value) throw new TypeError('参数名称必须是非空字符串')
+export function cantonParameterName(value: unknown, source?: string): string {
+    if (typeof value !== 'string' || !isIdentifier(value)) throw new TypeError(`参数名称必须是合法标识符：${String(value)}${source ? `\n来源：${source}` : ''}`)
 
-    return camelize(value)
+    return value
 }
-
-// 对象绑定在字段组装前统一校验名称，不能经由 spread 静默丢失非法输入
-export function normalizeParameterObject(value: unknown): Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('参数对象必须是非空对象')
-
-    const result: Record<string, unknown> = Object.create(null)
-    for (const original of Reflect.ownKeys(value)) {
-        if (!Object.prototype.propertyIsEnumerable.call(value, original)) continue
-        const name = cantonParameterName(original)
-        if (Object.prototype.hasOwnProperty.call(result, name)) throw new TypeError(`重复参数：${name}`)
-        result[name] = (value as Record<string, unknown>)[name === original ? name : original as string]
-    }
-
-    return result
-}
-
-export const canonicalHostInput = cantonParameterName

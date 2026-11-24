@@ -241,7 +241,7 @@ test('宿主安装失败后可重挂载，窗口默认 FocusManager 绑定成功
 })
 
 test('CTA 通过 typed FocusManagerKey 注入消费，方向参数保留真实类型', () => {
-    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Child /></Window></App></template><script>
+    const source = `<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Child /></Window></App></template><script>
 import Child from './Child.cta'
 </script>`
     const childSource = `<template><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="M.focusRequester(target).focusable()" /></template><script>

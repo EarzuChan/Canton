@@ -1,3 +1,4 @@
+import { isIdentifier } from '@canton/shared'
 import { BindingTypes } from '../template/index.ts'
 import { isFunctionType, unwrapTSNode } from '../syntax/babelUtils.ts'
 import type { Expression, LVal, Node, ObjectExpression, ObjectMethod, ObjectProperty } from '@babel/types'
@@ -5,7 +6,7 @@ import { getObjectOrArrayExpressionKeys } from './analyzeScriptBindings.ts'
 import type { ScriptCompileContext } from './context.ts'
 import { processPropsDestructure } from './definePropsDestructure.ts'
 import { type TypeResolveContext, inferRuntimeType, inferRefContract, resolveTypeElements } from './resolveType.ts'
-import { DEFINE_PROPS, UNKNOWN_TYPE, WITH_DEFAULTS, concatStrings, getEscapedPropName, isCallOf, isLiteralNode, resolveObjectKey, toRuntimeTypeString } from './utils.ts'
+import { DEFINE_PROPS, UNKNOWN_TYPE, WITH_DEFAULTS, concatStrings, isCallOf, isLiteralNode, resolveObjectKey, toRuntimeTypeString } from './utils.ts'
 
 
 export interface PropTypeData {
@@ -30,6 +31,7 @@ export function processDefineProps(ctx: ScriptCompileContext, node: Node, declId
 
     if (ctx.propsRuntimeDecl) {
         for (const key of getObjectOrArrayExpressionKeys(ctx.propsRuntimeDecl)) {
+            if (!isIdentifier(key)) ctx.error(`参数名称必须是合法标识符：${key}`, ctx.propsRuntimeDecl)
             if (!(key in ctx.bindingMetadata)) {
                 ctx.bindingMetadata[key] = BindingTypes.PROPS
             }
@@ -87,9 +89,8 @@ export function genRuntimeProps(ctx: ScriptCompileContext): string | undefined {
             const defaults: string[] = []
             for (const key in ctx.propsDestructuredBindings) {
                 const d = genDestructuredDefaultValue(ctx, key)
-                const finalKey = getEscapedPropName(key)
                 if (d)
-                    defaults.push(`${finalKey}: ${d.valueString}${d.needSkipFactory ? `, __skip_${finalKey}: true` : ``}`)
+                    defaults.push(`${key}: ${d.valueString}${d.needSkipFactory ? `, __skip_${key}: true` : ``}`)
             }
             if (defaults.length) {
                 propsDecls = `${ctx.helper(`mergeDefaults`)}(${propsDecls}, {\n  ${defaults.join(',\n  ')}\n})`
@@ -133,6 +134,7 @@ function resolveRuntimePropsFromType(ctx: TypeResolveContext, node: Node): PropT
     const elements = resolveTypeElements(ctx, node)
     for (const key in elements.props) {
         const e = elements.props[key]
+        if (!isIdentifier(key)) ctx.error(`参数名称必须是合法标识符：${key}`, e)
         const annotation = e.type === 'TSPropertySignature' ? e.typeAnnotation?.typeAnnotation : undefined
         const refKind = inferRefContract(ctx, annotation, e._ownerScope)
         let type = refKind ? ['Object'] : inferRuntimeType(ctx, e)
@@ -180,8 +182,7 @@ function genRuntimePropFromType(ctx: TypeResolveContext, { key, required, type, 
         }
     }
 
-    const finalKey = getEscapedPropName(key)
-    return `${finalKey}: { ${concatStrings([
+    return `${key}: { ${concatStrings([
         `type: ${toRuntimeTypeString(refKind ? ['Object'] : type)} as ${ctx.helper('PropType')}<(${ctx.getString(ctx.propsTypeDecl!)})[${JSON.stringify(key)}]>`,
         `required: ${required}`,
         refKind && `refKind: '${refKind}'`,

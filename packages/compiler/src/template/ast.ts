@@ -104,7 +104,6 @@ export interface DirectiveNode extends Node {
     rawName?: string
     exp: ExpressionNode | undefined
     arg: ExpressionNode | undefined
-    modifiers: SimpleExpressionNode[]
     forParseResult?: ForParseResult
 }
 

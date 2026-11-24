@@ -231,7 +231,7 @@ test('异步绘制 callback 在候选准备阶段被拒绝', () => {
 })
 
 test('真实 CTA 绘制方法保留 PX 与颜色契约，依赖变化不执行结构', () => {
-    const source = `<template><App &app-handle><Window :onCloseRequest="appHandle.exitApplication"><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="drawing" /></Window></App></template><script>
+    const source = `<template><App &appHandle><Window :onCloseRequest="appHandle.exitApplication"><Layout :measurePolicy="MinSizeMeasurePolicy" :modifier="drawing" /></Window></App></template><script>
 import { Layout } from '@canton/framework/foundation'
 import { M, MinSizeMeasurePolicy, Color } from '@canton/framework/ui'
 import { color } from './state'
