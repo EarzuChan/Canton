@@ -42,6 +42,7 @@ namespace canton::core {
         Axis y_;
         Point point_;
         double startMillis_ = 0;
+        double lastMillis_ = 0;
         bool active_ = false;
     };
 }

@@ -174,6 +174,11 @@ namespace canton::runtime {
 
     void CantonRuntime::enqueueScrollSnapshotEvent(const canton::core::EventSlotId& slot, const canton::core::ScrollResult& result) {
         if (!slot.valid()) return;
+        if (!events_.empty() && events_.back().kind == QueuedEventKind::InvokeScrollSnapshot && events_.back().slot == slot && events_.back().ownerGeneration == ownerGeneration_) {
+            events_.back().scroll = result;
+            wake_->request();
+            return;
+        }
         QueuedEvent event;
         event.kind = QueuedEventKind::InvokeScrollSnapshot;
         event.slot = slot;
@@ -231,6 +236,16 @@ namespace canton::runtime {
 
     bool CantonRuntime::hasPendingEvents() const noexcept {
         return !events_.empty();
+    }
+
+    std::unordered_set<std::uint64_t> CantonRuntime::pendingScrollModifiers() const {
+        std::unordered_set<std::uint64_t> modifiers;
+        for (const auto& event : events_) {
+            if (event.ownerGeneration == ownerGeneration_ && event.kind == QueuedEventKind::InvokeScrollSnapshot && event.scroll.modifier.valid()) {
+                modifiers.insert(event.scroll.modifier.identity);
+            }
+        }
+        return modifiers;
     }
 
     bool CantonRuntime::hasPendingVisualWork() const noexcept {

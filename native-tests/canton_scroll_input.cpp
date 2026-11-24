@@ -11,14 +11,22 @@
 #include <core/Layout.h>
 #include <core/SceneFramePipeline.h>
 #include <core/Scroll.h>
+#include <core/Version.h>
 #include <core/WheelSmoother.h>
 #include <quickjs/QuickJsScriptHost.h>
+#include <runtime/AppSession.h>
 #include <runtime/CantonRuntime.h>
+#include <runtime/Digest.h>
+#include <runtime/UiPackage.h>
 
+#include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 using namespace canton::core;
 
@@ -162,6 +170,198 @@ namespace {
             }
         }
         check(steps >= 3 && near(total, -3.0f, 0.01f) && !smoother.active(), "WheelSmoother 未按多帧平滑交付完整位移并在结束后停表");
+
+        check(smoother.push({10, 10}, notch, 500.0), "续拨首格未进入平滑器");
+        const auto firstStep = smoother.tick(516.0);
+        check(firstStep.has_value() && firstStep->second.deltaY < -0.5f, "首帧平滑推进量异常");
+        check(smoother.push({10, 10}, notch, 532.0), "同向第二格未进入平滑器");
+        const auto coalescedStep = smoother.tick(532.005);
+        check(coalescedStep.has_value() && coalescedStep->second.deltaY < -0.5f, "新刻度紧贴 VBlank 到达时吞掉了帧间进度导致当帧停滞");
+        float contTotal = firstStep->second.deltaY + coalescedStep->second.deltaY;
+        for (double t = 548.0; t <= 720.0; t += 16.0) {
+            while (const auto s = smoother.tick(t)) contTotal += s->second.deltaY;
+        }
+        check(near(contTotal, -6.0f, 0.01f) && !smoother.active(), "同向连续拨轮累计位移不守恒");
+
+        check(smoother.push({10, 10}, notch, 800.0), "反向测试首格未进入平滑器");
+        (void)smoother.tick(816.0);
+        WheelInput reverseNotch;
+        reverseNotch.deltaY = 3.0f;
+        reverseNotch.unitY = WheelUnit::Lines;
+        check(smoother.push({10, 10}, reverseNotch, 832.0), "反向刻度未进入平滑器");
+        const auto revStep = smoother.tick(832.5);
+        check(!revStep || revStep->second.deltaY >= 0.0f, "反向拨动后首帧仍沿旧方向窜动");
+    }
+
+    void verifyAppSessionContinuousWheelAndDpi() {
+        const auto dir = std::filesystem::temp_directory_path() / ("canton-wheel-e2e-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::filesystem::create_directories(dir);
+        struct Cleanup {
+            std::filesystem::path p;
+            ~Cleanup() {
+                std::error_code ec;
+                std::filesystem::remove_all(p, ec);
+            }
+        } cleanup{dir};
+
+        const std::string appJs = R"JS(
+const n = globalThis.__CANTON_NATIVE__
+const scrolls = []
+
+function createScroll(winId, parent, node, index, width) {
+    n.createNode(node, 'LayoutNode', winId)
+    n.insertChild(parent, node, index)
+    n.updateBinding(n.registerBinding(node, 'measurePolicy'), { kind: 'Column' })
+    const binding = n.registerBinding(node, 'modifier')
+    let pos = 0
+    let redirected = false
+    const onScroll = s => {
+        if (typeof s.value !== 'number') return
+        // 模拟 A 收到滚轮回写后由应用另设滚动位置。
+        const redirect = node === 3 && !redirected && s.value >= 330
+        if (redirect) redirected = true
+        const next = redirect ? 40 : s.value
+        if (next === pos) return
+        pos = next
+        n.requestFrame(true)
+    }
+    scrolls.push(() => n.updateBinding(binding, { elements: [
+        { type: 'size', value: { width, height: 200 } },
+        { type: 'verticalScroll', value: { value: pos, enabled: true, onScroll } },
+    ] }))
+    n.createNode(node + 1, 'LayoutNode', winId)
+    n.insertChild(node, node + 1, 0)
+    n.updateBinding(n.registerBinding(node + 1, 'measurePolicy'), { kind: 'Box' })
+    n.updateBinding(n.registerBinding(node + 1, 'modifier'), { elements: [{ type: 'size', value: { width, height: 2000 } }] })
+}
+
+function createWindow(root, title) {
+    const winId = n.allocateWindowId()
+    n.createWindow(winId, root, {
+        title,
+        visible: true,
+        sizeDp: { width: 300, height: 200 },
+        position: 'platformDefault',
+        placement: 'normal',
+        modality: 'none',
+        chrome: 'system',
+        role: 'standard',
+        resizable: true,
+        minimizable: true,
+        maximizable: true,
+        closable: true,
+        alwaysOnTop: false,
+        backdrop: 'none',
+        cornerPreference: 'default',
+    })
+    n.createNode(root, 'Root', winId)
+    return winId
+}
+
+n.installWindowDriver({
+    onCloseRequest() {},
+    onGeometryChanged() {},
+    onFocusChanged() {},
+    onDpiChanged() {},
+})
+
+n.installFrameDriver(() => {
+    n.beginRearrange()
+    if (scrolls.length === 0) {
+        createScroll(createWindow(2, 'Scroll A'), 2, 3, 0, 300)
+        const other = createWindow(5, 'Scroll B')
+        n.createNode(6, 'LayoutNode', other)
+        n.insertChild(5, 6, 0)
+        n.updateBinding(n.registerBinding(6, 'measurePolicy'), { kind: 'Row' })
+        createScroll(other, 6, 7, 0, 150)
+        createScroll(other, 6, 9, 1, 150)
+    }
+    for (const sync of scrolls) sync()
+    n.submitRearrange(err => { if (err) throw new Error(err) })
+}, () => {}, () => {})
+n.requestFrame(true)
+)JS";
+        std::ofstream(dir / "app.js", std::ios::binary) << appJs;
+        const auto digest = canton::runtime::sha256Hex({reinterpret_cast<const std::uint8_t*>(appJs.data()), appJs.size()});
+        std::ofstream(dir / std::string(canton::runtime::uiManifestName), std::ios::binary)
+            << "{\"format\":3,\"framework\":\"" << PackageVersion << "\",\"protocol\":" << RuntimeVersion
+            << ",\"scriptFormat\":\"js\",\"entry\":\"app.js\",\"entries\":[{\"path\":\"app.js\",\"kind\":\"module\",\"size\":" << appJs.size() << ",\"sha256\":\"" << digest << "\"}]}";
+
+        ApproximateTextMeasurer measurer;
+        auto fonts = std::make_shared<FontRegistry>();
+        std::vector<WindowId> windows;
+        canton::runtime::AppSessionOptions opts;
+        opts.platform.onWindowCreated = [&](WindowId id, const WindowConfigSpec&) { windows.push_back(id); };
+        canton::runtime::AppSession session(measurer, fonts, std::move(opts));
+        canton::runtime::AppSourceConfig src;
+        src.policy = canton::runtime::LoadPolicy::OnlyDist;
+        src.distOverride = dir;
+        session.configure(std::move(src));
+
+        (void)session.pumpFrame(16.0);
+        check(windows.size() == 2, "AppSession 双窗口滚动测试窗未创建");
+        const auto winId = windows[0];
+        session.notifyWindowDpi(winId, 1.5);
+        session.notifyWindowResized(winId, 450, 300);
+        (void)session.pumpFrame(32.0);
+
+        WheelInput notch;
+        notch.deltaY = -3.0f;
+        notch.unitY = WheelUnit::Lines;
+
+        notch.timeMillis = 100.0;
+        session.wheel(winId, {100.0f, 100.0f}, notch);
+
+        float prevScroll = 0.0f;
+        float firstFrameScroll = 0.0f;
+        for (double t = 116.0; t <= 420.0; t += 16.0) {
+            if (near(static_cast<float>(t), 148.0f) || near(static_cast<float>(t), 196.0f)) {
+                notch.timeMillis = t;
+                session.wheel(winId, {100.0f, 100.0f}, notch);
+            }
+            if (near(static_cast<float>(t), 164.0f)) {
+                session.notifyToast(LogLevel::Info, "test", "toast");
+            }
+            (void)session.pumpFrame(t);
+            const float curScroll = ScrollDispatcher::verticalScrollValue(session.window(winId)->pipeline.scene().node(3));
+            if (near(static_cast<float>(t), 116.0f)) firstFrameScroll = curScroll;
+            check(curScroll + 0.01f >= prevScroll,
+                "连续滚轮出现帧间回弹：t=" + std::to_string(t) + " 从 " + std::to_string(prevScroll) + " 倒退到 " + std::to_string(curScroll));
+            prevScroll = curScroll;
+        }
+        check(firstFrameScroll > 1.0f, "滚轮起手首帧轮空未上屏");
+        check(near(prevScroll, 216.0f, 0.2f), "连续 3 格滚轮在 1.5x DPI 下最终位移应为 216px，实际为 " + std::to_string(prevScroll));
+        check(!session.wantsFrame(), "滚轮平滑结束后仍未停表");
+
+        WheelInput precise;
+        precise.precise = true;
+        precise.timeMillis = 500.0;
+        precise.deltaY = -120.0f;
+        session.wheel(winId, {100.0f, 100.0f}, precise);
+        const auto other = windows[1];
+        precise.deltaY = -1.0f;
+        precise.phase = WheelPhase::Began;
+        precise.nativePhases = true;
+        // 交替命中 B 的两个滚动目标，避免相邻快照合并，超过单次事件处理上限。
+        for (int i = 0; i < 300; ++i) {
+            session.wheel(other, {i % 2 ? 200.0f : 50.0f, 100.0f}, precise);
+        }
+        (void)session.pumpFrame(516.0);
+        const auto scrollValue = [&](WindowId id, NodeId node) {
+            return ScrollDispatcher::verticalScrollValue(session.window(id)->pipeline.scene().node(node));
+        };
+        check(near(scrollValue(winId, 3), 40.0f), "A 未发布脚本设置的滚动位置");
+        check(scrollValue(other, 9) < 150.0f, "B 的滚动快照未形成积压");
+
+        precise.timeMillis = 520.0;
+        precise.deltaY = -16.0f;
+        session.wheel(winId, {100.0f, 100.0f}, precise);
+        session.wheel(other, {200.0f, 100.0f}, precise);
+        for (double t = 532.0; t <= 660.0 && session.wantsFrame(); t += 16.0) {
+            (void)session.pumpFrame(t);
+        }
+        check(near(scrollValue(winId, 3), 56.0f), "B 的积压让 A 沿用旧滚动位置，实际为 " + std::to_string(scrollValue(winId, 3)));
+        check(near(scrollValue(other, 9), 166.0f), "B 未保留仍在排队的滚动位置，实际为 " + std::to_string(scrollValue(other, 9)));
     }
 
     // 5. 真实 QuickJS 脚本回调与帧发布贯通
@@ -201,8 +401,13 @@ namespace {
         const auto res = input.wheel(runtime.scene().tree(), 1, {20, 20}, wheel, runtime.publishedFrame().revision, runtime.publishedFrame().content.hitTest.get());
         check(res.scroll.consumed && res.scroll.eventSlot.valid(), "滚轮未生成脚本滚动事件");
         runtime.enqueueScrollSnapshotEvent(res.scroll.eventSlot, res.scroll);
+        WheelInput wheelMore = wheel;
+        wheelMore.timeMillis = 54.0;
+        const auto resMore = input.wheel(runtime.scene().tree(), 1, {20, 20}, wheelMore, runtime.publishedFrame().revision, runtime.publishedFrame().content.hitTest.get());
+        check(resMore.scroll.consumed && near(resMore.scroll.value, 64.0f), "同帧连续滚轮样本未基于待提交值累加");
+        runtime.enqueueScrollSnapshotEvent(resMore.scroll.eventSlot, resMore.scroll);
         check(runtime.pumpFrame(1, {0, 120, 0, 60}, 32).ok, "滚轮驱动重排帧失败");
-        check(test_support::textOf(runtime.scene().node(2)) == "32/120/60/180", "滚轮位移未闭环同步至脚本并发布新帧");
+        check(test_support::textOf(runtime.scene().node(2)) == "64/120/60/180", "同帧合并后的滚轮位移未闭环同步至脚本并发布新帧");
     }
 }
 
@@ -211,7 +416,8 @@ int main() {
         verifyRoutingHandoffAndSessionLock();
         verifyWheelSmoother();
         verifyScriptScrollEndToEnd();
-        std::cout << "canton_scroll_input：主轴选择、双轴与边界接力、会话目标锁定、WheelSmoother 与脚本闭环全部通过\n";
+        verifyAppSessionContinuousWheelAndDpi();
+        std::cout << "canton_scroll_input：主轴选择、双轴与边界接力、会话目标锁定、WheelSmoother、AppSession 连续滚轮单调性与 DPI 闭环全部通过\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

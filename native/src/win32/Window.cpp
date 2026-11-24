@@ -1415,6 +1415,11 @@ namespace canton::win32 {
 
         impl_->applyPlacementAndVisibility(true);
         impl_->constructing = false;
+        RECT initialClient{};
+        GetClientRect(impl_->hwnd, &initialClient);
+        if (impl_->precisionWheel && initialClient.right > initialClient.left && initialClient.bottom > initialClient.top) {
+            impl_->precisionWheel->sync(impl_->hwnd, initialClient, 1.0f);
+        }
     }
 
     Window::~Window() {

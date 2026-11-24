@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace canton::runtime {
@@ -118,6 +119,7 @@ namespace canton::runtime {
         [[nodiscard]] bool dispatchInputEventNow(const canton::core::EventSlotId& slot, const canton::core::InputEventPayload& payload, double nowMillis);
 
         [[nodiscard]] bool hasPendingEvents() const noexcept;
+        [[nodiscard]] std::unordered_set<std::uint64_t> pendingScrollModifiers() const;
 
         [[nodiscard]] bool hasPendingVisualWork() const noexcept;
         // 还没发布过帧，且有声明预加载的字体没到齐

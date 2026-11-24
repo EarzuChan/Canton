@@ -24,31 +24,47 @@ namespace canton::core {
             cancel();
             return false;
         }
-        const auto retarget = [](Axis& axis, float delta, WheelUnit unit) {
+        const auto effectiveNow = active_ ? std::max(nowMillis, lastMillis_) : nowMillis;
+        const auto progress = active_ ? static_cast<float>(std::clamp((effectiveNow - startMillis_) / durationMillis, 0.0, 1.0)) : 0.0f;
+        const auto eased = easeOutCubic(progress);
+        const auto sample = [&](const Axis& axis) {
+            if (!active_ || !axis.moving()) return axis.emitted;
+            return progress >= 1.0f ? axis.target : axis.start + (axis.target - axis.start) * eased;
+        };
+        const auto retarget = [&](Axis& axis, float delta, WheelUnit unit) {
+            const auto current = sample(axis);
             if (delta == 0) {
                 // 另一轴的输入不打断本轴，但本轴从当前位置继续走完余下距离
-                axis.start = axis.emitted;
+                axis.start = current;
                 return;
             }
             const auto remaining = axis.target - axis.emitted;
             axis.unit = unit;
-            axis.start = axis.emitted;
-            axis.target = (remaining != 0 && (remaining > 0) != (delta > 0) ? axis.emitted : axis.target) + delta;
+            if (remaining != 0 && (remaining > 0) != (delta > 0)) {
+                axis.start = axis.emitted;
+                axis.target = axis.emitted + delta;
+            } else {
+                axis.start = current;
+                axis.target += delta;
+            }
         };
         retarget(x_, input.deltaX, input.unitX);
         retarget(y_, input.deltaY, input.unitY);
         point_ = point;
-        startMillis_ = nowMillis;
+        startMillis_ = effectiveNow;
+        lastMillis_ = effectiveNow;
         active_ = x_.moving() || y_.moving();
         return true;
     }
 
     std::optional<std::pair<Point, WheelInput>> WheelSmoother::tick(double nowMillis) {
         if (!active_) return std::nullopt;
-        const auto progress = static_cast<float>(std::clamp((nowMillis - startMillis_) / durationMillis, 0.0, 1.0));
+        const auto effectiveNow = std::max(nowMillis, lastMillis_);
+        lastMillis_ = effectiveNow;
+        const auto progress = static_cast<float>(std::clamp((effectiveNow - startMillis_) / durationMillis, 0.0, 1.0));
         const auto eased = easeOutCubic(progress);
         WheelInput input;
-        input.timeMillis = nowMillis;
+        input.timeMillis = effectiveNow;
         const auto advance = [&](Axis& axis, float& delta, WheelUnit& unit) {
             if (!axis.moving()) return;
             const auto position = progress >= 1.0f ? axis.target : axis.start + (axis.target - axis.start) * eased;
@@ -66,6 +82,8 @@ namespace canton::core {
     void WheelSmoother::cancel() noexcept {
         x_ = {};
         y_ = {};
+        startMillis_ = 0;
+        lastMillis_ = 0;
         active_ = false;
     }
 }

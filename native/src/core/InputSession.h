@@ -138,6 +138,14 @@ namespace canton::core {
             pointer_.gesture().setTouchSlop(px);
         }
 
+        void retainPendingWheelValues(const std::unordered_set<std::uint64_t>& pendingModifiers) {
+            pointer_.retainPendingWheelValues(pendingModifiers);
+        }
+
+        void setWheelLineDistance(float px) noexcept {
+            pointer_.setWheelLineDistance(px);
+        }
+
         [[nodiscard]] WheelDispatchResult wheel(LayoutTree& tree, NodeId root, Point point, const WheelInput& input, std::uint64_t publishedRevision = 0, const HitTestSnapshot* snapshot = nullptr) {
             return pointer_.wheel(tree, root, point, input, publishedRevision, snapshot);
         }

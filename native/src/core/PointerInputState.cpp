@@ -43,6 +43,10 @@ namespace canton::core {
         wheelSession_.target.reset();
     }
 
+    void PointerInputState::retainPendingWheelValues(const std::unordered_set<std::uint64_t>& pendingModifiers) {
+        std::erase_if(pendingScrollValues_, [&](const auto& entry) { return !pendingModifiers.contains(entry.first); });
+    }
+
     void PointerInputState::synchronizePublishedWheel(const LayoutTree& tree, bool interactive) {
         if (!interactive || (wheelSession_.target && !ScrollDispatcher::targetWheel(tree, *wheelSession_.target, 0, 1).target)) cancelWheel();
     }
@@ -96,12 +100,12 @@ namespace canton::core {
         const auto dispatch = [&](const ScrollTarget& target) {
             const auto unit = target.horizontal ? input.unitX : input.unitY;
             const auto delta = target.horizontal ? input.deltaX : input.deltaY;
-            auto scale = unit == WheelUnit::Lines ? scrollLineDistance : 1.0f;
+            auto scale = unit == WheelUnit::Lines ? wheelLineDistance_ : 1.0f;
             if (unit == WheelUnit::Pages) scale = ScrollDispatcher::targetWheel(tree, target, 0, 1, &pendingScrollValues_).viewportSize;
             return ScrollDispatcher::targetWheel(tree, target, std::isfinite(delta) ? delta : 0.0f, scale, &pendingScrollValues_);
         };
         const auto pixels = [&](float delta, WheelUnit unit) {
-            return std::isfinite(delta) ? delta * (unit == WheelUnit::Lines ? scrollLineDistance : unit == WheelUnit::Pages ? scrollLineDistance * 8 : 1.0f) : 0.0f;
+            return std::isfinite(delta) ? delta * (unit == WheelUnit::Lines ? wheelLineDistance_ : unit == WheelUnit::Pages ? wheelLineDistance_ * 8 : 1.0f) : 0.0f;
         };
         const auto& wheel = input;
         const auto deliver = [&](const HitTestResult& receptor) {
@@ -122,8 +126,8 @@ namespace canton::core {
             result.scroll = dispatch(*wheelSession_.target);
             if (!result.scroll.target) cancelWheel();
         } else if (hasDelta) {
-            const auto axisMagnitude = [](float delta, WheelUnit unit) {
-                return std::isfinite(delta) ? std::abs(delta) * (unit == WheelUnit::Lines ? scrollLineDistance : 1.0f) : 0.0f;
+            const auto axisMagnitude = [&](float delta, WheelUnit unit) {
+                return std::isfinite(delta) ? std::abs(delta) * (unit == WheelUnit::Lines ? wheelLineDistance_ : 1.0f) : 0.0f;
             };
             auto horizontal = axisMagnitude(input.deltaX, input.unitX) > axisMagnitude(input.deltaY, input.unitY);
             const auto hasAxis = [&](bool horizontal) {

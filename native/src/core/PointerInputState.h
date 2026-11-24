@@ -9,6 +9,7 @@
 #include "WheelInput.h"
 
 #include <optional>
+#include <unordered_set>
 
 namespace canton::core {
     struct PointerDownResult {
@@ -38,8 +39,13 @@ namespace canton::core {
             return gesture_;
         }
 
+        void setWheelLineDistance(float px) noexcept {
+            if (px > 0.0f) wheelLineDistance_ = px;
+        }
+
         [[nodiscard]] WheelDispatchResult wheel(LayoutTree& tree, NodeId root, Point point, const WheelInput& input, std::uint64_t publishedRevision = 0, const HitTestSnapshot* snapshot = nullptr);
         void cancelWheel();
+        void retainPendingWheelValues(const std::unordered_set<std::uint64_t>& pendingModifiers);
         void synchronizePublishedWheel(const LayoutTree& tree, bool interactive);
 
         std::optional<NodeId> capturedNode(const LayoutTree& tree) const {
@@ -66,5 +72,6 @@ namespace canton::core {
         ScrollDispatcher scroll_;
         PendingScrollValues pendingScrollValues_;
         std::uint64_t scrollRevision_ = 0;
+        float wheelLineDistance_ = scrollLineDistance;
     };
 }

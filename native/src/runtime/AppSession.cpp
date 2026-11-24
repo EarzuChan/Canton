@@ -550,6 +550,14 @@ namespace canton::runtime {
         drainPendingWindowEvents();
         if (!sessionLoaded_ || globalDiagnostics_.hasError()) return changedWindows;
 
+        for (const auto windowId : windowOrder_) {
+            if (auto* win = window(windowId)) {
+                while (const auto step = win->wheelSmoother.tick(nowMillis)) {
+                    dispatchWheelSample(*win, step->first, step->second);
+                }
+            }
+        }
+
         const auto semantic = controlRuntime_.semanticCheckpoint(nowMillis);
         if (!semantic.ok) {
             applyRuntimeFailure(semantic.error, RuntimeFrameErrorPhase::Event);
@@ -708,9 +716,6 @@ namespace canton::runtime {
         for (const auto windowId : frameOrder) {
             auto& win = frameWindow(windowId);
             win.pipeline.setFrameTime(nowMillis);
-            while (const auto step = win.wheelSmoother.tick(nowMillis)) {
-                dispatchWheelSample(win, step->first, step->second);
-            }
             const bool forceRun = fontChanged || win.pipeline.scene().tree().activeAnimationCount() > 0 || !focusByWindow[windowId].empty();
             if (win.diagnostics.tickToasts(nowMillis)) {
                 win.pipeline.enqueueIntent(core::InputIntent::diagnostics());
@@ -783,6 +788,9 @@ namespace canton::runtime {
                 });
             }
         }
+        // 已处理的滚动目标以本次发布的场景为准，只保留仍在排队的位移。
+        const auto pendingScrollModifiers = controlRuntime_.pendingScrollModifiers();
+        for (auto& candidate : candidates) candidate.window.input.retainPendingWheelValues(pendingScrollModifiers);
         commitWindowChanges(appSpec, mutations, newWindows, destroyOrder);
         for (auto& candidate : candidates) {
             auto& win = candidate.window;
@@ -1010,6 +1018,7 @@ namespace canton::runtime {
         if (!win || !std::isfinite(dpiScale) || dpiScale <= 0) return;
         win->dpiScale = dpiScale;
         win->input.setTouchSlop(static_cast<float>(4.0 * dpiScale));
+        win->input.setWheelLineDistance(static_cast<float>(core::scrollLineDistance * dpiScale));
         win->lastCaretBounds.reset();
         if (sessionLoaded_ && !globalDiagnostics_.hasError()) {
             if (pumpingFrame_) {
@@ -1165,7 +1174,7 @@ namespace canton::runtime {
 
     void AppSession::dispatchWheelSample(WindowSurfaceState& win, core::Point pointPx, const core::WheelInput& input) {
         const auto& frame = win.pipeline.publishedFrame();
-        const auto result = win.input.wheel(win.pipeline.scene().tree(), win.rootNodeId, pointPx, input, frame.revision, frame.content.hitTest.get());
+        const auto result = win.input.wheel(win.pipeline.scene().tree(), win.rootNodeId, pointPx, input, 0, frame.content.hitTest.get());
         if (result.wheelEvent && result.wheelEvent->slot.valid()) {
             controlRuntime_.enqueueInputEvent(result.wheelEvent->slot, result.wheelEvent->payload);
         }
@@ -1177,7 +1186,8 @@ namespace canton::runtime {
     void AppSession::wheel(core::WindowId windowId, core::Point pointPx, const core::WheelInput& input) {
         auto* win = window(windowId);
         if (!win || !sessionLoaded_ || globalDiagnostics_.hasError()) return;
-        if (win->wheelSmoother.push(pointPx, input, core::monotonicMillis())) {
+        const double nowMillis = input.timeMillis > 0.0 ? input.timeMillis : core::monotonicMillis();
+        if (win->wheelSmoother.push(pointPx, input, nowMillis)) {
             controlRuntime_.notifyWorkAvailable();
             return;
         }

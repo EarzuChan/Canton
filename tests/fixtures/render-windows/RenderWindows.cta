@@ -3,6 +3,7 @@
         <Window :state="main" :onCloseRequest="appHandle.exitApplication">
             <Box :modifier="M.fillMaxSize().background(Color(0xff102030))" />
         </Window>
+
         <Window :state="second" :onCloseRequest="appHandle.exitApplication">
             <Box :modifier="M.fillMaxSize().background(Color(0xff4070a0))" />
         </Window>
