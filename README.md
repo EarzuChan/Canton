@@ -31,7 +31,7 @@ import MainWindowView from './MainWindowView.cta'
 ```ts
 // app/src/main.ts
 import { appBuilder } from '@canton/framework'
-import MyApp from './MyApp.sfa'
+import MyApp from './MyApp.cta'
 
 export default appBuilder(MyApp).build()
 ```

@@ -112,29 +112,33 @@
 
 ---
 
-## M6：Windows Shell 集成与文件存储边界（ADR B1：5 & B1：8）
+## M6：Windows Shell 集成、文件存储、网络/定时与图形感知（ADR B1：5 / B1：8 / B4：1–3）
 
-目标：打通桌面应用与 Windows Shell 深度融合，以及规范克制的只读资产与真实磁盘路径存储体系。
+目标：打通桌面应用与 Windows Shell 深度融合、规范克制的只读资产与真实磁盘路径存储体系，同时补齐 TS 侧定时器与网络基础能力，以及面向低配/无驱环境的图形能力感知与渐进降级。施工清单见 [m6.md](m6.md)。
 
 范围：
 - **Windows Shell 集成**：App 级隐藏顶层 `HWND`（`WS_EX_TOOLWINDOW`）、`<TrayIcon>`（稳定 `NIF_GUID` 与 `TaskbarCreated` 重建）、双轨 `<SystemTrayMenu>`（原生 `HMENU`）与 `<CustomTrayMenu>`（自绘浮窗 + `&menuHandle.dismiss()`）、`<Window>` `ITaskbarList3` 进度/角标/7 槽缩略图按钮、单活跃 `<MediaSession>`（SMTC）、`LaunchRequestKey` 冷启动与单实例 IPC 热唤醒（`<App :onSecondInstance>`）、Jump List、关机拦截。
 - **资产与文件存储**：TS `assets.exists` 补齐与宿主只读资产直读接口；`@canton/framework/fs`（`SHGetKnownFolderPath` 用户标准目录、`dataDir`/`tempDir` 透明重定位、后台线程池异步文件 I/O 与可选 `atomic` 原子写）。
+- **图形能力感知与 WARP 无损瘦身（ADR B4：1）**：专注 D3D11 单后端不自建软渲染；`<App>` 顶层通过 `GraphicsEnvironmentKey` 响应式 `provide` 渲染器与系统桌面偏好（适配设备重建与系统设置变更，支持子树覆写）；底层管线保持完整能力不静默硬砍；`@canton/kyant-glass` 感知 `GraphicsEnvironmentKey` 在 `reduced` 档主动降级；`d3d11::Renderer` 在软件渲染态下无损收紧空闲离屏 RT 池回收与图集按需扩容。
+- **定时器与取消原语（ADR B4：2，TS 侧）**：宿主事件循环原生定时队列（HMR 重载自动清空），向 `globalThis` 挂载 `setTimeout`/`clearTimeout`/`setInterval`/`clearInterval`/`queueMicrotask` 与轻量 `AbortController`/`AbortSignal`；`@canton/framework` 导出作用域感知的 `useTimeout`/`useInterval` 与非阻塞 `delay(ms, signal?)`。
+- **网络 API（ADR B4：3，TS 侧）**：`@canton/framework/net`，基于 Windows 原生 WinHTTP 与后台 I/O 线程池提供 `request`/`http` 快捷方法（含 `query`/`json`/超时/大小上限/代理/重定向/`AbortSignal` 取消与同步读取响应体）、大文件流式直落盘 `downloadFile`（临时文件原子替换 + 节流进度）与结构化 `NetError`。
 
 验收夹具：
-- 「桌面融合与存储」夹具（托盘常驻与双轨菜单切换、任务栏进度与缩略图按钮、模拟播放器 SMTC 联动、单实例唤醒展示、本地笔记原子持久化与开发期重定位 / 绿色便携模式验证）。
+- 「桌面融合与系统能力」夹具（托盘常驻与双轨菜单切换、任务栏进度与缩略图按钮、模拟播放器 SMTC 联动、单实例唤醒展示、本地笔记原子持久化与开发期重定位 / 绿色便携模式、本地环回 HTTP 请求/下载/取消与定时轮询、`GraphicsEnvironmentKey` 实时展示与液态玻璃感知降级验证）。
 
 验收：
 - 关窗托盘驻留零显存、Explorer 重启托盘与任务栏状态自动恢复、单实例唤醒正确移交前台、标准目录改盘符后仍精准定位、透明重定位与原子写可靠。
+- 定时器在组件卸载与 HMR 重载后无残留泄漏，HTTP 请求/下载支持超时与取消且不阻塞渲染帧；WARP 无头像素回归基线不受影响，`@canton/kyant-glass` 在低配/覆写 `reduced` 档下正确降级。
 
 ---
 
-## M7：Native 扩展 SDK 与 C ABI 挂载体系（ADR B1：7 & B1：9）
+## M7：Native 扩展 SDK 与 C ABI 挂载体系（ADR B1：7 / B1：9 / B4：2–3）
 
 目标：建立低耦合、免重编宿主的 `native/` 原生扩展体系，交付 C ABI 底座、Header-only C++20 SDK 与安全加载机制。
 
 范围：
 - **2×2 宿主扩展端就位**：完善 `CANTON_ENABLE_NATIVE_EXT=1` 的 `ext` 宿主与 C ABI 导出函数表（`canton_abi.h`），保证 `mini` 版（`EXT=0`）物理不含扩展加载路径且 4 份宿主共享同一 `QuickJsBuildIdentity`。
-- **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`（回调形式的 `alignBy` 随它一起定）、同步 `ctx.assets()`、`ctx.paths()` 与 `canton::fs`。
+- **Header-only C++20 SDK（`native/include/canton/`）**：`canton_register_native(canton::HostBuilder&)`、`onInit`/`onShutdown`、`.sync` / `.async` / **STA 线程**原生服务、`CallContext::lookupHwnd`、`EventEmitter`、泛化 `DataSource`、`canton::DrawCanvas` 2D 封装、外部 `ID3D11Texture2D` 零拷贝 `Painter`、自定义 `MeasurePolicy`（回调形式的 `alignBy` 随它一起定）、同步 `ctx.assets()`、`ctx.paths()`、`canton::fs`，以及与 M6 对称的原生侧 `ctx.timers()`（RAII 定时原语）与 `ctx.net()`（复用底层 WinHTTP 请求与下载能力）。
 - **M3 移交**：`drawNative` 的后端实现（M3 的渲染器遇到它不绘制，记诊断日志）；`EXT=1` 的两份宿主。
 - **防劫持安全加载**：清单声明扩展 DLL 相对路径与 SHA-256，Dist 加载前校验哈希并限定 `LOAD_LIBRARY_SEARCH_APPLICATION_DIR`，握手校验 ABI 版本与结构体尺寸。
 
@@ -175,10 +179,6 @@ Demo 建立与总验收：
 ---
 
 # 远期想法暂存中心（非正常里程碑内容，属于未来再说、仅供参考）
-
-## 重要，须尽快考虑加入某个后期正常里程碑：网络和定时器 API
-
-- 需要考虑 API 形态，和在哪侧可用（ts + native？）。
 
 ## `.cta` 内层级作用域脚本，以及模板内、作用域下直写代码的写法支持
 
