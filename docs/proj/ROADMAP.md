@@ -112,9 +112,9 @@
 
 ---
 
-## M6：Windows Shell 集成、文件存储、网络/定时与图形感知（ADR B1：5 / B1：8 / B4：1–3）
+## M6：Windows Shell 集成、文件存储、网络/定时与图形感知（ADR B1：5 / B1：8 / B4：1–4）：已完成
 
-目标：打通桌面应用与 Windows Shell 深度融合、规范克制的只读资产与真实磁盘路径存储体系，同时补齐 TS 侧定时器与网络基础能力，以及面向低配/无驱环境的图形能力感知与渐进降级。施工清单见 [m6.md](m6.md)。
+目标：打通桌面应用与 Windows Shell 深度融合、规范克制的只读资产与真实磁盘路径存储体系，同时补齐 TS 侧定时器与网络基础能力，以及面向低配/无驱环境的图形能力感知与渐进降级。施工清单与实测笔记见 [m6.md](m6.md)。
 
 范围：
 - **Windows Shell 集成**：App 级隐藏顶层 `HWND`（`WS_EX_TOOLWINDOW`）、`<TrayIcon>`（稳定 `NIF_GUID` 与 `TaskbarCreated` 重建）、双轨 `<SystemTrayMenu>`（原生 `HMENU`）与 `<CustomTrayMenu>`（自绘浮窗 + `&menuHandle.dismiss()`）、`<Window>` `ITaskbarList3` 进度/角标/7 槽缩略图按钮、单活跃 `<MediaSession>`（SMTC）、`LaunchRequestKey` 冷启动与单实例 IPC 热唤醒（`<App :onSecondInstance>`）、Jump List、关机拦截。

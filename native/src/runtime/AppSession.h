@@ -1,20 +1,26 @@
 #pragma once
 
 #include <core/InputSession.h>
+#include <core/PlatformTypes.h>
 #include <core/TextLayoutService.h>
 #include <core/WheelSmoother.h>
 #include <core/WindowTypes.h>
+#include <runtime/AppPaths.h>
 #include <runtime/CantonRuntime.h>
 #include <runtime/DiagnosticsState.h>
+#include <runtime/HttpClient.h>
 #include <runtime/InputTextSession.h>
+#include <runtime/IoThreadPool.h>
 #include <runtime/PackageRuntimeSource.h>
 #include <runtime/ScenePipelineState.h>
+#include <runtime/TimerQueue.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <future>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -46,6 +52,19 @@ namespace canton::runtime {
         std::function<std::string()> readClipboard;
         std::function<void(const std::string&)> writeClipboard;
         std::function<void()> onRequestExit;
+
+        // M6 桌面融合与系统能力回调（由 HostMain 绑定至 win32）
+        std::function<void(const core::TrayIconSpec&, const IconBitmap* icon)> onTrayUpsert;
+        std::function<void(const std::string& trayId)> onTrayRemove;
+        std::function<void()> onTrayClearAll;
+        std::function<std::uint32_t(const std::vector<core::TrayMenuItemSpec>& items, int screenX, int screenY)> onTrayShowSystemMenu;
+        std::function<core::TrayAnchorRect(const std::string& trayId)> onTrayQueryAnchor;
+        std::function<void(core::WindowId, const core::TaskbarProgressSpec&)> onWindowTaskbarProgress;
+        std::function<void(core::WindowId, const IconBitmap* icon, const std::string& label)> onWindowTaskbarBadge;
+        std::function<void(core::WindowId, const std::vector<core::TaskbarActionSpec>&, const std::vector<const IconBitmap*>& icons)> onWindowTaskbarActions;
+        std::function<void(const core::MediaSessionSpec&, const std::string& thumbnailDiskPath)> onMediaSessionUpdated;
+        std::function<void(const std::string& appId, const std::vector<core::JumpListCategorySpec>&)> onSetJumpList;
+        std::function<void(const std::string& appId)> onClearJumpList;
     };
 
     struct AppSessionOptions {
@@ -57,6 +76,9 @@ namespace canton::runtime {
         AppResolver::MountPackage mountPackage;
         std::shared_ptr<const core::NativePainterRegistry> painters;
         std::shared_ptr<const core::ShaderCompiler> shaderCompiler;
+        core::GraphicsEnvironmentInfo initialGraphicsEnv;
+        core::LaunchRequest launchRequest;
+        AppPathsConfig pathsConfig;
         AppPlatformCallbacks platform;
     };
 
@@ -115,6 +137,18 @@ namespace canton::runtime {
         void notifyWindowDpi(core::WindowId windowId, double dpiScale);
         void notifyWindowCloseRequest(core::WindowId windowId);
         void notifyFallbackResized(int widthPx, int heightPx, double dpiScale = 1.0);
+
+        // 定时器、图形环境、单实例热唤醒、托盘、任务栏按钮与媒体键入口
+        [[nodiscard]] std::optional<std::uint32_t> nextTimerWaitMillis(double nowMillis) const noexcept;
+        void pumpTimers(double nowMillis);
+        void updateGraphicsEnvironment(const core::GraphicsEnvironmentInfo& env);
+        // 线程安全：可由单实例 IPC 后台线程调用
+        void notifySecondInstance(core::LaunchRequest request);
+        void notifyTrayEvent(const core::TrayEvent& event);
+        void notifyTaskbarActionClicked(core::WindowId windowId, const std::string& actionId);
+        // 线程安全：可由 WinRT SMTC 线程调用
+        void notifyMediaButtonPressed(core::MediaButtonKind button);
+        [[nodiscard]] const AppPaths& appPaths() const noexcept { return appPaths_; }
 
         [[nodiscard]] core::WindowHitResult hitTestWindowChrome(core::WindowId windowId, core::Point pointPx, float resizeBorderPx) const;
         [[nodiscard]] core::PointerIcon pointerIcon(core::WindowId windowId) const noexcept;
@@ -191,12 +225,25 @@ namespace canton::runtime {
         void prepareDiagnosticsTextOps(core::PublishedFrame& frame) const;
         void pumpFallbackFrame(double nowMillis);
         void requestIconIfNeeded(WindowSurfaceState& win);
+        void requestIconAsset(const std::string& path);
         void pumpPendingIcons();
+        void initPlatformBridge();
+        void drainBackgroundEvents();
+        void refreshTrayIcon(const std::string& trayId);
+        void refreshWindowTaskbarIcons(core::WindowId windowId);
+        void refreshMediaSessionThumbnail();
+        void cancelAllNetworkRequests();
 
         std::shared_ptr<core::FontRegistry> fonts_;
         core::TextLayoutService textLayout_;
         AppSessionOptions options_;
         std::shared_ptr<ResourceWorkers> resourceWorkers_;
+        std::shared_ptr<IoThreadPool> ioPool_;
+        AppPaths appPaths_;
+        TimerQueue timerQueue_;
+        core::GraphicsEnvironmentInfo graphicsEnv_;
+        core::LaunchRequest launchRequest_;
+        std::shared_ptr<quickjs::PlatformBridge> platformBridge_;
         CantonRuntime controlRuntime_;
         DiagnosticsState globalDiagnostics_;
         PackageRuntimeSource source_;
@@ -253,6 +300,19 @@ namespace canton::runtime {
             std::future<core::PainterLoadResult> future;
         };
         std::vector<PendingIcon> pendingIcons_;
+
+        std::mutex netCancelMutex_;
+        std::unordered_map<std::uint64_t, std::shared_ptr<HttpCancellation>> netCancellations_;
+
+        std::mutex bgEventMutex_;
+        std::vector<core::LaunchRequest> queuedSecondInstances_;
+        std::vector<core::MediaButtonKind> queuedMediaButtons_;
+
+        std::unordered_map<std::string, core::TrayIconSpec> activeTrays_;
+        std::unordered_map<core::WindowId, std::optional<core::TaskbarBadgeSpec>> windowTaskbarBadges_;
+        std::unordered_map<core::WindowId, std::vector<core::TaskbarActionSpec>> windowTaskbarActions_;
+        core::MediaSessionSpec activeMediaSession_;
+        std::unordered_map<std::string, std::string> mediaThumbTempFiles_;
     };
 
 }

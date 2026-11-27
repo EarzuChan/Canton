@@ -2,6 +2,7 @@
 
 #include <core/InputSession.h>
 #include <core/Paint.h>
+#include <core/PlatformTypes.h>
 #include <core/WindowTypes.h>
 #include <runtime/AppSession.h>
 
@@ -26,6 +27,10 @@ namespace canton::host {
     // Dev 宿主由 DevAssembly.cpp 按 CANTON_DEV_* 填，Dist 宿主由 DistAssembly.cpp 写死；两个文件各只编进一份制品
     struct HostAssembly {
         runtime::AppSourceConfig source;
+        core::LaunchRequest launchRequest;
+        std::optional<std::filesystem::path> dataRootOverride;
+        std::string appIdOverride;
+        std::optional<bool> singleInstanceOverride;
         bool detailedErrorScreen = false;
         std::filesystem::path readyFile;
         std::string readyToken;

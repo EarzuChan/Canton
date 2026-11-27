@@ -166,6 +166,8 @@ namespace canton::d3d11 {
         sampling.MaxLOD = D3D11_FLOAT32_MAX;
         check(device->CreateSamplerState(&sampling, sampler.ReleaseAndGetAddressOf()), "无法创建采样器");
 
+        atlasSize = adapterInfo.software ? warpInitialAtlasSize : maxAtlasSize;
+        counters.atlasSize = atlasSize;
         atlasView = createTexture(atlasSize, atlasSize, DXGI_FORMAT_R8_UNORM, nullptr, 0, &atlasTexture);
         gradientView = createTexture(gradientWidth, gradientRows, DXGI_FORMAT_R8G8B8A8_UNORM, nullptr, 0, &gradientTexture);
         const std::uint32_t white = 0xffffffffu;
@@ -308,6 +310,10 @@ namespace canton::d3d11 {
 
     AdapterInfo Renderer::adapter() const {
         return impl_->adapterInfo;
+    }
+
+    std::uint64_t Renderer::deviceGeneration() const noexcept {
+        return impl_->deviceGeneration;
     }
 
     const RenderCounters& Renderer::counters() const noexcept {

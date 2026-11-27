@@ -1,10 +1,12 @@
 import { reactive } from '@canton/reactivity'
 import { Dp } from '../values/unit.ts'
-import type { CaptionButtonKind, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole } from '../native/protocol.ts'
+import type { CaptionButtonKind, NativeWindowCommand, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole } from '../native/protocol.ts'
 import { interactionStateInternal, type InteractionState } from './gesture.ts'
 import { Modifier, type ModifierElement } from './modifier.ts'
 
 export type { CaptionButtonKind, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole }
+
+export type WindowAttentionMode = 'informational' | 'critical' | 'stop'
 
 export type WindowSize = Readonly<{ width: number; height: number }>
 
@@ -22,6 +24,7 @@ export interface WindowState {
     readonly dpiScale: number
     activate(): void
     requestClose(): void
+    requestAttention(mode?: WindowAttentionMode): void
 }
 
 export interface AppHandle {
@@ -36,7 +39,7 @@ export interface WindowHandle {
 }
 
 export interface WindowStateInternal {
-    bind(owner: symbol, windowId: number, handle: WindowHandle, command: (action: 'activate' | 'requestClose') => void): void
+    bind(owner: symbol, windowId: number, handle: WindowHandle, command: (action: NativeWindowCommand) => void): void
     unbind(owner: symbol, handle: WindowHandle): void
     applyNativeGeometry(size: WindowSize | undefined, position: WindowPosition | undefined, placement: WindowPlacement): void
     applyNativeFocus(focused: boolean): void
@@ -104,7 +107,7 @@ export function createWindowState(init: WindowStateInit = {}): WindowState {
     })
 
     let boundOwner: symbol | undefined
-    let sendCommand: ((action: 'activate' | 'requestClose') => void) | undefined
+    let sendCommand: ((action: NativeWindowCommand) => void) | undefined
     const nativeGeometry: { size?: WindowSize; position?: WindowPosition; placement?: WindowPlacement } = {}
 
     const state: WindowState = {
@@ -130,6 +133,12 @@ export function createWindowState(init: WindowStateInit = {}): WindowState {
         get dpiScale() { return backing.dpiScale },
         activate() { sendCommand?.('activate') },
         requestClose() { sendCommand?.('requestClose') },
+        requestAttention(mode: WindowAttentionMode = 'informational') {
+            if (mode === 'informational') sendCommand?.('requestAttentionInformational')
+            else if (mode === 'critical') sendCommand?.('requestAttentionCritical')
+            else if (mode === 'stop') sendCommand?.('stopAttention')
+            else throw new TypeError(`WindowState.requestAttention 模式无效：${String(mode)}`)
+        },
     }
     Object.freeze(state)
 

@@ -1,0 +1,63 @@
+<template>
+    <Box :modifier="M.fillMaxWidth().height(200.dp)">
+        <Box :modifier="M.fillMaxSize().then(layerBackdrop(backdrop))">
+            <Row :modifier="M.fillMaxSize().background(bgGrad, rounded(16.dp)).padding(18.dp)" :horizontalArrangement="Arrangement.spacedBy(14.dp)">
+                <Box :modifier="M.size(150.dp, 160.dp).background(cardGrad1, rounded(16.dp)).padding(12.dp)">
+                    <Text text="VIBRANT GRADIENT" :style="headingStyle" />
+                </Box>
+                <Box :modifier="M.size(150.dp, 160.dp).background(cardGrad2, rounded(16.dp)).padding(12.dp)">
+                    <Text text="HIGH CONTRAST" :style="headingStyle" />
+                </Box>
+                <Box :modifier="M.size(150.dp, 160.dp).background(cardGrad3, rounded(16.dp)).padding(12.dp)">
+                    <Text text="PRISM BAND" :style="headingStyle" />
+                </Box>
+            </Row>
+        </Box>
+
+        <Box :modifier="glassMod">
+            <Column :modifier="M.padding(16.dp)" :verticalArrangement="Arrangement.spacedBy(6.dp)">
+                <Text :text="`Liquid Glass (${props.label})`" :style="headingStyle" />
+                <Text :text="`当前生效档位：${effectiveTier}`" :style="bodyStyle" />
+                <Text text="full 走离屏模糊与折射色散着色器；reduced 零 Shader 回落半透明表面 + 细描边。" :style="mutedStyle" />
+            </Column>
+        </Box>
+    </Box>
+</template>
+
+<script>
+import { computed, inject } from '@canton/framework'
+import { Arrangement, Color, GraphicsEnvironmentKey, M, TileMode, linearGradient, rounded } from '@canton/framework/ui'
+import { createLayerBackdrop, drawBackdrop, layerBackdrop } from '@canton/kyant-glass'
+import { bodyStyle, headingStyle, mutedStyle } from './theme.ts'
+
+const props = defineProps<{ label: string }>()
+const activeEnv = inject(GraphicsEnvironmentKey, undefined)
+const effectiveTier = computed(() => activeEnv?.recommendedTier ?? 'full')
+
+const backdrop = createLayerBackdrop()
+const bgGrad = linearGradient([Color(0xff1e1b4b), Color(0xff0f172a), Color(0xff134e4a)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad1 = linearGradient([Color(0xffec4899), Color(0xff8b5cf6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad2 = linearGradient([Color(0xff06b6d4), Color(0xff3b82f6)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+const cardGrad3 = linearGradient([Color(0xfff97316), Color(0xffef4444)], { start: { x: 0, y: 0 }, end: { x: 1, y: 1 } })
+
+const glassShape = () => rounded(20.dp)
+const glassMod = M.offset({ x: 40.dp, y: 36.dp })
+    .size(390.dp, 124.dp)
+    .then(drawBackdrop({
+        backdrop,
+        shape: glassShape,
+        effects: scope => {
+            scope.vibrancy()
+            scope.blur(6, TileMode.Mirror)
+            scope.lens({
+                refractionHeight: 18,
+                refractionAmount: 26,
+                depthEffect: true,
+                chromaticAberration: true,
+            })
+        },
+        onDrawSurface: scope => {
+            scope.drawRect({ color: Color(0x26ffffff) })
+        },
+    }))
+</script>

@@ -7,7 +7,7 @@ import { withNativeSession } from './native-session.ts'
 import { repoRoot } from './common.ts'
 
 // 开窗跑夹具：起 Vite DevServer，按正式的加载规矩经 CANTON_DEV_* 拉起 Dev 宿主，弹出真窗口；改夹具的 .cta 会热更新。
-// 用法：pnpm fixture:window [夹具名，默认 showcase] [--source lfd|live|dist] [--dist <目录或 ZIP>] [--exit-after-ready]
+// 用法：pnpm fixture:live [夹具名，默认 showcase] [--source lfd|live|dist] [--dist <目录或 ZIP>] [--exit-after-ready]
 // 关掉窗口或按 Ctrl+C 结束。
 const args = process.argv.slice(2)
 const option = (name: string) => {
@@ -34,7 +34,7 @@ const environment: NodeJS.ProcessEnv = { ...process.env, ...readiness.environmen
 if (url) environment.CANTON_DEV_SERVER = url
 const dist = option('--dist')
 if (dist) environment.CANTON_DEV_DIST = resolve(dist)
-console.log('[CantonFixtureWindow]', `夹具 ${fixture}，策略 ${source}${url ? `，DevServer ${url}` : ''}`)
+console.log('[CantonFixtureLive]', `夹具 ${fixture}，策略 ${source}${url ? `，DevServer ${url}` : ''}`)
 
 // 不走带 windowsHide 的执行器：窗口要真的弹出来
 const host = spawn(nativeExecutable(resolve(nativeTestDirectory(), 'native'), 'canton-host-dev'), [], { env: environment, stdio: ['ignore', 'inherit', 'inherit'] })
@@ -53,12 +53,12 @@ try {
     const ready = readiness.wait(abort.signal).then(() => 'ready' as const, () => 'aborted' as const)
     const first = await Promise.race([ready, exited])
     if (first === 'ready') {
-        console.log('[CantonFixtureWindow]', '首帧已就绪')
+        console.log('[CantonFixtureLive]', '首帧已就绪')
         if (exitAfterReady) host.kill()
-    } else if (typeof first === 'number') console.log('[CantonFixtureWindow]', `宿主在首帧前退出，退出码 0x${(first >>> 0).toString(16).toUpperCase()}`)
+    } else if (typeof first === 'number') console.log('[CantonFixtureLive]', `宿主在首帧前退出，退出码 0x${(first >>> 0).toString(16).toUpperCase()}`)
     const finalCode = await exited
     if (!exitAfterReady && !stoppedBySignal && finalCode !== 0) {
-        console.error('[CantonFixtureWindow]', `宿主异常退出，退出码 0x${(finalCode >>> 0).toString(16).toUpperCase()}（崩溃栈见 ${crashLog}）`)
+        console.error('[CantonFixtureLive]', `宿主异常退出，退出码 0x${(finalCode >>> 0).toString(16).toUpperCase()}（崩溃栈见 ${crashLog}）`)
         process.exitCode = 1
     } else {
         process.exitCode = first === 'ready' ? 0 : 1

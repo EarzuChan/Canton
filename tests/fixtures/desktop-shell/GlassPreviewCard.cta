@@ -1,0 +1,30 @@
+<template>
+    <GlassPreviewInner :label="props.label" />
+</template>
+
+<script>
+import { inject, provide } from '@canton/framework'
+import { GraphicsEnvironmentKey, type GraphicsEnvironment } from '@canton/framework/ui'
+import GlassPreviewInner from './GlassPreviewInner.cta'
+
+const props = defineProps<{
+    mode: 'real' | 'full' | 'reduced'
+    label: string
+}>()
+
+const parentEnv = inject(GraphicsEnvironmentKey, undefined)
+
+if (props.mode !== 'real') {
+    const forced: GraphicsEnvironment = Object.freeze({
+        backend: 'd3d11',
+        adapterName: props.mode === 'reduced' ? 'Simulated Software / Reduced' : (parentEnv?.adapterName ?? 'Simulated Hardware'),
+        isSoftwareRenderer: props.mode === 'reduced',
+        hardwareAccelerated: props.mode === 'full',
+        isRemoteSession: false,
+        systemTransparency: props.mode === 'full',
+        systemAnimations: props.mode === 'full',
+        recommendedTier: props.mode,
+    })
+    provide(GraphicsEnvironmentKey, forced)
+}
+</script>

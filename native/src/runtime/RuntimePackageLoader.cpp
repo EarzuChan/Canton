@@ -26,6 +26,8 @@ namespace canton::runtime {
         host->setShaderCompiler(shaderCompiler_);
         host->setPainterLoader(std::move(resources.painter));
         host->setAssetLoader(std::move(resources.asset));
+        host->setAssetExistsChecker(std::move(resources.assetExists));
+        if (platformBridge_) host->setPlatformBridge(platformBridge_);
         return host;
     }
 

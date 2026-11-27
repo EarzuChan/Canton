@@ -47,6 +47,7 @@ add_library(canton_quickjs STATIC
   src/quickjs/QuickJsModuleLoader.cpp
   src/quickjs/QuickJsNativeApi.cpp
   src/quickjs/QuickJsPainterResources.cpp
+  src/quickjs/QuickJsPlatformApi.cpp
   src/quickjs/QuickJsRuntimeContext.cpp
   src/quickjs/QuickJsScriptHeap.cpp
   src/quickjs/QuickJsScriptHost.cpp
@@ -74,6 +75,7 @@ target_include_directories(canton_ui_bytecode PRIVATE "${identity_dir}" src/quic
 target_link_libraries(canton_ui_bytecode PRIVATE qjs)
 
 add_library(canton_runtime STATIC
+  src/runtime/AppPaths.cpp
   src/runtime/AppResolver.cpp
   src/runtime/AppSession.cpp
   src/runtime/CantonRuntime.cpp
@@ -83,9 +85,12 @@ add_library(canton_runtime STATIC
   src/runtime/DiagnosticsState.cpp
   src/runtime/DiagnosticsToast.cpp
   src/runtime/ErrorScreenModel.cpp
+  src/runtime/FileSystem.cpp
   src/runtime/FramePlanner.cpp
   src/runtime/FramePumpDriver.cpp
+  src/runtime/HttpClient.cpp
   src/runtime/InputTextSession.cpp
+  src/runtime/IoThreadPool.cpp
   src/runtime/Json.cpp
   src/runtime/PackageRuntimeSource.cpp
   src/runtime/PainterResources.cpp
@@ -96,15 +101,17 @@ add_library(canton_runtime STATIC
   src/runtime/SceneHost.cpp
   src/runtime/ScenePipelineState.cpp
   src/runtime/ScriptEventDispatcher.cpp
+  src/runtime/SingleInstance.cpp
   src/runtime/SvgDecoder.cpp
   src/runtime/TextInputMutationSink.cpp
+  src/runtime/TimerQueue.cpp
   src/runtime/UiPackage.cpp
   src/runtime/VBlankSource.cpp
   src/runtime/ZipArchive.cpp
   "${CANTON_MINIZ_SOURCE_DIR}/miniz_tinfl.c"
 )
 add_library(Canton::runtime ALIAS canton_runtime)
-target_link_libraries(canton_runtime PUBLIC Canton::quickjs PRIVATE bcrypt windowscodecs ole32)
+target_link_libraries(canton_runtime PUBLIC Canton::quickjs PRIVATE bcrypt windowscodecs ole32 shell32 winhttp)
 target_compile_definitions(canton_runtime PRIVATE NOMINMAX)
 # 第三方源码只取用到的文件：miniz 的 deflate 解压；lunasvg 与它仓库里自带的 plutovg 编成一个静态库
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/canton-third-party/miniz_export.h" CONTENT "#pragma once\n#define MINIZ_EXPORT\n")
@@ -144,7 +151,6 @@ target_link_libraries(canton_runtime PRIVATE canton_lunasvg)
 # Live 相关的源文件单独成库，只有 Dev 宿主链接它
 add_library(canton_runtime_live STATIC
   src/runtime/DevServerClient.cpp
-  src/runtime/HttpClient.cpp
   src/runtime/LiveClient.cpp
   src/runtime/LiveResources.cpp
 )
@@ -154,13 +160,16 @@ target_link_libraries(canton_runtime_live PUBLIC Canton::runtime PRIVATE winhttp
 
 add_library(canton_win32 STATIC
   src/win32/ConsoleLog.cpp
+  src/win32/JumpList.cpp
+  src/win32/MediaSession.cpp
+  src/win32/ShellTray.cpp
   src/win32/Window.cpp
   src/win32/WindowManager.cpp
   src/win32/WindowsPrecisionWheelSource.cpp
 )
 add_library(Canton::win32 ALIAS canton_win32)
 target_compile_definitions(canton_win32 PRIVATE NOMINMAX)
-target_link_libraries(canton_win32 PUBLIC Canton::core PRIVATE comctl32 dwmapi gdi32 imm32 ole32 shell32 user32 uuid)
+target_link_libraries(canton_win32 PUBLIC Canton::core PRIVATE advapi32 comctl32 dwmapi gdi32 imm32 ole32 propsys shell32 user32 uuid)
 
 # 内置着色器在构建期编译成 DXBC 并嵌进渲染库，运行期不依赖 d3dcompiler_47.dll
 find_program(CANTON_FXC fxc HINTS "$ENV{WindowsSdkVerBinPath}x64" "$ENV{WindowsSdkVerBinPath}/x64" "$ENV{WindowsSdkDir}bin/$ENV{WindowsSDKVersion}x64" REQUIRED)

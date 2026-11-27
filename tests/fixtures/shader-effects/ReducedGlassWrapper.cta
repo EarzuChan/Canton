@@ -1,0 +1,22 @@
+<template>
+    <GlassPage :preset="1" />
+</template>
+
+<script>
+import { provide } from '@canton/framework'
+import { GraphicsEnvironmentKey, type GraphicsEnvironment } from '@canton/framework/ui'
+import GlassPage from './GlassPage.cta'
+
+const reducedEnv: GraphicsEnvironment = Object.freeze({
+    backend: 'd3d11',
+    adapterName: 'Microsoft Basic Render Driver (Simulated Reduced)',
+    isSoftwareRenderer: true,
+    hardwareAccelerated: false,
+    isRemoteSession: false,
+    systemTransparency: false,
+    systemAnimations: false,
+    recommendedTier: 'reduced',
+})
+
+provide(GraphicsEnvironmentKey, reducedEnv)
+</script>

@@ -54,6 +54,7 @@ export type WindowModality = 'none' | 'owner' | 'application'
 export type WindowBackdrop = 'none' | 'mica' | 'micaAlt' | 'acrylic'
 export type WindowCornerPreference = 'default' | 'round' | 'roundSmall' | 'square'
 export type CaptionButtonKind = 'minimize' | 'maximize' | 'close'
+export type NativeWindowCommand = 'activate' | 'requestClose' | 'requestAttentionInformational' | 'requestAttentionCritical' | 'stopAttention'
 
 export type NativeAppConfig = Readonly<{
     exitOnLastWindowClosed: boolean
@@ -101,6 +102,159 @@ export type NativeWindowDriver = Readonly<{
     onDpiChanged: (windowId: number, dpiScale: number) => void
 }>
 
+export type NativeGraphicsEnvironmentSnapshot = Readonly<{
+    backend: 'd3d11'
+    adapterName: string
+    isSoftwareRenderer: boolean
+    hardwareAccelerated: boolean
+    isRemoteSession: boolean
+    systemTransparency: boolean
+    systemAnimations: boolean
+}>
+
+export type NativeLaunchRequest = Readonly<{
+    args: readonly string[]
+    workingDirectory: string
+}>
+
+export type NativeTrayIconSpec = Readonly<{
+    id: string
+    guid?: string
+    icon?: string
+    tooltip?: string
+    visible: boolean
+}>
+
+export type NativeTrayMenuItemSpec = Readonly<{
+    kind: 'item' | 'checkbox' | 'radio' | 'separator' | 'submenu'
+    commandId: number
+    label?: string
+    enabled?: boolean
+    checked?: boolean
+    children?: readonly NativeTrayMenuItemSpec[]
+}>
+
+export type NativeTrayAnchorRect = Readonly<{
+    left: number
+    top: number
+    right: number
+    bottom: number
+    cursorX: number
+    cursorY: number
+    workLeft: number
+    workTop: number
+    workRight: number
+    workBottom: number
+    dpiScale: number
+}>
+
+export type NativeTrayEvent = Readonly<{
+    trayId: string
+    kind: 'click' | 'doubleClick' | 'contextMenu'
+    anchor: NativeTrayAnchorRect
+}>
+
+export type NativeTaskbarProgressSpec = Readonly<{
+    state: 'none' | 'indeterminate' | 'normal' | 'paused' | 'error'
+    value?: number
+}>
+
+export type NativeTaskbarBadgeSpec = Readonly<{
+    icon?: string
+    label?: string
+}>
+
+export type NativeTaskbarActionSpec = Readonly<{
+    id: string
+    icon: string
+    tooltip?: string
+    enabled?: boolean
+    dismissOnClick?: boolean
+}>
+
+export type NativeMediaPlaybackStatus = 'closed' | 'stopped' | 'playing' | 'paused'
+export type NativeMediaButtonKind = 'play' | 'pause' | 'stop' | 'next' | 'previous'
+
+export type NativeMediaSessionSpec = Readonly<{
+    active: boolean
+    playbackStatus: NativeMediaPlaybackStatus
+    title?: string
+    artist?: string
+    album?: string
+    thumbnail?: string
+    canPlay?: boolean
+    canPause?: boolean
+    canStop?: boolean
+    canNext?: boolean
+    canPrevious?: boolean
+}>
+
+export type NativeJumpListTaskSpec = Readonly<{
+    title: string
+    args?: readonly string[]
+    icon?: string
+    description?: string
+}>
+
+export type NativeJumpListCategorySpec = Readonly<{
+    title: string
+    items: readonly NativeJumpListTaskSpec[]
+}>
+
+export type NativeFsDirEntry = Readonly<{
+    name: string
+    isFile: boolean
+    isDirectory: boolean
+}>
+
+export type NativeFsAsyncResponse = Readonly<{
+    ok: boolean
+    errorCode?: string
+    errorPath?: string
+    errorMessage?: string
+    text?: string
+    bytes?: Uint8Array
+    exists?: boolean
+    isFile?: boolean
+    isDirectory?: boolean
+    size?: number
+    modifiedTimeMs?: number
+    createdTimeMs?: number
+    entries?: readonly NativeFsDirEntry[]
+}>
+
+export type NativeNetRequestPayload = Readonly<{
+    method: string
+    url: string
+    headers: readonly (readonly [string, string])[]
+    body?: string | Uint8Array | ArrayBuffer
+    timeoutMs: number
+    maxBytes: number
+    followRedirects: boolean
+    maxRedirects: number
+    useSystemProxy: boolean
+}>
+
+export type NativeNetProgressPayload = Readonly<{
+    receivedBytes: number
+    totalBytes: number | null
+}>
+
+export type NativeNetAsyncResponse = Readonly<{
+    ok: boolean
+    errorCode?: string
+    errorUrl?: string
+    errorMessage?: string
+    status?: number
+    url?: string
+    headers?: Readonly<Record<string, string>>
+    contentType?: string
+    body?: Uint8Array
+    downloadOk?: boolean
+    destPath?: string
+    bytesWritten?: number
+}>
+
 // 真实宿主（QuickJsNativeApi）必然提供的成员均为必选
 export type NativeTransactionTarget = {
     configureApp: (config: NativeAppConfig) => void
@@ -109,7 +263,7 @@ export type NativeTransactionTarget = {
     createWindow: (windowId: number, rootNodeId: NodeId, config: NativeWindowConfig) => void
     updateWindow: (windowId: number, config: NativeWindowConfig) => void
     destroyWindow: (windowId: number) => void
-    windowCommand: (windowId: number, command: 'activate' | 'requestClose') => void
+    windowCommand: (windowId: number, command: NativeWindowCommand) => void
     installWindowDriver: (driver: NativeWindowDriver) => void
     focusCommand: (operation: 'request' | 'clear' | 'move' | 'cancel', requester: number, direction?: FocusDirection, windowId?: number) => boolean
     installFrameDriver: (prepare: (time: number) => void, complete: (success: boolean) => void, dispose: () => void) => void
@@ -144,6 +298,29 @@ export type NativeTransactionTarget = {
     registerModifierBinding: (id: NodeId, instance: NativeModifierHandle) => NativeBindingHandle
     runtimeVersion: number
     readAsset?: { (reference: string, text: true): Promise<string>, (reference: string, text: false): Promise<Uint8Array> }
+    assetExists?: (reference: string) => Promise<boolean>
+    getGraphicsEnvironment?: () => NativeGraphicsEnvironmentSnapshot
+    onGraphicsEnvironmentChanged?: (callback: ((env: NativeGraphicsEnvironmentSnapshot) => void) | null) => void
+    getLaunchRequest?: () => NativeLaunchRequest
+    onSecondInstance?: (callback: ((request: NativeLaunchRequest) => void) | null) => void
+    getKnownPath?: (kind: string) => string
+    fsAsync?: (op: string, path: string, path2?: string, bytes?: string | Uint8Array | ArrayBuffer, flag?: boolean) => Promise<NativeFsAsyncResponse>
+    netRequest?: (reqId: number, req: NativeNetRequestPayload) => Promise<NativeNetAsyncResponse>
+    netDownload?: (reqId: number, req: NativeNetRequestPayload, destPath: string, onProgress?: (progress: NativeNetProgressPayload) => void) => Promise<NativeNetAsyncResponse>
+    netCancel?: (reqId: number) => void
+    trayUpsert?: (spec: NativeTrayIconSpec) => void
+    trayRemove?: (trayId: string) => void
+    trayShowSystemMenu?: (items: readonly NativeTrayMenuItemSpec[], screenX: number, screenY: number) => number
+    trayQueryAnchor?: (trayId: string) => NativeTrayAnchorRect
+    onTrayEvent?: (callback: ((event: NativeTrayEvent) => void) | null) => void
+    setWindowTaskbarProgress?: (windowId: number, spec: NativeTaskbarProgressSpec) => void
+    setWindowTaskbarBadge?: (windowId: number, spec: NativeTaskbarBadgeSpec | null) => void
+    setWindowTaskbarActions?: (windowId: number, actions: readonly NativeTaskbarActionSpec[]) => void
+    onWindowTaskbarAction?: (callback: ((windowId: number, actionId: string) => void) | null) => void
+    mediaSessionUpdate?: (spec: NativeMediaSessionSpec) => void
+    onMediaButton?: (callback: ((button: NativeMediaButtonKind) => void) | null) => void
+    setJumpList?: (categories: readonly NativeJumpListCategorySpec[]) => void
+    clearJumpList?: () => void
     createNode: (id: NodeId, type: string, windowId?: number) => void
     deleteNode: (id: NodeId) => void
     insertChild: (parent: NodeId, child: NodeId, index: number) => void

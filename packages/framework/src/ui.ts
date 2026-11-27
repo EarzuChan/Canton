@@ -1,11 +1,13 @@
 /// <reference path="./hlsl.d.ts" />
 export * from './modifier/modifier.ts'
 export type { BoxHandle, RowHandle, ColumnHandle, FlowRowHandle, FlowColumnHandle, LazyItemHandle, LazyGridItemHandle, AnimateItemOptions, WeightOptions } from './modifier/layoutHandle.ts'
-export type { AppHandle, WindowHandle, WindowSize, CaptionButtonKind, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole } from './modifier/window.ts'
+export type { AppHandle, WindowHandle, WindowSize, CaptionButtonKind, WindowBackdrop, WindowChrome, WindowCornerPreference, WindowAttentionMode, WindowModality, WindowPlacement, WindowPosition, WindowPositionPreset, WindowRole } from './modifier/window.ts'
 export * from './values/primitives.ts'
 
 export { createDensity, DensityKey } from './layout/density.ts'
 export type { Density } from './layout/density.ts'
+export { GraphicsEnvironmentKey } from './layout/graphicsEnvironment.ts'
+export type { GraphicsEnvironment, GraphicsTier } from './layout/graphicsEnvironment.ts'
 export type { LayoutCoordinates, PxOffset, PxSize, PxRect, BoundsOptions } from './layout/coordinates.ts'
 export * from './layout/measurePolicy.ts'
 export * from './draw/painter.ts'

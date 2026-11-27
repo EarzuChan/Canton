@@ -3,14 +3,17 @@
 #include "QuickJsEventRegistry.h"
 #include "QuickJsModuleLoader.h"
 #include "QuickJsPainterResources.h"
+#include <quickjs/PlatformBridge.h>
 #include <quickjs/QuickJsScriptHost.h>
 #include <core/GraphicsEffects.h>
 #include <core/Mutation.h>
 #include <core/MutationTransaction.h>
+#include <core/PlatformTypes.h>
 #include <core/WindowTypes.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -36,6 +39,59 @@ namespace canton::quickjs {
         JSValue onWindowGeometryChanged = JS_UNDEFINED;
         JSValue onWindowFocusChanged = JS_UNDEFINED;
         JSValue onWindowDpiChanged = JS_UNDEFINED;
+        JSValue onGraphicsEnvChanged = JS_UNDEFINED;
+        JSValue onSecondInstance = JS_UNDEFINED;
+        JSValue onTrayEvent = JS_UNDEFINED;
+        JSValue onTaskbarAction = JS_UNDEFINED;
+        JSValue onMediaButton = JS_UNDEFINED;
+        std::shared_ptr<PlatformBridge> platform;
+        core::AssetExistsChecker assetExistsChecker;
+
+        struct TimerEntry {
+            std::uint64_t id = 0;
+            bool repeating = false;
+            double intervalMs = 0.0;
+            JSValue callback = JS_UNDEFINED;
+            std::vector<JSValue> args;
+        };
+        std::unordered_map<std::uint64_t, TimerEntry> timers;
+        std::uint64_t nextFallbackTimerId = 1;
+        std::unordered_map<std::uint64_t, double> fallbackTimerDue;
+        std::vector<core::LaunchRequest> bufferedSecondInstances;
+
+        struct AssetExistsRequest {
+            std::future<bool> result;
+            JSValue resolve = JS_UNDEFINED;
+            JSValue reject = JS_UNDEFINED;
+        };
+        std::vector<AssetExistsRequest> assetExistsRequests;
+
+        struct FsAsyncRequest {
+            std::string op;
+            std::future<FsBridgeResult> result;
+            JSValue resolve = JS_UNDEFINED;
+            JSValue reject = JS_UNDEFINED;
+        };
+        std::vector<FsAsyncRequest> fsRequests;
+
+        struct NetProgressInbox {
+            std::mutex mutex;
+            NetBridgeProgress latest;
+            bool dirty = false;
+        };
+        struct NetAsyncRequest {
+            std::uint64_t reqId = 0;
+            bool isDownload = false;
+            std::future<NetBridgeResponse> result;
+            JSValue resolve = JS_UNDEFINED;
+            JSValue reject = JS_UNDEFINED;
+            JSValue onProgress = JS_UNDEFINED;
+            std::shared_ptr<NetProgressInbox> progressInbox;
+        };
+        std::vector<NetAsyncRequest> netRequests;
+
+        bool pumpPlatformAsync();
+        void freePlatformHandles();
         bool materializingLayout = false;
         double frameTimeMillis = 0.0;
         static constexpr std::size_t maxJobsPerFrame = 10000;

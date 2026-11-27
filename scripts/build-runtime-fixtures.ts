@@ -11,16 +11,31 @@ const workspace = resolve(output, 'workspace')
 await rm(workspace, { recursive: true, force: true })
 await mkdir(workspace, { recursive: true })
 await prepareRuntimeFixtureWorkspace(workspace)
-// 夹具名到入口文件；有 public 目录的夹具，其中的资源会随包输出
-const fixtures: Record<string, string> = { 'app-smoke': 'src/main.ts', showcase: 'main.ts', layout: 'main.ts', lazy: 'main.ts', 'rearrange-runtime': 'main.ts', 'viewport-runtime': 'main.ts', 'window-interaction': 'main.ts', 'render-windows': 'main.ts', 'shader-effects': 'main.ts' }
+// 夹具名到入口文件与可选清单元数据；有 public 目录的夹具，其中的资源会随包输出
+type FixtureEntry = string | { entry: string; appId?: string; singleInstance?: boolean; portable?: boolean }
+const fixtures: Record<string, FixtureEntry> = {
+    'app-smoke': 'src/main.ts',
+    showcase: 'main.ts',
+    layout: 'main.ts',
+    lazy: 'main.ts',
+    'rearrange-runtime': 'main.ts',
+    'viewport-runtime': 'main.ts',
+    'window-interaction': 'main.ts',
+    'render-windows': 'main.ts',
+    'shader-effects': 'main.ts',
+    'desktop-shell': { entry: 'main.ts', appId: 'com.canton.desktop.shell', singleInstance: true },
+}
 const requested = process.argv.slice(3)
 for (const fixture of requested) if (!(fixture in fixtures)) throw new Error(`未知的运行时夹具：${fixture}`)
 for (const fixture of requested.length ? requested : Object.keys(fixtures)) {
+    const config = fixtures[fixture]!
+    const entryFile = typeof config === 'string' ? config : config.entry
+    const meta = typeof config === 'string' ? {} : { appId: config.appId, singleInstance: config.singleInstance, portable: config.portable }
     await build({
         root: workspace,
         configFile: false,
         publicDir: resolve(workspace, 'tests/fixtures', fixture, 'public'),
-        plugins: [canton({ entry: resolve(workspace, 'tests/fixtures', fixture, fixtures[fixture]!) }) as unknown as Plugin],
+        plugins: [canton({ entry: resolve(workspace, 'tests/fixtures', fixture, entryFile), ...meta }) as unknown as Plugin],
         build: { outDir: resolve(output, fixture), emptyOutDir: true },
     })
     // 字节码构建的中间产物是以 .cbc 命名的 ESM

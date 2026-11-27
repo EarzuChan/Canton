@@ -16,6 +16,7 @@ namespace canton::runtime {
     struct RuntimeLoadResources {
         core::PainterLoader painter;
         core::AssetLoader asset;
+        core::AssetExistsChecker assetExists;
     };
 
     struct RuntimeLoadLog {
@@ -45,8 +46,17 @@ namespace canton::runtime {
         using LiveResources = std::function<RuntimeLoadResources(std::string_view)>;
         using DistResources = std::function<RuntimeLoadResources(std::shared_ptr<const core::UiPackage>)>;
 
-        RuntimePackageLoader(DistResources distResources, std::shared_ptr<core::FontRegistry> fonts, std::shared_ptr<const core::NativePainterRegistry> painters, std::shared_ptr<const core::ShaderCompiler> shaderCompiler = {})
-            : distResources_(std::move(distResources)), fonts_(std::move(fonts)), painters_(std::move(painters)), shaderCompiler_(std::move(shaderCompiler)) {}
+        RuntimePackageLoader(
+            DistResources distResources,
+            std::shared_ptr<core::FontRegistry> fonts,
+            std::shared_ptr<const core::NativePainterRegistry> painters,
+            std::shared_ptr<const core::ShaderCompiler> shaderCompiler = {},
+            std::shared_ptr<quickjs::PlatformBridge> platformBridge = {})
+            : distResources_(std::move(distResources)),
+              fonts_(std::move(fonts)),
+              painters_(std::move(painters)),
+              shaderCompiler_(std::move(shaderCompiler)),
+              platformBridge_(std::move(platformBridge)) {}
 
         [[nodiscard]] std::unique_ptr<quickjs::QuickJsScriptHost> createHost(RuntimeLoadResources resources) const;
         RuntimePackageLoadResult loadDist(const ResolvedDist& dist) const;
@@ -56,6 +66,7 @@ namespace canton::runtime {
         std::shared_ptr<core::FontRegistry> fonts_;
         std::shared_ptr<const core::NativePainterRegistry> painters_;
         std::shared_ptr<const core::ShaderCompiler> shaderCompiler_;
+        std::shared_ptr<quickjs::PlatformBridge> platformBridge_;
     };
 
 }

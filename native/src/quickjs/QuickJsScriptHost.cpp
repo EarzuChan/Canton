@@ -1,10 +1,13 @@
 #include <quickjs/QuickJsScriptHost.h>
 
 #include "QuickJsNativeApi.h"
+#include "QuickJsPlatformApi.h"
 #include "QuickJsRuntimeContext.h"
 #include "QuickJsValueReader.h"
 #include "QuickJsDrawReader.h"
 #include "QuickJsScriptHeap.h"
+
+#include <core/Clock.h>
 
 #include <algorithm>
 #include <chrono>
@@ -98,6 +101,8 @@ namespace canton::quickjs {
                     JS_FreeValue(runtime.context, *val);
                     *val = JS_UNDEFINED;
                 }
+                runtime.freePlatformHandles();
+                runtime.bufferedSecondInstances.clear();
                 for (const auto& prepared : runtime.preparedDrawCallbacks) JS_FreeValue(runtime.context, prepared.callback);
                 runtime.preparedDrawCallbacks.clear();
                 runtime.painters.reset();
@@ -266,6 +271,14 @@ namespace canton::quickjs {
         impl_->runtime.assetLoader = std::move(loader);
     }
 
+    void QuickJsScriptHost::setAssetExistsChecker(core::AssetExistsChecker checker) {
+        impl_->runtime.assetExistsChecker = std::move(checker);
+    }
+
+    void QuickJsScriptHost::setPlatformBridge(std::shared_ptr<PlatformBridge> bridge) {
+        impl_->runtime.platform = std::move(bridge);
+    }
+
     QuickJsScriptHost::~QuickJsScriptHost() {
         // 先销毁 QuickJS 上下文（disposeApp / nativeUnmount 会引用 pendingTransactions_）
         impl_.reset();
@@ -427,6 +440,115 @@ namespace canton::quickjs {
         return impl_->callDriver(impl_->runtime.onWindowDpiChanged, 2, argv, __func__);
     }
 
+    CallbackInvokeResult QuickJsScriptHost::invokeTimer(std::uint64_t timerId) {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto& state = impl_->runtime;
+        auto* ctx = state.context;
+        const auto it = state.timers.find(timerId);
+        if (it == state.timers.end()) return {true, {}};
+
+        const bool repeating = it->second.repeating;
+        ScopedValue fn(ctx, JS_DupValue(ctx, it->second.callback));
+        std::vector<JSValue> callArgs;
+        callArgs.reserve(it->second.args.size());
+        for (const auto& a : it->second.args) callArgs.push_back(JS_DupValue(ctx, a));
+
+        if (!repeating) {
+            JS_FreeValue(ctx, it->second.callback);
+            for (auto& a : it->second.args) JS_FreeValue(ctx, a);
+            state.timers.erase(it);
+            state.fallbackTimerDue.erase(timerId);
+        }
+
+        CallbackInvokeResult res{true, {}};
+        {
+            Impl::TaskBudget budget(*impl_, __func__);
+            ScopedValue ret(ctx, JS_Call(ctx, fn.get(), JS_UNDEFINED, static_cast<int>(callArgs.size()), callArgs.empty() ? nullptr : callArgs.data()));
+            for (auto& a : callArgs) JS_FreeValue(ctx, a);
+            if (JS_IsException(ret.get())) {
+                res = {false, impl_->exceptionText(ctx)};
+            } else {
+                const auto drained = impl_->drainJobs();
+                res = {drained.ok, drained.error};
+            }
+        }
+
+        // 周期定时器在回调返回且未被 clearInterval 时安排下一拍
+        if (repeating && state.timers.contains(timerId)) {
+            if (state.platform && state.platform->rescheduleRepeatingTimer) {
+                state.platform->rescheduleRepeatingTimer(timerId);
+            } else {
+                state.fallbackTimerDue[timerId] = core::monotonicMillis() + state.timers.at(timerId).intervalMs;
+            }
+        }
+        return res;
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::notifyGraphicsEnvironmentChanged() {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto* ctx = impl_->runtime.context;
+        if (!JS_IsFunction(ctx, impl_->runtime.onGraphicsEnvChanged)) return {true, {}};
+        ScopedValue payload(ctx, QuickJsPlatformApi::makeGraphicsEnvObject(ctx, impl_->runtime));
+        JSValueConst argv[] = {payload.get()};
+        return impl_->callDriver(impl_->runtime.onGraphicsEnvChanged, 1, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::notifySecondInstance(const core::LaunchRequest& request) {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto* ctx = impl_->runtime.context;
+        if (!JS_IsFunction(ctx, impl_->runtime.onSecondInstance)) {
+            impl_->runtime.bufferedSecondInstances.push_back(request);
+            return {true, {}};
+        }
+        ScopedValue payload(ctx, QuickJsPlatformApi::makeLaunchRequestObject(ctx, request));
+        JSValueConst argv[] = {payload.get()};
+        return impl_->callDriver(impl_->runtime.onSecondInstance, 1, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::notifyTrayEvent(const core::TrayEvent& event) {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto* ctx = impl_->runtime.context;
+        if (!JS_IsFunction(ctx, impl_->runtime.onTrayEvent)) return {true, {}};
+        ScopedValue payload(ctx, JS_NewObject(ctx));
+        JS_SetPropertyStr(ctx, payload.get(), "trayId", JS_NewStringLen(ctx, event.trayId.data(), event.trayId.size()));
+        const char* kind = "click";
+        if (event.kind == core::TrayEventKind::DoubleClick)
+            kind = "doubleClick";
+        else if (event.kind == core::TrayEventKind::ContextMenu)
+            kind = "contextMenu";
+        JS_SetPropertyStr(ctx, payload.get(), "kind", JS_NewString(ctx, kind));
+        JS_SetPropertyStr(ctx, payload.get(), "anchor", QuickJsPlatformApi::makeTrayAnchorObject(ctx, event.anchor));
+        JSValueConst argv[] = {payload.get()};
+        return impl_->callDriver(impl_->runtime.onTrayEvent, 1, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::notifyTaskbarActionClicked(core::WindowId windowId, const std::string& actionId) {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto* ctx = impl_->runtime.context;
+        if (!JS_IsFunction(ctx, impl_->runtime.onTaskbarAction)) return {true, {}};
+        ScopedValue idVal(ctx, JS_NewUint32(ctx, windowId));
+        ScopedValue actVal(ctx, JS_NewStringLen(ctx, actionId.data(), actionId.size()));
+        JSValueConst argv[] = {idVal.get(), actVal.get()};
+        return impl_->callDriver(impl_->runtime.onTaskbarAction, 2, argv, __func__);
+    }
+
+    CallbackInvokeResult QuickJsScriptHost::notifyMediaButtonPressed(core::MediaButtonKind button) {
+        if (!impl_ || !impl_->runtime.context) return {true, {}};
+        auto* ctx = impl_->runtime.context;
+        if (!JS_IsFunction(ctx, impl_->runtime.onMediaButton)) return {true, {}};
+        const char* name = "play";
+        switch (button) {
+            case core::MediaButtonKind::Play: name = "play"; break;
+            case core::MediaButtonKind::Pause: name = "pause"; break;
+            case core::MediaButtonKind::Stop: name = "stop"; break;
+            case core::MediaButtonKind::Next: name = "next"; break;
+            case core::MediaButtonKind::Previous: name = "previous"; break;
+        }
+        ScopedValue btnVal(ctx, JS_NewString(ctx, name));
+        JSValueConst argv[] = {btnVal.get()};
+        return impl_->callDriver(impl_->runtime.onMediaButton, 1, argv, __func__);
+    }
+
     CallbackInvokeResult QuickJsScriptHost::completeRearrange(const std::shared_ptr<canton::core::RearrangeSubmission>& submission, const std::string& error) {
         if (!impl_) return {true, {}};
         auto& state = impl_->runtime;
@@ -553,12 +675,31 @@ namespace canton::quickjs {
         state.remainingFrameJobs = QuickJsRuntimeContext::maxJobsPerFrame;
         if (state.painters && !state.painters->pump()) return {false, impl_->exceptionText(state.context)};
         if (!state.pumpAssets()) return {false, impl_->exceptionText(state.context)};
+        if (!state.pumpPlatformAsync()) return {false, impl_->exceptionText(state.context)};
+        // 无外部宿主定时队列（如纯单测）时由内置后备队列推进到期定时器
+        if (!state.fallbackTimerDue.empty()) {
+            const double now = core::monotonicMillis();
+            std::vector<std::uint64_t> due;
+            for (const auto& [id, dueAt] : state.fallbackTimerDue) {
+                if (dueAt <= now) due.push_back(id);
+            }
+            std::sort(due.begin(), due.end());
+            for (const auto id : due) {
+                const auto res = invokeTimer(id);
+                if (!res.ok) return res;
+            }
+        }
         const auto drained = impl_->drainJobs();
         return {drained.ok, drained.error};
     }
 
     bool QuickJsScriptHost::hasPendingSemanticWork() const noexcept {
-        return impl_ && impl_->runtime.context && (JS_IsJobPending(impl_->runtime.runtime) || !impl_->runtime.assetRequests.empty() || (impl_->runtime.painters && impl_->runtime.painters->hasPending()));
+        if (!impl_ || !impl_->runtime.context) return false;
+        const auto& s = impl_->runtime;
+        if (JS_IsJobPending(s.runtime) || !s.assetRequests.empty() || !s.assetExistsRequests.empty() || !s.fsRequests.empty() || !s.netRequests.empty() || (s.painters && s.painters->hasPending())) return true;
+        if (!s.bufferedSecondInstances.empty() && JS_IsFunction(s.context, s.onSecondInstance)) return true;
+        if (!s.fallbackTimerDue.empty()) return true;
+        return false;
     }
 
     bool QuickJsScriptHost::hasPendingVisualWork() const noexcept {

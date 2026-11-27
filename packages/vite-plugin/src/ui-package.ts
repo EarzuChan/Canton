@@ -47,7 +47,13 @@ async function describe(directory: string, path: string, kind: Kind) {
     return { path, kind, size, sha256: hash.digest('hex') }
 }
 
-export function uiPackageHooks(): Pick<Plugin, 'configResolved' | 'writeBundle'> {
+export type UiPackageManifestMeta = {
+    appId?: string
+    singleInstance?: boolean
+    portable?: boolean
+}
+
+export function uiPackageHooks(meta: UiPackageManifestMeta = {}): Pick<Plugin, 'configResolved' | 'writeBundle'> {
     let config: ResolvedConfig
     return {
         configResolved(value) {
@@ -95,7 +101,18 @@ export function uiPackageHooks(): Pick<Plugin, 'configResolved' | 'writeBundle'>
                 if (names.size > 8192) throw new Error('UI 包条目数量超过限制')
                 const entries = []
                 for (const path of [...names.keys()].sort()) entries.push(await describe(output.dir, path, names.get(path)!))
-                const contents = JSON.stringify({ format: 3, scriptFormat: bytecode ? 'esm' : 'js', framework: CANTON_PACKAGE_VERSION, protocol: CANTON_PROTOCOL_VERSION, entry: entry[0].fileName, entries }) + '\n'
+                const manifest: Record<string, unknown> = {
+                    format: 3,
+                    scriptFormat: bytecode ? 'esm' : 'js',
+                    framework: CANTON_PACKAGE_VERSION,
+                    protocol: CANTON_PROTOCOL_VERSION,
+                    entry: entry[0].fileName,
+                    entries,
+                }
+                if (meta.appId) manifest.appId = meta.appId
+                if (meta.singleInstance !== undefined) manifest.singleInstance = meta.singleInstance
+                if (meta.portable !== undefined) manifest.portable = meta.portable
+                const contents = JSON.stringify(manifest) + '\n'
                 if (Buffer.byteLength(contents) > 4 * 1024 * 1024) throw new Error('UI 包清单超过大小限制')
                 const target = join(output.dir, manifestName)
                 const staged = `${target}.${process.pid}.tmp`

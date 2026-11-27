@@ -206,6 +206,20 @@ namespace canton::runtime {
                 if (bytecode && entry_ != "app.cbc") fail("字节码包入口必须为 app.cbc", entry_);
                 const auto found = entries_.find(entry_);
                 if (found == entries_.end() || found->second.kind != core::UiEntryKind::Module) fail("入口不是已登记模块", entry_);
+
+                if (const auto* appIdVal = jsonMember(data, "appId")) {
+                    const auto* s = jsonString(appIdVal);
+                    if (!s) fail("清单 appId 必须是字符串");
+                    appId_ = *s;
+                }
+                if (const auto* singleVal = jsonMember(data, "singleInstance")) {
+                    if (!std::holds_alternative<bool>(singleVal->value)) fail("清单 singleInstance 必须是布尔值");
+                    singleInstance_ = std::get<bool>(singleVal->value);
+                }
+                if (const auto* portableVal = jsonMember(data, "portable")) {
+                    if (!std::holds_alternative<bool>(portableVal->value)) fail("清单 portable 必须是布尔值");
+                    portable_ = std::get<bool>(portableVal->value);
+                }
             }
 
             core::UiScriptFormat scriptFormat() const noexcept override {
@@ -214,6 +228,35 @@ namespace canton::runtime {
 
             std::string_view entry() const noexcept override {
                 return entry_;
+            }
+
+            std::string_view appId() const noexcept override {
+                return appId_;
+            }
+
+            bool singleInstance() const noexcept override {
+                return singleInstance_;
+            }
+
+            bool portable() const noexcept override {
+                return portable_;
+            }
+
+            bool exists(std::string_view path, core::UiEntryKind kind) const noexcept override {
+                const auto found = entries_.find(std::string(path));
+                if (found == entries_.end() || found->second.kind != kind) return false;
+                if (zip_) return zip_->entries().contains(std::string(path));
+                try {
+                    auto p = root_;
+                    for (const auto& part : utf8Path(path)) {
+                        p /= part;
+                        if (redirected(p)) return false;
+                    }
+                    std::error_code ec;
+                    return std::filesystem::is_regular_file(p, ec);
+                } catch (...) {
+                    return false;
+                }
             }
 
             std::string read(std::string_view path, core::UiEntryKind kind, std::size_t limit) const override {
@@ -248,6 +291,9 @@ namespace canton::runtime {
             std::unique_ptr<ZipArchive> zip_;
             std::unordered_map<std::string, PackageEntry> entries_;
             std::string entry_;
+            std::string appId_;
+            bool singleInstance_ = false;
+            bool portable_ = false;
             core::UiScriptFormat scriptFormat_ = core::UiScriptFormat::Js;
         };
     }

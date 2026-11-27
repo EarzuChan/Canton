@@ -1,6 +1,6 @@
 import { afterEach } from 'node:test'
 import { mountApplication, type CantonApplication, type CantonRunningApplication } from '../../packages/framework/src/app/app.ts'
-import type { NativeAppConfig, NativeModifierHandle, NativeTransactionTarget, NativeWindowConfig, NativeWindowDriver } from '../../packages/framework/src/native/protocol.ts'
+import type { NativeAppConfig, NativeModifierHandle, NativeTransactionTarget, NativeWindowCommand, NativeWindowConfig, NativeWindowDriver } from '../../packages/framework/src/native/protocol.ts'
 import { Modifier, type ModifierElement } from '../../packages/framework/src/modifier/modifier.ts'
 import { createFakeNative } from '../helpers/fakeNative.ts'
 
@@ -69,7 +69,7 @@ export function recordingNative(autoApply = true) {
     let submissions = 0
     let writes = 0
     let appExitRequests = 0
-    const windowCommands: { windowId: number; command: 'activate' | 'requestClose' }[] = []
+    const windowCommands: { windowId: number; command: NativeWindowCommand }[] = []
     const windowLifecycleEvents: { kind: 'create' | 'update' | 'destroy'; windowId: number }[] = []
 
     const live = () => {

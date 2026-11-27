@@ -3,13 +3,52 @@ import { currentInstance, invokeContent, ValueBinding } from '../runtime/interna
 import { defineArrangable, inject, provide, slotParams } from '../runtime/index.ts'
 import type { ArrangableProps, InjectionKey, PropType } from '../runtime/index.ts'
 import { createDensity, DensityKey } from '../layout/density.ts'
+import { createGraphicsEnvironment, GraphicsEnvironmentKey } from '../layout/graphicsEnvironment.ts'
+import { freezeLaunchRequest, LaunchRequestKey, type LaunchRequest } from '../layout/launchRequest.ts'
 import { createNativeFocusManager, FocusManagerKey, WindowFocusIdKey } from '../modifier/focus.ts'
 import { createWindowHandle, createWindowState, isWindowState, normalizeWindowSize, windowStateInternal, type AppHandle, type WindowBackdrop, type WindowChrome, type WindowCornerPreference, type WindowHandle, type WindowModality, type WindowRole, type WindowSize, type WindowState } from '../modifier/window.ts'
-import type { NativeAppConfig, NativeWindowConfig } from '../native/protocol.ts'
+import type { NativeAppConfig, NativeTaskbarActionSpec, NativeTaskbarBadgeSpec, NativeTaskbarProgressSpec, NativeWindowConfig } from '../native/protocol.ts'
 import { NativeRearrangeHost, SurfaceDomainKey, WindowRearrangeSurface } from '../bridge/nativeRearrange.ts'
 
-const AppScopeKey: InjectionKey<true> = Symbol('Canton.AppScope')
+export const AppScopeKey: InjectionKey<true> = Symbol('Canton.AppScope')
 const AncestorWindowIdKey: InjectionKey<number> = Symbol('Canton.AncestorWindowId')
+
+let mountedAppCount = 0
+export function hasMountedApp(): boolean {
+    return mountedAppCount > 0
+}
+
+const windowTaskbarActionCallbacks = new Map<number, Map<string, () => void>>()
+let taskbarActionDriverInstalled = false
+
+function ensureTaskbarActionDriver(host: NativeRearrangeHost): void {
+    if (taskbarActionDriverInstalled || !host.native.onWindowTaskbarAction) return
+    taskbarActionDriverInstalled = true
+    host.native.onWindowTaskbarAction((windowId, actionId) => {
+        windowTaskbarActionCallbacks.get(windowId)?.get(actionId)?.()
+    })
+}
+
+export interface TaskbarProgress {
+    readonly state: 'none' | 'indeterminate' | 'normal' | 'paused' | 'error'
+    readonly value?: number
+}
+
+export interface TaskbarBadge {
+    readonly icon?: string
+    readonly label?: string
+}
+
+export interface TaskbarAction {
+    readonly id: string
+    readonly icon: string
+    readonly tooltip?: string
+    readonly enabled?: boolean
+    readonly dismissOnClick?: boolean
+    readonly onClick?: () => void
+}
+
+const taskbarProgressStates = new Set(['none', 'indeterminate', 'normal', 'paused', 'error'])
 
 const ownerModes = new Set(['auto', 'none'])
 const modalities = new Set(['none', 'owner', 'application'])
@@ -25,6 +64,7 @@ export const App = defineArrangable({
         exitOnLastWindowClosed: { type: Boolean, default: true },
         appId: String,
         icon: String,
+        onSecondInstance: Function as PropType<(request: LaunchRequest) => void>,
     },
     slots: { default: slotParams<{ appHandle: AppHandle }>() },
     setup(props, { slot, source }) {
@@ -36,8 +76,29 @@ export const App = defineArrangable({
         if (!(host instanceof NativeRearrangeHost)) throw new Error('<App> 需要正式原生应用宿主')
 
         host.registerAppInstance(instance)
-        onScopeDispose(() => host.unregisterAppInstance(instance))
+        mountedAppCount++
+
+        const initialGraphics = host.native.getGraphicsEnvironment?.()
+        const graphicsController = createGraphicsEnvironment(initialGraphics)
+        host.native.onGraphicsEnvironmentChanged?.(snapshot => {
+            graphicsController.update(snapshot)
+        })
+
+        const launchRequest = inject(LaunchRequestKey, undefined) ?? freezeLaunchRequest(host.native.getLaunchRequest?.())
+        host.native.onSecondInstance?.(raw => {
+            props.onSecondInstance?.(freezeLaunchRequest(raw))
+        })
+
+        onScopeDispose(() => {
+            mountedAppCount = Math.max(0, mountedAppCount - 1)
+            host.native.onGraphicsEnvironmentChanged?.(null)
+            host.native.onSecondInstance?.(null)
+            host.unregisterAppInstance(instance)
+        })
+
         provide(AppScopeKey, true)
+        provide(GraphicsEnvironmentKey, graphicsController.environment)
+        provide(LaunchRequestKey, launchRequest)
 
         new ValueBinding(
             (): NativeAppConfig => Object.freeze({
@@ -82,6 +143,9 @@ export const Window = defineArrangable({
         transparent: { type: Boolean, default: false },
         backdrop: { type: String as PropType<WindowBackdrop>, default: 'none', validator: (v: unknown) => typeof v === 'string' && backdrops.has(v) },
         cornerPreference: { type: String as PropType<WindowCornerPreference>, default: 'default', validator: (v: unknown) => typeof v === 'string' && cornerPreferences.has(v) },
+        taskbarProgress: Object as PropType<TaskbarProgress>,
+        taskbarBadge: { type: [Object, null] as PropType<TaskbarBadge | null>, default: undefined },
+        taskbarActions: Array as PropType<readonly TaskbarAction[]>,
     },
     slots: { default: slotParams<{ windowHandle: WindowHandle }>() },
     setup(props, { slot, source }) {
@@ -177,7 +241,54 @@ export const Window = defineArrangable({
         instance.surface = surface
 
         const focus = createNativeFocusManager(host.native, surface.windowId)
+        ensureTaskbarActionDriver(host)
+
+        const syncTaskbarEnhancements = () => {
+            const winId = surface.activeWindowId
+            if (winId === undefined) return
+            if (props.taskbarProgress !== undefined) {
+                const stateName = props.taskbarProgress.state
+                if (!taskbarProgressStates.has(stateName)) {
+                    throw new TypeError(`taskbarProgress.state 无效：${String(stateName)}`)
+                }
+                const spec: NativeTaskbarProgressSpec = {
+                    state: stateName,
+                    ...(props.taskbarProgress.value !== undefined ? { value: props.taskbarProgress.value } : {}),
+                }
+                host.native.setWindowTaskbarProgress?.(winId, spec)
+            } else {
+                host.native.setWindowTaskbarProgress?.(winId, { state: 'none', value: 0 })
+            }
+
+            if (props.taskbarBadge !== undefined) {
+                const badgeSpec: NativeTaskbarBadgeSpec | null = props.taskbarBadge
+                    ? { ...(props.taskbarBadge.icon ? { icon: props.taskbarBadge.icon } : {}), ...(props.taskbarBadge.label ? { label: props.taskbarBadge.label } : {}) }
+                    : null
+                host.native.setWindowTaskbarBadge?.(winId, badgeSpec)
+            }
+
+            if (props.taskbarActions !== undefined) {
+                if (props.taskbarActions.length > 7) {
+                    throw new RangeError('Window.taskbarActions 最多支持 7 个缩略图工具栏按钮')
+                }
+                const callbackMap = new Map<string, () => void>()
+                const nativeActions: NativeTaskbarActionSpec[] = props.taskbarActions.map(action => {
+                    if (action.onClick) callbackMap.set(action.id, action.onClick)
+                    return {
+                        id: action.id,
+                        icon: action.icon,
+                        ...(action.tooltip !== undefined ? { tooltip: action.tooltip } : {}),
+                        enabled: action.enabled ?? true,
+                        dismissOnClick: action.dismissOnClick ?? false,
+                    }
+                })
+                windowTaskbarActionCallbacks.set(winId, callbackMap)
+                host.native.setWindowTaskbarActions?.(winId, nativeActions)
+            }
+        }
+
         onScopeDispose(() => {
+            windowTaskbarActionCallbacks.delete(surface.windowId)
             focus.dispose()
             stateInternal.unbind(bindingOwner, windowHandle)
         })
@@ -189,6 +300,16 @@ export const Window = defineArrangable({
         provide(SurfaceDomainKey, Object.freeze({ windowId: surface.windowId, host }))
 
         new ValueBinding(resolveConfig, instance, value => surface.updateConfig(value as NativeWindowConfig), source('modality') ?? source('title'))
+        new ValueBinding(
+            () => ({
+                progress: props.taskbarProgress,
+                badge: props.taskbarBadge,
+                actions: props.taskbarActions,
+            }),
+            instance,
+            () => syncTaskbarEnhancements(),
+            source('taskbarProgress') ?? source('taskbarActions'),
+        )
 
         const content = slot()
         return () => invokeContent(0, () => content({ windowHandle }))

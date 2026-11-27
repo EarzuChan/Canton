@@ -228,7 +228,10 @@ float4 psMain(PsInput input) : SV_Target {
         coverage = boxCoverage(p, input.shape.zw, input.jacobian);
     } else if (kind == 3) {
         color = brushColor(input);
-        coverage = coverageTexture.SampleLevel(linearClamp, input.uv, 0).r;
+        uint covW, covH;
+        coverageTexture.GetDimensions(covW, covH);
+        int2 texel = clamp(int2(floor(input.uv * float2(covW, covH))), int2(0, 0), int2(int(covW) - 1, int(covH) - 1));
+        coverage = coverageTexture.Load(int3(texel, 0)).r;
     } else if (kind == 4) {
         color = input.color;
         coverage = blurredShape(p, input.shape.zw, input.radii, input.params.w, input.params.z);

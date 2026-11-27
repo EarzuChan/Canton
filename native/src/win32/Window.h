@@ -2,6 +2,7 @@
 
 #include <core/InputEditing.h>
 #include <core/InputSession.h>
+#include <core/PlatformTypes.h>
 #include <core/PointerGesture.h>
 #include <core/WheelInput.h>
 #include <core/WindowTypes.h>
@@ -43,22 +44,38 @@ namespace canton::win32 {
         void* handle_ = nullptr;
     };
 
+    // 系统级图形偏好与会话环境（SM_REMOTESESSION / EnableTransparency / SPI_GETCLIENTAREAANIMATION）
+    struct SystemGraphicsPreferences {
+        bool isRemoteSession = false;
+        bool systemTransparency = true;
+        bool systemAnimations = true;
+    };
+    [[nodiscard]] SystemGraphicsPreferences querySystemGraphicsPreferences() noexcept;
+
     struct MessageDispatcherCallbacks {
         std::function<void()> wake;
         std::function<void()> fontsChanged;
+        std::function<void()> settingsChanged;
+        std::function<void()> taskbarCreated;
+        std::function<void(std::uint32_t iconId, std::uint32_t mouseMsg, int cursorX, int cursorY)> trayMessage;
         std::function<void()> endSession;
     };
 
-    // UI Owner 线程级隐藏消息分发窗（HWND_MESSAGE）：提供与业务窗口生灭解耦的跨线程唤醒与进程退出通道
+    // App 级隐藏顶层 HWND（WS_EX_TOOLWINDOW，非 HWND_MESSAGE）：承接托盘、SMTC、关机通知、字体/系统设置变更与定时唤醒
     class MessageDispatcher {
        public:
+        static constexpr std::uint32_t kTrayCallbackMessage = 0x8002u;  // WM_APP + 2
+
         explicit MessageDispatcher(MessageDispatcherCallbacks callbacks);
         ~MessageDispatcher();
         MessageDispatcher(const MessageDispatcher&) = delete;
         MessageDispatcher& operator=(const MessageDispatcher&) = delete;
 
+        [[nodiscard]] void* hwnd() const noexcept;
         void postWake() noexcept;
-        static int runMessageLoop();
+        static int runMessageLoop(
+            std::function<std::optional<std::uint32_t>()> nextTimeoutMs = {},
+            std::function<void()> onTimerWake = {});
         static void quitMessageLoop(int exitCode = 0) noexcept;
 
        private:
@@ -99,6 +116,9 @@ namespace canton::win32 {
         std::function<bool(std::string preedit, std::size_t cursorOffsetBytes, std::vector<core::TextCompositionClause> clauses)> imeComposition;
         std::function<bool(std::string committed)> imeCommit;
         std::function<bool()> imeEndComposition;
+
+        // 任务栏缩略图工具栏按钮点击回调（ITaskbarList3 THBN_CLICKED）
+        std::function<void(const std::string& actionId)> taskbarActionClicked;
     };
 
     class Window {
@@ -118,7 +138,11 @@ namespace canton::win32 {
 
         void updateConfig(const core::WindowConfigSpec& config);
         void setIcons(void* bigHicon, void* smallHicon);
+        void setTaskbarProgress(const core::TaskbarProgressSpec& spec);
+        void setTaskbarBadge(void* overlayHicon, std::string_view label);
+        void setTaskbarActions(const std::vector<core::TaskbarActionSpec>& actions, const std::vector<void*>& actionHicons);
         void activate();
+        void requestAttention(core::WindowAttentionMode mode);
         void setEnabled(bool enabled);
         [[nodiscard]] bool isEnabled() const noexcept;
 

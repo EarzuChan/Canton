@@ -20,6 +20,18 @@
       "canton-ts": "./src/animation.ts",
       "import": "./src/animation.ts"
     },
+    "./shell": {
+      "canton-ts": "./src/shell.ts",
+      "import": "./src/shell.ts"
+    },
+    "./fs": {
+      "canton-ts": "./src/fs.ts",
+      "import": "./src/fs.ts"
+    },
+    "./net": {
+      "canton-ts": "./src/net.ts",
+      "import": "./src/net.ts"
+    },
     "./vite": {
       "canton-ts": "./src/vite.ts",
       "import": "./src/vite.ts"

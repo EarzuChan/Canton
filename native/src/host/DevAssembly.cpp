@@ -235,6 +235,16 @@ namespace canton::host {
         }
         assembly.source.devServerUrl = narrow(environment(L"CANTON_DEV_SERVER").value_or(L"http://127.0.0.1:9178"));
         if (const auto dist = environment(L"CANTON_DEV_DIST")) assembly.source.distOverride = *dist;
+        if (const auto dataRoot = environment(L"CANTON_DEV_DATA_ROOT")) {
+            assembly.dataRootOverride = *dataRoot;
+        } else if (const auto prodRoot = environment(L"CANTON_DATA_ROOT")) {
+            assembly.dataRootOverride = *prodRoot;
+        }
+        if (const auto appId = environment(L"CANTON_DEV_APP_ID")) assembly.appIdOverride = narrow(*appId);
+        if (const auto single = environment(L"CANTON_DEV_SINGLE_INSTANCE")) {
+            const auto v = narrow(*single);
+            assembly.singleInstanceOverride = (v == "1" || v == "true" || v == "TRUE");
+        }
         if (const auto file = environment(L"CANTON_DEV_READY_FILE")) {
             assembly.readyFile = *file;
             assembly.readyToken = narrow(environment(L"CANTON_DEV_READY_TOKEN").value_or(L""));
@@ -250,7 +260,11 @@ namespace canton::host {
         assembly.detailedErrorScreen = true;
         assembly.live = [workers = runtime::createResourceWorkers()](std::function<void()> wake) {
             return runtime::makeLiveSessionFactory(std::move(wake), [workers](std::string_view devServerUrl) {
-                return runtime::RuntimeLoadResources{runtime::livePainterLoader(std::string(devServerUrl), {}, workers), runtime::liveAssetLoader(std::string(devServerUrl), workers)};
+                return runtime::RuntimeLoadResources{
+                    runtime::livePainterLoader(std::string(devServerUrl), {}, workers),
+                    runtime::liveAssetLoader(std::string(devServerUrl), workers),
+                    runtime::liveAssetExistsChecker(std::string(devServerUrl), workers),
+                };
             });
         };
         return assembly;

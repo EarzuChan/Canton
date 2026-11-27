@@ -255,6 +255,18 @@ namespace canton::runtime {
         };
     }
 
+    core::AssetExistsChecker asynchronousAssetExistsChecker(std::shared_ptr<ResourceWorkers> workers, std::function<bool(const std::string&)> check) {
+        return [workers = std::move(workers), check = std::move(check)](std::string name, std::function<void()> wake) {
+            auto task = std::make_shared<std::packaged_task<bool()>>([check, name = std::move(name)] { return check(name); });
+            auto future = task->get_future();
+            workers->post([task, wake = std::move(wake)] {
+                (*task)();
+                if (wake) wake();
+            });
+            return future;
+        };
+    }
+
     core::PainterLoader packagePainterLoader(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers) {
         return asynchronousPainterLoader(std::move(workers), [package = std::move(package)](const std::string& resource) {
             if (resource.starts_with("data:")) return dataUrlPayload(resource, PainterResourceLimits{});
@@ -271,5 +283,12 @@ namespace canton::runtime {
 
     core::AssetLoader packageAssetLoader(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers) {
         return asynchronousAssetLoader(std::move(workers), [package = std::move(package)](const std::string& reference) { return package->read(packageAssetName(reference), core::UiEntryKind::Asset, PainterResourceLimits::MaxResourceBytes); });
+    }
+
+    core::AssetExistsChecker packageAssetExistsChecker(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers) {
+        return asynchronousAssetExistsChecker(std::move(workers), [package = std::move(package)](const std::string& reference) {
+            const auto name = packageAssetName(reference);
+            return package->exists(name, core::UiEntryKind::Asset);
+        });
     }
 }

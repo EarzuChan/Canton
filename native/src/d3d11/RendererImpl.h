@@ -243,12 +243,14 @@ namespace canton::d3d11 {
 
     struct Renderer::Impl {
         static constexpr std::string_view TAG = "D3D11Renderer";
-        static constexpr int atlasSize = 2048;
+        static constexpr int maxAtlasSize = 2048;
+        static constexpr int warpInitialAtlasSize = 512;
         // 超过这个边长的覆盖率不进图集，单独成纹理
         static constexpr int atlasItemLimit = 512;
         static constexpr int gradientRows = 256;
         static constexpr int gradientWidth = 256;
         static constexpr std::size_t instanceCapacity = 4096;
+        int atlasSize = maxAtlasSize;
 
         explicit Impl(RendererOptions options);
 

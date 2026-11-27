@@ -17,6 +17,9 @@ const schema = z.object({
     entry: z.string(),
     scriptFormat: z.enum(['js', 'bytecode', 'esm']),
     engine: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+    appId: z.string().min(1).optional(),
+    singleInstance: z.boolean().optional(),
+    portable: z.boolean().optional(),
     entries: z.array(z.strictObject({
         path: z.string(),
         kind: z.enum(['module', 'asset']),

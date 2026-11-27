@@ -15,7 +15,7 @@
     "test:quickjs": "node --import tsx scripts/test-quickjs-app.ts",
     "test:render": "node --import tsx scripts/render-regression.ts",
     "baseline:update": "node --import tsx scripts/render-regression.ts --update",
-    "fixture:window": "node --import tsx scripts/fixture-window.ts",
+    "fixture:live": "node --import tsx scripts/fixture-live.ts",
     "fixture:dist": "node --import tsx scripts/fixture-dist.ts",
     "verify:live-hmr": "node --import tsx scripts/verify-live-hmr.ts",
     "verify:host": "node --import tsx scripts/verify-host.ts",

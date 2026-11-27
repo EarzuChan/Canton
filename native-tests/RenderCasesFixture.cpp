@@ -97,9 +97,18 @@ namespace render_regression {
                     {{x + 5, y + h / 2}, Icon::ResizeHorizontal}, {{x + w - 5, y + h / 2}, Icon::ResizeHorizontal},
                     {{x + w / 2, y + h / 2}, Icon::Grab},
                 };
-                for (const auto& [point, expected] : samples) {
+                for (std::size_t idx = 0; idx < std::size(samples); ++idx) {
+                    const auto& [point, expected] = samples[idx];
                     app_.pointerMove(win.windowId, {point, {}, now_});
-                    if (app_.pointerIcon(win.windowId) != expected) throw std::runtime_error("玻璃光标与拖拽热区不符");
+                    const auto actual = app_.pointerIcon(win.windowId);
+                    if (actual != expected) {
+                        throw std::runtime_error(
+                            "玻璃光标与拖拽热区不符 (idx=" + std::to_string(idx) +
+                            " bounds=" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(w) + "," + std::to_string(h) +
+                            " pt=" + std::to_string(point.x) + "," + std::to_string(point.y) +
+                            " actual=" + std::to_string(static_cast<int>(actual)) +
+                            " expected=" + std::to_string(static_cast<int>(expected)) + ")");
+                    }
                 }
             }
 
@@ -318,6 +327,7 @@ namespace render_regression {
                         }};
         };
         cases.push_back(shaderPage("shader-effects-glass", "glass:1"));
+        cases.push_back(shaderPage("shader-effects-glass-reduced", "glass-reduced"));
         cases.push_back(shaderPage("shader-effects-brushes", "brushes"));
         cases.push_back(shaderPage("shader-effects-compositing", "compositing"));
     }

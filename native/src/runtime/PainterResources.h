@@ -49,8 +49,10 @@ namespace canton::runtime {
 
     [[nodiscard]] core::PainterLoader asynchronousPainterLoader(std::shared_ptr<ResourceWorkers> workers, std::function<ResourcePayload(const std::string&)> read);
     [[nodiscard]] core::AssetLoader asynchronousAssetLoader(std::shared_ptr<ResourceWorkers> workers, std::function<std::string(const std::string&)> read);
+    [[nodiscard]] core::AssetExistsChecker asynchronousAssetExistsChecker(std::shared_ptr<ResourceWorkers> workers, std::function<bool(const std::string&)> check);
 
     // Dist：从包里读
     [[nodiscard]] core::PainterLoader packagePainterLoader(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers = createResourceWorkers());
     [[nodiscard]] core::AssetLoader packageAssetLoader(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers = createResourceWorkers());
+    [[nodiscard]] core::AssetExistsChecker packageAssetExistsChecker(std::shared_ptr<const core::UiPackage> package, std::shared_ptr<ResourceWorkers> workers = createResourceWorkers());
 }

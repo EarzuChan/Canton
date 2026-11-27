@@ -42,7 +42,7 @@ test('包之间单向依赖：shared ← reactivity / compiler ← vite-plugin �
         const extra = [...packageImports(`packages/${name}/src`)].filter(item => !packages.includes(item))
         assert.deepEqual(extra, [], `${name} 不应依赖 ${extra.join('、')}`)
     }
-    const kyantPublicOnly = new Set(['@canton/framework', '@canton/framework/ui', '@canton/framework/foundation', '@canton/framework/animation'])
+    const kyantPublicOnly = new Set(['@canton/framework', '@canton/framework/ui', '@canton/framework/foundation', '@canton/framework/animation', '@canton/framework/shell', '@canton/framework/fs', '@canton/framework/net'])
     const forbiddenKyant = [...packageSpecifiers('packages/kyant-glass/src')].filter(item => !kyantPublicOnly.has(item))
     assert.deepEqual(forbiddenKyant, [], `kyant-glass 只能导入 @canton/framework 公开出口，不允许：${forbiddenKyant.join('、')}`)
 })

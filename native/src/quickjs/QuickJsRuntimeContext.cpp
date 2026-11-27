@@ -1,4 +1,5 @@
 #include "QuickJsRuntimeContext.h"
+#include "QuickJsPlatformApi.h"
 #include "QuickJsValueReader.h"
 #include <chrono>
 #include <stdexcept>
@@ -30,6 +31,205 @@ namespace canton::quickjs {
             if (JS_IsException(result.get())) return false;
         }
         return true;
+    }
+
+    bool QuickJsRuntimeContext::pumpPlatformAsync() {
+        // 1. 补发在 <App :onSecondInstance> 注册前缓冲的二次唤醒载荷
+        if (!bufferedSecondInstances.empty() && JS_IsFunction(context, onSecondInstance)) {
+            auto batch = std::move(bufferedSecondInstances);
+            bufferedSecondInstances.clear();
+            for (const auto& req : batch) {
+                ScopedValue payload(context, QuickJsPlatformApi::makeLaunchRequestObject(context, req));
+                JSValueConst argv[] = {payload.get()};
+                ScopedValue fn(context, JS_DupValue(context, onSecondInstance));
+                ScopedValue res(context, JS_Call(context, fn.get(), JS_UNDEFINED, 1, argv));
+                if (JS_IsException(res.get())) return false;
+            }
+        }
+
+        // 2. assets.exists
+        for (auto it = assetExistsRequests.begin(); it != assetExistsRequests.end();) {
+            if (it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                ++it;
+                continue;
+            }
+            ScopedValue resolve(context, it->resolve);
+            ScopedValue reject(context, it->reject);
+            JSValue val = JS_UNDEFINED;
+            bool ok = true;
+            try {
+                val = JS_NewBool(context, it->result.get());
+            } catch (const std::exception& error) {
+                ok = false;
+                val = JS_NewError(context);
+                if (!JS_IsException(val)) JS_SetPropertyStr(context, val, "message", JS_NewString(context, error.what()));
+            }
+            it = assetExistsRequests.erase(it);
+            ScopedValue arg(context, val);
+            if (JS_IsException(val)) return false;
+            ScopedValue callRes(context, JS_Call(context, ok ? resolve.get() : reject.get(), JS_UNDEFINED, 1, &val));
+            if (JS_IsException(callRes.get())) return false;
+        }
+
+        // 3. 异步文件系统
+        for (auto it = fsRequests.begin(); it != fsRequests.end();) {
+            if (it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                ++it;
+                continue;
+            }
+            const auto op = it->op;
+            ScopedValue resolve(context, it->resolve);
+            ScopedValue reject(context, it->reject);
+            FsBridgeResult fsRes;
+            try {
+                fsRes = it->result.get();
+            } catch (const std::exception& error) {
+                fsRes.ok = false;
+                fsRes.errorCode = "IO";
+                fsRes.errorMessage = error.what();
+            }
+            it = fsRequests.erase(it);
+
+            JSValue obj = JS_NewObject(context);
+            JS_SetPropertyStr(context, obj, "ok", JS_NewBool(context, fsRes.ok));
+            if (!fsRes.ok) {
+                JS_SetPropertyStr(context, obj, "errorCode", JS_NewString(context, fsRes.errorCode.c_str()));
+                JS_SetPropertyStr(context, obj, "errorPath", JS_NewStringLen(context, fsRes.errorPath.data(), fsRes.errorPath.size()));
+                JS_SetPropertyStr(context, obj, "errorMessage", JS_NewStringLen(context, fsRes.errorMessage.data(), fsRes.errorMessage.size()));
+            } else if (op == "readText") {
+                JS_SetPropertyStr(context, obj, "text", JS_NewStringLen(context, fsRes.bytes.data(), fsRes.bytes.size()));
+            } else if (op == "readBytes") {
+                JS_SetPropertyStr(context, obj, "bytes", JS_NewUint8ArrayCopy(context, reinterpret_cast<const uint8_t*>(fsRes.bytes.data()), fsRes.bytes.size()));
+            } else if (op == "exists") {
+                JS_SetPropertyStr(context, obj, "exists", JS_NewBool(context, fsRes.boolValue));
+            } else if (op == "stat") {
+                JS_SetPropertyStr(context, obj, "isFile", JS_NewBool(context, fsRes.isFile));
+                JS_SetPropertyStr(context, obj, "isDirectory", JS_NewBool(context, fsRes.isDirectory));
+                JS_SetPropertyStr(context, obj, "size", JS_NewFloat64(context, static_cast<double>(fsRes.size)));
+                JS_SetPropertyStr(context, obj, "modifiedTimeMs", JS_NewFloat64(context, fsRes.modifiedTimeMs));
+                JS_SetPropertyStr(context, obj, "createdTimeMs", JS_NewFloat64(context, fsRes.createdTimeMs));
+            } else if (op == "readDir") {
+                JSValue arr = JS_NewArray(context);
+                for (std::uint32_t i = 0; i < fsRes.entries.size(); ++i) {
+                    const auto& e = fsRes.entries[i];
+                    JSValue item = JS_NewObject(context);
+                    JS_SetPropertyStr(context, item, "name", JS_NewStringLen(context, e.name.data(), e.name.size()));
+                    JS_SetPropertyStr(context, item, "isFile", JS_NewBool(context, e.isFile));
+                    JS_SetPropertyStr(context, item, "isDirectory", JS_NewBool(context, e.isDirectory));
+                    JS_SetPropertyUint32(context, arr, i, item);
+                }
+                JS_SetPropertyStr(context, obj, "entries", arr);
+            }
+            ScopedValue arg(context, obj);
+            ScopedValue callRes(context, JS_Call(context, resolve.get(), JS_UNDEFINED, 1, &obj));
+            if (JS_IsException(callRes.get())) return false;
+        }
+
+        // 4. 异步网络与流式下载进度
+        for (auto it = netRequests.begin(); it != netRequests.end();) {
+            if (it->progressInbox && JS_IsFunction(context, it->onProgress)) {
+                NetBridgeProgress prog;
+                bool emit = false;
+                {
+                    const std::scoped_lock lock(it->progressInbox->mutex);
+                    if (it->progressInbox->dirty) {
+                        prog = it->progressInbox->latest;
+                        it->progressInbox->dirty = false;
+                        emit = true;
+                    }
+                }
+                if (emit) {
+                    ScopedValue pObj(context, JS_NewObject(context));
+                    JS_SetPropertyStr(context, pObj.get(), "receivedBytes", JS_NewFloat64(context, static_cast<double>(prog.receivedBytes)));
+                    JS_SetPropertyStr(context, pObj.get(), "totalBytes", prog.totalBytes ? JS_NewFloat64(context, static_cast<double>(*prog.totalBytes)) : JS_NULL);
+                    JSValueConst argv[] = {pObj.get()};
+                    ScopedValue fn(context, JS_DupValue(context, it->onProgress));
+                    ScopedValue res(context, JS_Call(context, fn.get(), JS_UNDEFINED, 1, argv));
+                    if (JS_IsException(res.get())) return false;
+                }
+            }
+
+            if (it->result.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                ++it;
+                continue;
+            }
+            const bool isDownload = it->isDownload;
+            ScopedValue resolve(context, it->resolve);
+            ScopedValue reject(context, it->reject);
+            ScopedValue onProg(context, it->onProgress);
+            NetBridgeResponse netRes;
+            try {
+                netRes = it->result.get();
+            } catch (const std::exception& error) {
+                netRes.ok = false;
+                netRes.errorCode = "NETWORK";
+                netRes.errorMessage = error.what();
+            }
+            it = netRequests.erase(it);
+
+            JSValue obj = JS_NewObject(context);
+            JS_SetPropertyStr(context, obj, "ok", JS_NewBool(context, netRes.ok));
+            if (!netRes.ok) {
+                JS_SetPropertyStr(context, obj, "errorCode", JS_NewString(context, netRes.errorCode.c_str()));
+                JS_SetPropertyStr(context, obj, "errorUrl", JS_NewStringLen(context, netRes.errorUrl.data(), netRes.errorUrl.size()));
+                JS_SetPropertyStr(context, obj, "errorMessage", JS_NewStringLen(context, netRes.errorMessage.data(), netRes.errorMessage.size()));
+            } else if (isDownload) {
+                JS_SetPropertyStr(context, obj, "status", JS_NewInt32(context, netRes.status));
+                JS_SetPropertyStr(context, obj, "downloadOk", JS_NewBool(context, netRes.downloadOk));
+                JS_SetPropertyStr(context, obj, "url", JS_NewStringLen(context, netRes.finalUrl.data(), netRes.finalUrl.size()));
+                JS_SetPropertyStr(context, obj, "destPath", JS_NewStringLen(context, netRes.destPath.data(), netRes.destPath.size()));
+                JS_SetPropertyStr(context, obj, "bytesWritten", JS_NewFloat64(context, static_cast<double>(netRes.bytesWritten)));
+            } else {
+                JS_SetPropertyStr(context, obj, "status", JS_NewInt32(context, netRes.status));
+                JS_SetPropertyStr(context, obj, "url", JS_NewStringLen(context, netRes.finalUrl.data(), netRes.finalUrl.size()));
+                JS_SetPropertyStr(context, obj, "contentType", JS_NewStringLen(context, netRes.contentType.data(), netRes.contentType.size()));
+                JSValue hdrs = JS_NewObject(context);
+                for (const auto& [k, v] : netRes.headers) {
+                    JS_SetPropertyStr(context, hdrs, k.c_str(), JS_NewStringLen(context, v.data(), v.size()));
+                }
+                JS_SetPropertyStr(context, obj, "headers", hdrs);
+                JS_SetPropertyStr(context, obj, "body", JS_NewUint8ArrayCopy(context, reinterpret_cast<const uint8_t*>(netRes.body.data()), netRes.body.size()));
+            }
+            ScopedValue arg(context, obj);
+            ScopedValue callRes(context, JS_Call(context, resolve.get(), JS_UNDEFINED, 1, &obj));
+            if (JS_IsException(callRes.get())) return false;
+        }
+        return true;
+    }
+
+    void QuickJsRuntimeContext::freePlatformHandles() {
+        if (!context) return;
+        for (auto* val : {&onGraphicsEnvChanged, &onSecondInstance, &onTrayEvent, &onTaskbarAction, &onMediaButton}) {
+            JS_FreeValue(context, *val);
+            *val = JS_UNDEFINED;
+        }
+        for (auto& [_, entry] : timers) {
+            JS_FreeValue(context, entry.callback);
+            for (auto& arg : entry.args) JS_FreeValue(context, arg);
+        }
+        timers.clear();
+        fallbackTimerDue.clear();
+        if (platform && platform->clearTimers) platform->clearTimers();
+
+        for (auto& req : assetExistsRequests) {
+            JS_FreeValue(context, req.resolve);
+            JS_FreeValue(context, req.reject);
+        }
+        assetExistsRequests.clear();
+
+        for (auto& req : fsRequests) {
+            JS_FreeValue(context, req.resolve);
+            JS_FreeValue(context, req.reject);
+        }
+        fsRequests.clear();
+
+        for (auto& req : netRequests) {
+            if (platform && platform->netCancel) platform->netCancel(req.reqId);
+            JS_FreeValue(context, req.resolve);
+            JS_FreeValue(context, req.reject);
+            JS_FreeValue(context, req.onProgress);
+        }
+        netRequests.clear();
     }
 
     void QuickJsRuntimeContext::beginRearrange() {

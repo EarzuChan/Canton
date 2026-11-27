@@ -50,9 +50,12 @@ namespace canton::d3d11 {
         std::uint64_t glyphsRasterized = 0;
         std::uint64_t pathsRasterized = 0;
         std::uint64_t atlasResets = 0;
+        std::uint64_t atlasGrowths = 0;
+        int atlasSize = 0;
         std::uint64_t deviceRebuilds = 0;
         std::uint64_t offscreenTargetsCreated = 0;
         std::uint64_t offscreenTargetReuses = 0;
+        std::uint64_t offscreenTargetsEvicted = 0;
         std::uint64_t userShadersCompiled = 0;
         std::uint64_t offscreenPasses = 0;
     };
@@ -73,6 +76,7 @@ namespace canton::d3d11 {
         Renderer& operator=(const Renderer&) = delete;
 
         [[nodiscard]] AdapterInfo adapter() const;
+        [[nodiscard]] std::uint64_t deviceGeneration() const noexcept;
 
         // window 是 HWND。呈现走 DXGI Flip Model 与 DirectComposition
         [[nodiscard]] std::unique_ptr<RenderTarget> createWindowTarget(void* window);

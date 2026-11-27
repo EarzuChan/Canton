@@ -20,7 +20,9 @@
 #include <core/ModifierGeometry.h>
 #include <core/NativePainter.h>
 #include <core/Log.h>
+#include <core/PlatformTypes.h>
 #include <core/WindowTypes.h>
+#include "PlatformBridge.h"
 #include "ScriptHost.h"
 #include "LiveModule.h"
 
@@ -94,6 +96,8 @@ namespace canton::quickjs {
         void setPainterLoader(canton::core::PainterLoader loader);
         [[nodiscard]] const canton::core::PainterLoader& painterLoader() const noexcept;
         void setAssetLoader(core::AssetLoader loader);
+        void setAssetExistsChecker(core::AssetExistsChecker checker);
+        void setPlatformBridge(std::shared_ptr<PlatformBridge> bridge);
         // 注册表须在加载脚本前设置。同一应用的多个脚本上下文可共享注册表。
         void setFontRegistry(std::shared_ptr<core::FontRegistry> fonts);
         [[nodiscard]] const std::shared_ptr<core::FontRegistry>& fontRegistry() const noexcept;
@@ -126,6 +130,14 @@ namespace canton::quickjs {
         CallbackInvokeResult invokeWindowGeometryChanged(core::WindowId windowId, const core::WindowGeometryEvent& event);
         CallbackInvokeResult invokeWindowFocusChanged(core::WindowId windowId, bool focused);
         CallbackInvokeResult invokeWindowDpiChanged(core::WindowId windowId, double dpiScale);
+
+        // 定时器与桌面系统事件回调派发
+        CallbackInvokeResult invokeTimer(std::uint64_t timerId);
+        CallbackInvokeResult notifyGraphicsEnvironmentChanged();
+        CallbackInvokeResult notifySecondInstance(const core::LaunchRequest& request);
+        CallbackInvokeResult notifyTrayEvent(const core::TrayEvent& event);
+        CallbackInvokeResult notifyTaskbarActionClicked(core::WindowId windowId, const std::string& actionId);
+        CallbackInvokeResult notifyMediaButtonPressed(core::MediaButtonKind button);
 
         CallbackInvokeResult invokeEventSlot(const canton::core::EventSlotId& slot, const CallbackInvokeOptions& options = {});
         CallbackInvokeResult invokeEventSlot(const canton::core::EventSlotId& slot, const canton::core::ScrollResult& scroll);

@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { configureNativeBuild, nativeCmake, nativeExecutable, nativeTestDirectory } from './native-toolchain.ts'
 import { withNativeSession, nativeSessionRun as run, nativeSessionStart } from './native-session.ts'
@@ -8,9 +9,9 @@ import { stageUiPackage, verifyUiBuildInput, verifyUiPackage } from '../cli/src/
 import { uiManifestName } from '../cli/src/CliMetadata.ts'
 import { readCantonVersionContract } from './version-contract.ts'
 
-// 把夹具构建成 Dist 包：js 与字节码两种脚本表示，各出目录包和 ZIP 包。
-// 用法：pnpm fixture:dist [夹具名，默认 showcase] [--out <目录>]
-// 产物：<out>/<夹具>-js/、<夹具>-js.zip、<夹具>-bytecode/、<夹具>-bytecode.zip
+// 把夹具构建成 Dist 包与可运行应用目录（canton-host.exe + ui.zip / ui/），并默认直接拉起窗口（与 fixture:live 对仗）。
+// 用法：pnpm fixture:dist [夹具名，默认 showcase] [--out <目录>] [--format bytecode-zip|bytecode|js-zip|js] [--build-only]
+// 产物：<out>/<夹具>-js/、<夹具>-js.zip、<夹具>-bytecode/、<夹具>-bytecode.zip 与 <out>/<夹具>-app/（内含 canton-host.exe + ui.zip 或 ui/）
 export async function buildFixtureDist(fixture: string, out: string): Promise<{ js: string, jsZip: string, bytecode: string, bytecodeZip: string }> {
     const framework = readCantonVersionContract().frameworkVersion
     const buildDir = nativeTestDirectory()
@@ -59,12 +60,58 @@ export async function buildFixtureDist(fixture: string, out: string): Promise<{ 
 
 if (import.meta.filename === resolve(process.argv[1] ?? '')) {
     const args = process.argv.slice(2)
-    const outIndex = args.indexOf('--out')
-    const out = resolve(outIndex >= 0 ? args[outIndex + 1]! : resolve(repoRoot, '.canton/verification/dist'))
-    const fixture = args.find((argument, index) => !argument.startsWith('--') && index !== outIndex + 1) ?? 'showcase'
+    const option = (name: string) => {
+        const idx = args.indexOf(name)
+        return idx >= 0 ? args[idx + 1] : undefined
+    }
+    const valued = new Set(['--out', '--format'])
+    const out = resolve(option('--out') ?? resolve(repoRoot, '.canton/verification/dist'))
+    const format = option('--format') ?? 'bytecode-zip'
+    if (!['bytecode-zip', 'bytecode', 'js-zip', 'js'].includes(format)) {
+        throw new Error('--format 只接受 bytecode-zip、bytecode、js-zip 或 js')
+    }
+    const buildOnly = args.includes('--build-only')
+    const fixture = args.find((argument, index) => !argument.startsWith('--') && !valued.has(args[index - 1] ?? '')) ?? 'showcase'
+
+    let appExe = ''
     await withNativeSession(async () => {
-        await configureNativeBuild(repoRoot, nativeTestDirectory(), 'Debug', ['-DCANTON_BUILD_TESTS=ON'])
+        const buildDir = nativeTestDirectory()
+        await configureNativeBuild(repoRoot, buildDir, 'Debug', ['-DCANTON_BUILD_TESTS=ON'])
         const result = await buildFixtureDist(fixture, out)
+        await nativeCmake(['--build', buildDir, '--target', 'canton_host', '--parallel', process.env.CMAKE_BUILD_PARALLEL_LEVEL ?? '4'])
+
+        // 组装可直接运行的 Dist 应用目录：<out>/<fixture>-app/{canton-host.exe, ui.zip 或 ui/}
+        const appDir = resolve(out, `${fixture}-app`)
+        await rm(appDir, { recursive: true, force: true })
+        await mkdir(appDir, { recursive: true })
+        appExe = join(appDir, 'canton-host.exe')
+        await copyFile(nativeExecutable(resolve(buildDir, 'native'), 'canton-host'), appExe)
+        if (format === 'bytecode-zip' || format === 'js-zip') {
+            await copyFile(format === 'bytecode-zip' ? result.bytecodeZip : result.jsZip, join(appDir, 'ui.zip'))
+        } else {
+            await cp(format === 'bytecode' ? result.bytecode : result.js, join(appDir, 'ui'), { recursive: true })
+        }
+
         for (const [kind, path] of Object.entries(result)) console.log('[CantonFixtureDist]', kind, path)
+        console.log('[CantonFixtureDist]', 'app', appDir)
+        console.log('[CantonFixtureDist]', 'exe', appExe)
     }, [nativeTestDirectory()])
+
+    if (!buildOnly) {
+        console.log('[CantonFixtureDist]', `正在启动 Dist 应用：${appExe}`)
+        const host = spawn(appExe, [], { cwd: dirname(appExe), stdio: ['ignore', 'inherit', 'inherit'] })
+        const exited = new Promise<number>(done => host.once('exit', code => done(code ?? 1)))
+        let stoppedBySignal = false
+        const stop = () => {
+            stoppedBySignal = true
+            host.kill()
+        }
+        process.once('SIGINT', stop)
+        process.once('SIGTERM', stop)
+        const finalCode = await exited
+        if (!stoppedBySignal && finalCode !== 0) {
+            console.error('[CantonFixtureDist]', `Dist 宿主异常退出，退出码 0x${(finalCode >>> 0).toString(16).toUpperCase()}`)
+            process.exitCode = 1
+        }
+    }
 }

@@ -11,7 +11,7 @@
 #include <dwmapi.h>
 #include <imm.h>
 #include <shellapi.h>
-#include <shobjidl_core.h>
+#include <shobjidl.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -26,8 +26,22 @@ namespace canton::win32 {
         using Microsoft::WRL::ComPtr;
 
         constexpr wchar_t windowClassName[] = L"CantonHostWindow";
-        constexpr wchar_t messageClassName[] = L"CantonMessageDispatcher";
+        constexpr wchar_t messageClassName[] = L"CantonAppHostWindow";
         constexpr UINT kWakeMessage = WM_APP + 1;
+        constexpr UINT kTrayCallbackMsg = MessageDispatcher::kTrayCallbackMessage;
+        constexpr UINT kThumbButtonBaseId = 41000u;
+        constexpr std::size_t kMaxThumbButtons = 7u;
+        std::atomic<bool> gEndSessionHandled{false};
+
+        UINT taskbarCreatedMessage() noexcept {
+            static const UINT msg = RegisterWindowMessageW(L"TaskbarCreated");
+            return msg;
+        }
+
+        UINT taskbarButtonCreatedMessage() noexcept {
+            static const UINT msg = RegisterWindowMessageW(L"TaskbarButtonCreated");
+            return msg;
+        }
 
         constexpr DWORD kDwmUseImmersiveDarkMode = 20;
         constexpr DWORD kDwmWindowCornerPreference = 33;
@@ -377,6 +391,30 @@ namespace canton::win32 {
         return IconHandle(icon);
     }
 
+    SystemGraphicsPreferences querySystemGraphicsPreferences() noexcept {
+        SystemGraphicsPreferences prefs;
+        prefs.isRemoteSession = GetSystemMetrics(SM_REMOTESESSION) != 0;
+
+        DWORD transparency = 1;
+        DWORD size = sizeof(transparency);
+        if (RegGetValueW(
+                HKEY_CURRENT_USER,
+                L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+                L"EnableTransparency",
+                RRF_RT_REG_DWORD,
+                nullptr,
+                &transparency,
+                &size) == ERROR_SUCCESS) {
+            prefs.systemTransparency = transparency != 0;
+        }
+
+        BOOL animations = TRUE;
+        if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0)) {
+            prefs.systemAnimations = animations != FALSE;
+        }
+        return prefs;
+    }
+
     struct MessageDispatcher::Impl {
         HWND hwnd = nullptr;
         MessageDispatcherCallbacks callbacks;
@@ -387,10 +425,41 @@ namespace canton::win32 {
                 SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams));
             }
             auto* self = reinterpret_cast<Impl*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-            if (self && message == kWakeMessage) {
+            if (!self) return DefWindowProcW(window, message, wParam, lParam);
+
+            if (message == kWakeMessage) {
                 self->wakePosted.store(false, std::memory_order_release);
                 if (self->callbacks.wake) self->callbacks.wake();
                 return 0;
+            }
+            if (message == kTrayCallbackMsg) {
+                const UINT mouseMsg = LOWORD(lParam);
+                const UINT iconId = HIWORD(lParam);
+                const int cursorX = GET_X_LPARAM(wParam);
+                const int cursorY = GET_Y_LPARAM(wParam);
+                if (self->callbacks.trayMessage) self->callbacks.trayMessage(iconId, mouseMsg, cursorX, cursorY);
+                return 0;
+            }
+            if (const UINT tbCreated = taskbarCreatedMessage(); tbCreated != 0 && message == tbCreated) {
+                if (self->callbacks.taskbarCreated) self->callbacks.taskbarCreated();
+                return 0;
+            }
+            switch (message) {
+                case WM_FONTCHANGE:
+                    if (self->callbacks.fontsChanged) self->callbacks.fontsChanged();
+                    return 0;
+                case WM_SETTINGCHANGE:
+                    if (self->callbacks.settingsChanged) self->callbacks.settingsChanged();
+                    return 0;
+                case WM_QUERYENDSESSION:
+                    return TRUE;
+                case WM_ENDSESSION:
+                    if (wParam == TRUE && !gEndSessionHandled.exchange(true)) {
+                        if (self->callbacks.endSession) self->callbacks.endSession();
+                    }
+                    return 0;
+                default:
+                    break;
             }
             return DefWindowProcW(window, message, wParam, lParam);
         }
@@ -407,8 +476,22 @@ namespace canton::win32 {
         if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
             throw std::runtime_error("无法登记宿主消息分发窗口类");
         }
-        impl_->hwnd = CreateWindowExW(0, messageClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, impl_.get());
-        if (!impl_->hwnd) throw std::runtime_error("无法创建宿主消息分发窗");
+        // 使用带 WS_EX_TOOLWINDOW 的不可见顶层窗口（禁用 HWND_MESSAGE），
+        // 确保可接收 TaskbarCreated、WM_SETTINGCHANGE、WM_QUERYENDSESSION 并支持 SMTC Interop，且不入任务栏/Alt-Tab、零 GPU 显存。
+        impl_->hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            messageClassName,
+            L"CantonAppHost",
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            nullptr,
+            nullptr,
+            instance,
+            impl_.get());
+        if (!impl_->hwnd) throw std::runtime_error("无法创建 App 级隐藏顶层宿主窗");
     }
 
     MessageDispatcher::~MessageDispatcher() {
@@ -417,6 +500,10 @@ namespace canton::win32 {
             DestroyWindow(impl_->hwnd);
             impl_->hwnd = nullptr;
         }
+    }
+
+    void* MessageDispatcher::hwnd() const noexcept {
+        return impl_ ? impl_->hwnd : nullptr;
     }
 
     void MessageDispatcher::postWake() noexcept {
@@ -428,27 +515,50 @@ namespace canton::win32 {
         }
     }
 
-    int MessageDispatcher::runMessageLoop() {
+    int MessageDispatcher::runMessageLoop(std::function<std::optional<std::uint32_t>()> nextTimeoutMs, std::function<void()> onTimerWake) {
         MSG message{};
-        while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-            // PostMessage(kWakeMessage) 在 Win32 队列中优先级高于 WM_MOUSEMOVE 等输入消息；
-            // 连续动画帧期间若不先排空输入队列，会导致鼠标拖拽事件被周期性饿死。
-            if (message.message == kWakeMessage) {
-                MSG input{};
-                int drained = 0;
-                while (drained++ < 64 && PeekMessageW(&input, nullptr, 0, 0, PM_REMOVE | PM_QS_INPUT)) {
-                    if (input.message == WM_QUIT) {
-                        PostQuitMessage(static_cast<int>(input.wParam));
-                        return static_cast<int>(input.wParam);
+        while (true) {
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+                if (message.message == WM_QUIT) {
+                    return static_cast<int>(message.wParam);
+                }
+                // PostMessage(kWakeMessage) 在 Win32 队列中优先级高于 WM_MOUSEMOVE 等输入消息；
+                // 连续动画帧期间若不先排空输入队列，会导致鼠标拖拽事件被周期性饿死。
+                if (message.message == kWakeMessage) {
+                    MSG input{};
+                    int drained = 0;
+                    while (drained++ < 64 && PeekMessageW(&input, nullptr, 0, 0, PM_REMOVE | PM_QS_INPUT)) {
+                        if (input.message == WM_QUIT) {
+                            return static_cast<int>(input.wParam);
+                        }
+                        TranslateMessage(&input);
+                        DispatchMessageW(&input);
                     }
-                    TranslateMessage(&input);
-                    DispatchMessageW(&input);
+                }
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+
+            DWORD timeout = INFINITE;
+            if (nextTimeoutMs) {
+                const auto waitMs = nextTimeoutMs();
+                if (waitMs) {
+                    if (*waitMs == 0) {
+                        if (onTimerWake) onTimerWake();
+                        continue;
+                    }
+                    timeout = *waitMs;
                 }
             }
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
+
+            const DWORD waited = MsgWaitForMultipleObjectsEx(0, nullptr, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            if (waited == WAIT_TIMEOUT) {
+                if (onTimerWake) onTimerWake();
+            } else if (waited == WAIT_FAILED) {
+                break;
+            }
         }
-        return static_cast<int>(message.wParam);
+        return 0;
     }
 
     void MessageDispatcher::quitMessageLoop(int exitCode) noexcept {
@@ -461,7 +571,14 @@ namespace canton::win32 {
         core::WindowConfigSpec config;
         WindowCallbacks callbacks;
         std::unique_ptr<WindowsPrecisionWheelSource> precisionWheel;
-        ComPtr<ITaskbarList> taskbarList;
+        ComPtr<ITaskbarList3> taskbarList;
+        bool taskbarButtonReady = false;
+        bool thumbBarInitialized = false;
+        core::TaskbarProgressSpec taskbarProgress;
+        HICON taskbarBadgeIcon = nullptr;
+        std::string taskbarBadgeLabel;
+        std::vector<core::TaskbarActionSpec> taskbarActions;
+        std::vector<HICON> taskbarActionIcons;
 
         double dpiScale = 1.0;
         bool backdropActive = false;
@@ -487,7 +604,80 @@ namespace canton::win32 {
         DWORD lastClickTick = 0;
         POINT lastClickPoint{};
 
-        static std::atomic<bool> endSessionHandled;
+        void ensureTaskbarList() {
+            if (taskbarList) return;
+            if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(taskbarList.GetAddressOf()))) || FAILED(taskbarList->HrInit())) {
+                taskbarList.Reset();
+            }
+        }
+
+        void applyTaskbarProgress() {
+            if (!hwnd) return;
+            ensureTaskbarList();
+            if (!taskbarList) return;
+            TBPFLAG flag = TBPF_NOPROGRESS;
+            switch (taskbarProgress.state) {
+                case core::TaskbarProgressState::None: flag = TBPF_NOPROGRESS; break;
+                case core::TaskbarProgressState::Indeterminate: flag = TBPF_INDETERMINATE; break;
+                case core::TaskbarProgressState::Normal: flag = TBPF_NORMAL; break;
+                case core::TaskbarProgressState::Paused: flag = TBPF_PAUSED; break;
+                case core::TaskbarProgressState::Error: flag = TBPF_ERROR; break;
+            }
+            (void)taskbarList->SetProgressState(hwnd, flag);
+            if (taskbarProgress.state == core::TaskbarProgressState::Normal ||
+                taskbarProgress.state == core::TaskbarProgressState::Paused ||
+                taskbarProgress.state == core::TaskbarProgressState::Error) {
+                const double clamped = std::clamp(taskbarProgress.value, 0.0, 1.0);
+                const ULONGLONG completed = static_cast<ULONGLONG>(std::llround(clamped * 10000.0));
+                (void)taskbarList->SetProgressValue(hwnd, completed, 10000ull);
+            }
+        }
+
+        void applyTaskbarBadge() {
+            if (!hwnd) return;
+            ensureTaskbarList();
+            if (!taskbarList) return;
+            const auto wideLabel = utf8ToWide(taskbarBadgeLabel);
+            (void)taskbarList->SetOverlayIcon(hwnd, taskbarBadgeIcon, wideLabel.empty() ? nullptr : wideLabel.c_str());
+        }
+
+        void applyTaskbarActions() {
+            if (!hwnd) return;
+            ensureTaskbarList();
+            if (!taskbarList) return;
+            THUMBBUTTON buttons[kMaxThumbButtons]{};
+            for (std::size_t i = 0; i < kMaxThumbButtons; ++i) {
+                auto& btn = buttons[i];
+                btn.iId = kThumbButtonBaseId + static_cast<UINT>(i);
+                btn.dwMask = THB_FLAGS | THB_ICON | THB_TOOLTIP;
+                if (i < taskbarActions.size()) {
+                    const auto& act = taskbarActions[i];
+                    btn.dwFlags = act.enabled ? THBF_ENABLED : THBF_DISABLED;
+                    if (act.dismissOnClick) btn.dwFlags = static_cast<THUMBBUTTONFLAGS>(btn.dwFlags | THBF_DISMISSONCLICK);
+                    btn.hIcon = i < taskbarActionIcons.size() ? taskbarActionIcons[i] : nullptr;
+                    const auto tip = utf8ToWide(act.tooltip);
+                    wcsncpy_s(btn.szTip, tip.c_str(), _TRUNCATE);
+                } else {
+                    btn.dwFlags = THBF_HIDDEN;
+                    btn.hIcon = nullptr;
+                    btn.szTip[0] = L'\0';
+                }
+            }
+            if (!thumbBarInitialized) {
+                if (SUCCEEDED(taskbarList->ThumbBarAddButtons(hwnd, static_cast<UINT>(kMaxThumbButtons), buttons))) {
+                    thumbBarInitialized = true;
+                }
+            } else {
+                (void)taskbarList->ThumbBarUpdateButtons(hwnd, static_cast<UINT>(kMaxThumbButtons), buttons);
+            }
+        }
+
+        void replayTaskbarEnhancements() {
+            thumbBarInitialized = false;
+            applyTaskbarProgress();
+            applyTaskbarBadge();
+            if (!taskbarActions.empty()) applyTaskbarActions();
+        }
 
         void syncCloseMenuItem() {
             if (!hwnd) return;
@@ -546,12 +736,8 @@ namespace canton::win32 {
             const bool defaultShow = config.role == core::WindowRole::Standard && ownerHwnd == nullptr;
             const bool shouldShow = config.visible && config.showInTaskbar.value_or(defaultShow);
             if (!config.showInTaskbar.has_value()) return;
-            if (!taskbarList) {
-                if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(taskbarList.GetAddressOf()))) || FAILED(taskbarList->HrInit())) {
-                    taskbarList.Reset();
-                    return;
-                }
-            }
+            ensureTaskbarList();
+            if (!taskbarList) return;
             if (shouldShow)
                 (void)taskbarList->AddTab(hwnd);
             else
@@ -1299,10 +1485,24 @@ namespace canton::win32 {
                     return TRUE;
 
                 case WM_ENDSESSION:
-                    if (wParam == TRUE && !endSessionHandled.exchange(true)) {
+                    if (wParam == TRUE && !gEndSessionHandled.exchange(true)) {
                         if (self->callbacks.endSession) self->callbacks.endSession();
                     }
                     return 0;
+
+                case WM_COMMAND: {
+                    if (HIWORD(wParam) == THBN_CLICKED) {
+                        const UINT id = LOWORD(wParam);
+                        if (id >= kThumbButtonBaseId && id < kThumbButtonBaseId + kMaxThumbButtons) {
+                            const std::size_t idx = id - kThumbButtonBaseId;
+                            if (idx < self->taskbarActions.size() && self->callbacks.taskbarActionClicked) {
+                                self->callbacks.taskbarActionClicked(self->taskbarActions[idx].id);
+                            }
+                            return 0;
+                        }
+                    }
+                    break;
+                }
 
                 case WM_DESTROY:
                     if (self->precisionWheel) self->precisionWheel->cancel();
@@ -1310,13 +1510,16 @@ namespace canton::win32 {
                     return 0;
 
                 default:
+                    if (const UINT tbBtnCreated = taskbarButtonCreatedMessage(); tbBtnCreated != 0 && message == tbBtnCreated) {
+                        self->taskbarButtonReady = true;
+                        self->replayTaskbarEnhancements();
+                        return 0;
+                    }
                     break;
             }
             return DefWindowProcW(window, message, wParam, lParam);
         }
     };
-
-    std::atomic<bool> Window::Impl::endSessionHandled{false};
 
     Window::Window(const core::WindowConfigSpec& config, void* ownerHwnd, WindowCallbacks callbacks) : impl_(std::make_unique<Impl>()) {
         impl_->config = config;
@@ -1546,12 +1749,54 @@ namespace canton::win32 {
         SendMessageW(impl_->hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallHicon));
     }
 
+    void Window::setTaskbarProgress(const core::TaskbarProgressSpec& spec) {
+        impl_->taskbarProgress = spec;
+        impl_->applyTaskbarProgress();
+    }
+
+    void Window::setTaskbarBadge(void* overlayHicon, std::string_view label) {
+        impl_->taskbarBadgeIcon = static_cast<HICON>(overlayHicon);
+        impl_->taskbarBadgeLabel = std::string(label);
+        impl_->applyTaskbarBadge();
+    }
+
+    void Window::setTaskbarActions(const std::vector<core::TaskbarActionSpec>& actions, const std::vector<void*>& actionHicons) {
+        impl_->taskbarActions = actions;
+        impl_->taskbarActionIcons.clear();
+        impl_->taskbarActionIcons.reserve(actionHicons.size());
+        for (void* h : actionHicons) impl_->taskbarActionIcons.push_back(static_cast<HICON>(h));
+        impl_->applyTaskbarActions();
+    }
+
     void Window::activate() {
         if (!impl_->hwnd) return;
         if (IsIconic(impl_->hwnd)) ShowWindow(impl_->hwnd, SW_RESTORE);
         SetForegroundWindow(impl_->hwnd);
         SetActiveWindow(impl_->hwnd);
         SetFocus(impl_->hwnd);
+    }
+
+    void Window::requestAttention(core::WindowAttentionMode mode) {
+        if (!impl_->hwnd) return;
+        FLASHWINFO info{};
+        info.cbSize = sizeof(info);
+        info.hwnd = impl_->hwnd;
+        info.dwTimeout = 0;
+        switch (mode) {
+            case core::WindowAttentionMode::Informational:
+                info.dwFlags = FLASHW_TRAY | FLASHW_TIMERNOFG;
+                info.uCount = 3;
+                break;
+            case core::WindowAttentionMode::Critical:
+                info.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+                info.uCount = 0;
+                break;
+            case core::WindowAttentionMode::Stop:
+                info.dwFlags = FLASHW_STOP;
+                info.uCount = 0;
+                break;
+        }
+        FlashWindowEx(&info);
     }
 
     void Window::setEnabled(bool enabled) {

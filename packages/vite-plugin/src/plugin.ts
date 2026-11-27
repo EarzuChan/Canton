@@ -19,7 +19,11 @@ export default function canton(options: CantonVitePluginOptions = {}): CantonVit
     })
     return {
         ...transformPlugin,
-        ...uiPackageHooks(),
+        ...uiPackageHooks({
+            appId: options.appId,
+            singleInstance: options.singleInstance,
+            portable: options.portable,
+        }),
         config(_config: unknown = {}, env: ConfigEnv = {}): CantonViteConfig {
             command = env.command
             const extension = env.command === "build" && bytecodeBuildInput() ? "cbc" : "js"

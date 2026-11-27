@@ -60,9 +60,18 @@ namespace canton::core {
         Close,
     };
 
+    enum class WindowAttentionMode : std::uint8_t {
+        Informational,
+        Critical,
+        Stop,
+    };
+
     enum class WindowCommandKind : std::uint8_t {
         Activate,
         RequestClose,
+        RequestAttentionInformational,
+        RequestAttentionCritical,
+        StopAttention,
     };
 
     enum class WindowHitResult : std::uint8_t {

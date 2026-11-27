@@ -136,4 +136,42 @@ namespace canton::runtime {
             return httpPayload(liveResourceAddress(server, path), {}, false).bytes;
         });
     }
+
+    core::AssetExistsChecker liveAssetExistsChecker(std::string devServerUrl, std::shared_ptr<ResourceWorkers> workers) {
+        const auto server = parseHttpAddress(devServerUrl);
+        return asynchronousAssetExistsChecker(std::move(workers), [server](const std::string& reference) {
+            const auto name = packageAssetName(reference);
+            std::string path = "/";
+            constexpr std::string_view hex = "0123456789ABCDEF";
+            for (const unsigned char byte : name) {
+                if ((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') || std::string_view("-._~/").find(static_cast<char>(byte)) != std::string_view::npos)
+                    path += static_cast<char>(byte);
+                else {
+                    path += '%';
+                    path += hex[byte >> 4];
+                    path += hex[byte & 15];
+                }
+            }
+            const auto address = liveResourceAddress(server, path);
+            try {
+                HttpRequestOptions req;
+                req.method = "HEAD";
+                req.url = address;
+                req.headers = {{"Cache-Control", "no-cache"}};
+                req.timeoutMs = PainterResourceLimits::MaxTimeoutMs;
+                req.maxBytes = 1024;
+                req.followRedirects = false;
+                req.useSystemProxy = false;
+                const auto resp = httpRequest(req);
+                if (resp.status == 200) return true;
+                if (resp.status == 405) {
+                    const auto getResp = httpGet(address, {PainterResourceLimits::MaxResourceBytes, PainterResourceLimits::MaxTimeoutMs});
+                    return getResp.status == 200;
+                }
+                return false;
+            } catch (...) {
+                return false;
+            }
+        });
+    }
 }

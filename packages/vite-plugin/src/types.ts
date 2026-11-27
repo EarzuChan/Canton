@@ -3,6 +3,9 @@ export type CantonVitePluginOptions = {
     host?: string
     port?: number
     strictPort?: boolean
+    appId?: string
+    singleInstance?: boolean
+    portable?: boolean
 }
 
 export type MiddlewareResponse = {

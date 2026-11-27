@@ -3,6 +3,7 @@ import { RearrangeSession, isArrangableDefinition } from '../runtime/internal.ts
 import type { InjectionKey } from '../runtime/apiInject.ts'
 import { NativeRearrangeHost } from '../bridge/nativeRearrange.ts'
 import { App, Window } from '../arrangable/AppAndWindow.ts'
+import { freezeLaunchRequest, LaunchRequestKey } from '../layout/launchRequest.ts'
 import { Layout } from '../arrangable/Layout.ts'
 import { Box, Row, Column, Spacer, FlowRow, FlowColumn } from '../arrangable/LayoutingArrangables.ts'
 import { LazyColumn, LazyRow, LazyVerticalGrid, LazyHorizontalGrid } from '../arrangable/LazyArrangables.ts'
@@ -193,6 +194,9 @@ export function mountApplication(application: CantonApplication, target: NativeT
 
     try {
         const ownerProvides = Object.create(secret.provides) as Record<PropertyKey, unknown>
+        if (!(LaunchRequestKey in ownerProvides)) {
+            ownerProvides[LaunchRequestKey as PropertyKey] = freezeLaunchRequest(target.getLaunchRequest?.())
+        }
         const host = new NativeRearrangeHost(target)
         const context: AppContext = {
             config: secret.config,

@@ -1,0 +1,18 @@
+<template>
+    <App :exitOnLastWindowClosed="false" appId="com.canton.desktop.shell" icon="/tray-icon.svg" :onSecondInstance="onSecondInstance" &appHandle>
+        <DesktopShellWorkspace :appHandle="appHandle" :secondInstances="secondInstances" :wakeCount="wakeCount" />
+    </App>
+</template>
+
+<script>
+import { ref, type LaunchRequest } from '@canton/framework'
+import DesktopShellWorkspace from './DesktopShellWorkspace.cta'
+
+const secondInstances = ref<LaunchRequest[]>([])
+const wakeCount = ref(0)
+
+function onSecondInstance(req: LaunchRequest) {
+    secondInstances.value = [...secondInstances.value, req]
+    wakeCount.value++
+}
+</script>

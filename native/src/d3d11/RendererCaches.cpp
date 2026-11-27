@@ -145,7 +145,7 @@ namespace canton::d3d11 {
         entry.originX = originX;
         entry.originY = originY;
         if (mask.bounds.empty()) return entry;
-        if (!cacheable || entry.width > atlasItemLimit || entry.height > atlasItemLimit) {
+        if (!cacheable || entry.width > atlasItemLimit || entry.height > atlasItemLimit || entry.width + 1 > maxAtlasSize || entry.height + 1 > maxAtlasSize) {
             entry.dedicated = createTexture(entry.width, entry.height, DXGI_FORMAT_R8_UNORM, mask.pixels.data(), static_cast<UINT>(entry.width));
             entry.textureWidth = entry.width;
             entry.textureHeight = entry.height;
@@ -157,7 +157,7 @@ namespace canton::d3d11 {
         }
         // 每块右下留一像素空隙，线性采样不会串到邻块
         const auto width = entry.width + 1, height = entry.height + 1;
-        for (int attempt = 0; attempt < 2; ++attempt) {
+        for (int attempt = 0; attempt < 4; ++attempt) {
             Shelf* chosen = nullptr;
             for (auto& shelf : shelves)
                 if (shelf.height >= height && shelf.height <= height + height / 2 && shelf.used + width <= atlasSize && (!chosen || shelf.height < chosen->height)) chosen = &shelf;
@@ -167,7 +167,26 @@ namespace canton::d3d11 {
                 chosen = &shelves.back();
             }
             if (!chosen) {
-                // 图集满了：整体回收，之后用到的字形和路径按需重新栅格化
+                if (atlasSize < maxAtlasSize) {
+                    // WARP 无损内存瘦身：图集从 512×512 起步，空间不足时倍增扩容至上限（最大 2048×2048）
+                    flush();
+                    batchCoverage = nullptr;
+                    atlasSize = std::min(maxAtlasSize, std::max(atlasSize * 2, std::max(width, height)));
+                    // 向上取 2 的幂（不超过 maxAtlasSize）
+                    int pow2 = warpInitialAtlasSize;
+                    while (pow2 < atlasSize && pow2 < maxAtlasSize) pow2 *= 2;
+                    atlasSize = std::min(maxAtlasSize, pow2);
+                    atlasView = createTexture(atlasSize, atlasSize, DXGI_FORMAT_R8_UNORM, nullptr, 0, &atlasTexture);
+                    counters.atlasSize = atlasSize;
+                    ++counters.atlasGrowths;
+                    shelves.clear();
+                    atlasBottom = 0;
+                    dedicatedBytes = 0;
+                    glyphs.clear();
+                    paths.clear();
+                    continue;
+                }
+                // 图集已达上限且满：整体回收，之后用到的字形和路径按需重新栅格化
                 resetAtlas();
                 continue;
             }
@@ -364,8 +383,12 @@ namespace canton::d3d11 {
         std::erase_if(images, [](const auto& item) { return item.second.owner.expired(); });
         // 矢量图按像素尺寸各存一份，缩放动画会留下一串不再用的尺寸
         std::erase_if(vectors, [&](const auto& item) { return item.second.owner.expired() || item.second.lastUsedFrame + 120 < frameNumber; });
-        // 离屏 RT 池空闲回收：连续 60 帧未使用的槽位释放显存
-        std::erase_if(offscreenPool, [&](const OffscreenTarget& rt) { return !rt.inUse && rt.lastUsedFrame + 60 < frameNumber; });
+        // 离屏 RT 池空闲回收：硬件保留 60 帧，WARP 软渲染收紧至 2 帧以尽快归还内存
+        const std::uint64_t rtIdleFrames = adapterInfo.software ? 2u : 60u;
+        const std::size_t evicted = std::erase_if(offscreenPool, [&](const OffscreenTarget& rt) {
+            return !rt.inUse && rt.lastUsedFrame + rtIdleFrames < frameNumber;
+        });
+        counters.offscreenTargetsEvicted += evicted;
         if (dedicatedBytes > dedicatedBudget) resetAtlas();
     }
 }

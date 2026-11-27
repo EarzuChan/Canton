@@ -21,6 +21,8 @@
                 <Box :modifier="M.fillMaxWidth().then(columnHandle.weight(1))">
                     <GlassPage c-if="page === 'glass'" :preset="argument" />
 
+                    <ReducedGlassWrapper c-else-if="page === 'glass-reduced'" />
+
                     <BrushLabPage c-else-if="page === 'brushes'" />
 
                     <CompositingPage c-else-if="page === 'compositing'" />
@@ -41,6 +43,7 @@ import { Alignment, Arrangement, Color, M, rounded } from '@canton/framework/ui'
 const windowState = createWindowState({ size: { width: 960.dp, height: 640.dp } })
 import { body, subheading } from './theme.ts'
 import GlassPage from './GlassPage.cta'
+import ReducedGlassWrapper from './ReducedGlassWrapper.cta'
 import BrushLabPage from './BrushLabPage.cta'
 import CompositingPage from './CompositingPage.cta'
 

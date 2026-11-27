@@ -1,0 +1,429 @@
+<template>
+    <TrayIcon id="main" icon="/tray-icon.svg" :tooltip="trayTooltip" :onClick="showMainWindow">
+        <SystemTrayMenu c-if="trayMenuMode === 'system'">
+            <MenuItem label="显示主窗口" :onClick="showMainWindow" />
+            <MenuCheckbox label="启用置顶" :checked="alwaysOnTop" :onChange="v => { alwaysOnTop = v }" />
+            <SubMenu label="切换菜单模式">
+                <MenuRadio label="原生 HMENU（零显存）" :selected="trayMenuMode === 'system'" :onSelect="() => { trayMenuMode = 'system' }" />
+                <MenuRadio label="自绘弹窗菜单" :selected="trayMenuMode === 'custom'" :onSelect="() => { trayMenuMode = 'custom' }" />
+            </SubMenu>
+            <MenuSeparator />
+            <MenuItem label="退出应用" :onClick="props.appHandle.exitApplication" />
+        </SystemTrayMenu>
+        <CustomTrayMenu c-else :size="{ width: 250.dp, height: 220.dp }" &menuHandle>
+            <Column :modifier="M.fillMaxSize().background(palette.surface, rounded(20.dp)).padding(14.dp)" :verticalArrangement="Arrangement.spacedBy(10.dp)">
+                <Text text="Canton 自绘托盘菜单" :style="headingStyle" />
+                <Text :text="`托盘驻留模式 · 主窗${mainVisible ? '可见' : '已隐藏'}`" :style="mutedStyle" />
+                <Box :modifier="buttonMod(palette.accent, () => { showMainWindow(); menuHandle.dismiss() })">
+                    <Text text="恢复主窗口" :style="bodyStyle" />
+                </Box>
+                <Box :modifier="buttonMod(palette.card, () => { trayMenuMode = 'system'; menuHandle.dismiss() })">
+                    <Text text="切回原生 HMENU" :style="bodyStyle" />
+                </Box>
+                <Box :modifier="buttonMod(palette.rose, () => { menuHandle.dismiss(); props.appHandle.exitApplication() })">
+                    <Text text="彻底退出" :style="bodyStyle" />
+                </Box>
+            </Column>
+        </CustomTrayMenu>
+    </TrayIcon>
+
+    <MediaSession
+        :playbackStatus="mediaPlaying ? 'playing' : 'paused'"
+        :title="currentTrack.title"
+        :artist="currentTrack.artist"
+        :album="currentTrack.album"
+        :canPlay="!mediaPlaying"
+        :canPause="mediaPlaying"
+        :canStop="true"
+        :canNext="true"
+        :canPrevious="true"
+        :onPlay="() => { mediaPlaying = true; mediaLog = 'SMTC: Play' }"
+        :onPause="() => { mediaPlaying = false; mediaLog = 'SMTC: Pause' }"
+        :onStop="() => { mediaPlaying = false; mediaLog = 'SMTC: Stop' }"
+        :onNext="nextTrack"
+        :onPrevious="prevTrack"
+    />
+
+    <Window
+        c-if="mainVisible"
+        title="Canton Desktop Shell & Platform Lab"
+        icon="/tray-icon.svg"
+        :state="windowState"
+        :alwaysOnTop="alwaysOnTop"
+        :taskbarProgress="{ state: progressState, value: progressValue }"
+        :taskbarBadge="badgeEnabled ? { icon: '/badge-icon.svg', label: '有新通知' } : null"
+        :taskbarActions="taskbarActions"
+        :onCloseRequest="() => { mainVisible = false }"
+    >
+        <Column &columnHandle :modifier="M.fillMaxSize().background(palette.bg)">
+            <!-- 顶部导航栏 -->
+            <Row :modifier="M.fillMaxWidth().background(palette.surface).padding({ horizontal: 16.dp, vertical: 10.dp })" :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalAlignment="Alignment.CenterVertically">
+                <Text text="Canton 桌面融合实验室" :style="titleStyle" :modifier="M.padding({ end: 12.dp })" />
+                <Box :modifier="tabMod('tray')"><Text text="托盘与菜单" :style="bodyStyle" /></Box>
+                <Box :modifier="tabMod('taskbar')"><Text text="任务栏与 SMTC" :style="bodyStyle" /></Box>
+                <Box :modifier="tabMod('platform')"><Text text="存储 / 网络 / 定时" :style="bodyStyle" /></Box>
+                <Box :modifier="tabMod('graphics')"><Text text="图形感知与降级" :style="bodyStyle" /></Box>
+            </Row>
+
+            <!-- 主内容区 -->
+            <Box :modifier="M.fillMaxWidth().then(columnHandle.weight(1)).verticalScroll(scrollState).padding(20.dp)">
+                <!-- 1. 托盘与双轨菜单页 -->
+                <Column c-if="tab === 'tray'" :verticalArrangement="Arrangement.spacedBy(14.dp)">
+                    <Text text="系统托盘与双轨菜单（System HMENU / Custom Popup）" :style="headingStyle" />
+                    <Text text="关闭窗口默认隐藏到系统托盘（销毁窗口 RenderTarget 零显存驻留），左键或右键托盘图标可恢复主窗口。" :style="mutedStyle" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(trayMenuMode === 'system' ? palette.accent : palette.card, () => { trayMenuMode = 'system' })">
+                            <Text text="使用原生 SystemTrayMenu (HMENU)" :style="bodyStyle" />
+                        </Box>
+                        <Box :modifier="buttonMod(trayMenuMode === 'custom' ? palette.accent : palette.card, () => { trayMenuMode = 'custom' })">
+                            <Text text="使用自绘 CustomTrayMenu (Popup)" :style="bodyStyle" />
+                        </Box>
+                        <Box :modifier="buttonMod(palette.amber, () => { mainVisible = false })">
+                            <Text text="关窗驻留托盘（零显存）" :style="bodyStyle" />
+                        </Box>
+                        <Box :modifier="buttonMod(palette.rose, props.appHandle.exitApplication)">
+                            <Text text="退出应用" :style="bodyStyle" />
+                        </Box>
+                    </Row>
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(palette.emerald, writeSampleJumpList)">
+                            <Text text="写入 Jump List 任务" :style="bodyStyle" />
+                        </Box>
+                        <Box :modifier="buttonMod(palette.card, resetJumpList)">
+                            <Text text="清空 Jump List" :style="bodyStyle" />
+                        </Box>
+                    </Row>
+                    <Text :text="`Jump List 状态：${jumpListStatus}`" :style="bodyStyle" />
+                </Column>
+
+                <!-- 2. 任务栏与 SMTC 页 -->
+                <Column c-else-if="tab === 'taskbar'" :verticalArrangement="Arrangement.spacedBy(14.dp)">
+                    <Text text="窗口任务栏增强（ITaskbarList3）" :style="headingStyle" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(8.dp)">
+                        <Box :modifier="buttonMod(progressState === 'none' ? palette.accent : palette.card, () => { progressState = 'none' })"><Text text="None" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(progressState === 'indeterminate' ? palette.accent : palette.card, () => { progressState = 'indeterminate' })"><Text text="Indeterminate" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(progressState === 'normal' ? palette.accent : palette.card, () => { progressState = 'normal' })"><Text text="Normal" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(progressState === 'paused' ? palette.accent : palette.card, () => { progressState = 'paused' })"><Text text="Paused" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(progressState === 'error' ? palette.accent : palette.card, () => { progressState = 'error' })"><Text text="Error" :style="bodyStyle" /></Box>
+                    </Row>
+                    <Row :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalAlignment="Alignment.CenterVertically">
+                        <Box :modifier="buttonMod(palette.card, () => { progressValue = Math.max(0, Number((progressValue - 0.15).toFixed(2))) })"><Text text="-15%" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.card, () => { progressValue = Math.min(1, Number((progressValue + 0.15).toFixed(2))) })"><Text text="+15%" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(badgeEnabled ? palette.rose : palette.card, () => { badgeEnabled = !badgeEnabled })"><Text :text="badgeEnabled ? '角标：已开启' : '角标：已关闭'" :style="bodyStyle" /></Box>
+                        <Text :text="`进度：${Math.round(progressValue * 100)}%  |  缩略图按钮点击：${thumbClicks} 次`" :style="bodyStyle" />
+                    </Row>
+                    <Row :horizontalArrangement="Arrangement.spacedBy(8.dp)" :verticalAlignment="Alignment.CenterVertically">
+                        <Box :modifier="buttonMod(palette.amber, triggerDelayedAttention)"><Text text="3 秒后任务栏黄色高亮（点后切走窗体看效果）" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.card, () => windowState.requestAttention('stop'))"><Text text="清除高亮" :style="bodyStyle" /></Box>
+                        <Text :text="attentionStatus" :style="mutedStyle" />
+                    </Row>
+
+                    <Text text="系统全局媒体控制（SMTC）" :style="headingStyle" :modifier="M.padding({ top: 10.dp })" />
+                    <Text :text="`当前曲目：${currentTrack.title} - ${currentTrack.artist} (${currentTrack.album})`" :style="bodyStyle" />
+                    <Text :text="`播放态：${mediaPlaying ? 'Playing' : 'Paused'}  |  最近事件：${mediaLog}`" :style="mutedStyle" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(palette.card, prevTrack)"><Text text="上一曲" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.accent, () => { mediaPlaying = !mediaPlaying })"><Text :text="mediaPlaying ? '暂停' : '播放'" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.card, nextTrack)"><Text text="下一曲" :style="bodyStyle" /></Box>
+                    </Row>
+                </Column>
+
+                <!-- 3. 存储、网络、定时与单实例页 -->
+                <Column c-else-if="tab === 'platform'" :verticalArrangement="Arrangement.spacedBy(12.dp)">
+                    <Text text="路径重定位、只读资产与原子存储" :style="headingStyle" />
+                    <Text :text="`appData: ${appDataPath}`" :style="mutedStyle" />
+                    <Text :text="`temp: ${tempPath}`" :style="mutedStyle" />
+                    <Text :text="`assets.exists('/sample.txt'): ${sampleAssetExists}`" :style="bodyStyle" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(palette.accent, saveAtomicNote)"><Text text="原子写入本地笔记" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.card, loadAtomicNote)"><Text text="读取本地笔记" :style="bodyStyle" /></Box>
+                    </Row>
+                    <Text :text="`笔记状态：${noteStatus}`" :style="bodyStyle" />
+
+                    <Text text="原生定时器与异步 delay" :style="headingStyle" :modifier="M.padding({ top: 8.dp })" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)" :verticalAlignment="Alignment.CenterVertically">
+                        <Box :modifier="buttonMod(palette.emerald, startCountdown)"><Text text="启动 3 秒 async delay 倒计时" :style="bodyStyle" /></Box>
+                        <Text :text="`心跳计数（useInterval）：${heartbeat}  |  倒计时：${countdownText}`" :style="bodyStyle" />
+                    </Row>
+
+                    <Text text="WinHTTP 异步请求与流式下载（支持 AbortController 一键取消）" :style="headingStyle" :modifier="M.padding({ top: 8.dp })" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(palette.accent, runHttpDemo)"><Text text="测试 http.get (example.com)" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.emerald, runDownloadDemo)"><Text text="流式下载至 temp 目录" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(palette.rose, cancelActiveNet)"><Text text="取消进行中请求" :style="bodyStyle" /></Box>
+                    </Row>
+                    <Text :text="`网络状态：${netStatus}`" :style="bodyStyle" />
+
+                    <Text text="冷启动 LaunchRequest 与单实例二次热唤醒" :style="headingStyle" :modifier="M.padding({ top: 8.dp })" />
+                    <Text :text="`冷启动 cwd: ${launchRequest?.workingDirectory ?? ''}`" :style="mutedStyle" />
+                    <Text :text="`冷启动 args: ${JSON.stringify(launchRequest?.args ?? [])}`" :style="mutedStyle" />
+                    <Text :text="`二次热唤醒次数：${props.secondInstances.length}  最近：${props.secondInstances.length ? JSON.stringify(props.secondInstances[props.secondInstances.length - 1]) : '无'}`" :style="bodyStyle" />
+                </Column>
+
+                <!-- 4. 图形感知与降级页 -->
+                <Column c-else :verticalArrangement="Arrangement.spacedBy(12.dp)">
+                    <Text text="GraphicsEnvironmentKey 实时硬件与系统偏好探测" :style="headingStyle" />
+                    <Text :text="`backend=${graphicsEnv?.backend}  adapter=${graphicsEnv?.adapterName}`" :style="bodyStyle" />
+                    <Text :text="`hardwareAccelerated=${graphicsEnv?.hardwareAccelerated}  isSoftwareRenderer=${graphicsEnv?.isSoftwareRenderer}  isRemoteSession=${graphicsEnv?.isRemoteSession}`" :style="mutedStyle" />
+                    <Text :text="`systemTransparency=${graphicsEnv?.systemTransparency}  systemAnimations=${graphicsEnv?.systemAnimations}  recommendedTier=${graphicsEnv?.recommendedTier}`" :style="bodyStyle" />
+                    <Row :horizontalArrangement="Arrangement.spacedBy(10.dp)">
+                        <Box :modifier="buttonMod(glassSimMode === 'real' ? palette.accent : palette.card, () => { glassSimMode = 'real' })"><Text text="跟随真实环境" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(glassSimMode === 'full' ? palette.emerald : palette.card, () => { glassSimMode = 'full' })"><Text text="子树覆写 full" :style="bodyStyle" /></Box>
+                        <Box :modifier="buttonMod(glassSimMode === 'reduced' ? palette.amber : palette.card, () => { glassSimMode = 'reduced' })"><Text text="子树覆写 reduced" :style="bodyStyle" /></Box>
+                    </Row>
+                    <GlassPreviewCard :key="glassSimMode" :mode="glassSimMode" :label="glassSimMode" />
+                </Column>
+            </Box>
+        </Column>
+    </Window>
+</template>
+
+<script>
+import { assets, computed, createScrollState, createWindowState, delay, inject, LaunchRequestKey, ref, useInterval, watch, type AppHandle, type LaunchRequest, type TaskbarAction } from '@canton/framework'
+import { Alignment, Arrangement, Color, GraphicsEnvironmentKey, M, rounded } from '@canton/framework/ui'
+import { clearJumpList, CustomTrayMenu, MediaSession, MenuCheckbox, MenuItem, MenuRadio, MenuSeparator, setJumpList, SubMenu, SystemTrayMenu, TrayIcon } from '@canton/framework/shell'
+import { paths, readText, writeText } from '@canton/framework/fs'
+import { downloadFile, http, NetError } from '@canton/framework/net'
+import GlassPreviewCard from './GlassPreviewCard.cta'
+import { bodyStyle, headingStyle, mutedStyle, titleStyle } from './theme.ts'
+
+const palette = {
+    bg: Color(0xff0b1120),
+    surface: Color(0xff111827),
+    card: Color(0xff1e293b),
+    border: Color(0xff334155),
+    accent: Color(0xff2563eb),
+    emerald: Color(0xff10b981),
+    amber: Color(0xfff59e0b),
+    rose: Color(0xffef4444),
+}
+
+const props = defineProps<{
+    appHandle: AppHandle
+    secondInstances: readonly LaunchRequest[]
+    wakeCount: number
+}>()
+
+const windowState = createWindowState({ size: { width: 980.dp, height: 680.dp }, position: 'centerScreen' })
+const scrollState = createScrollState()
+
+const tab = ref<'tray' | 'taskbar' | 'platform' | 'graphics'>('tray')
+const mainVisible = ref(true)
+const alwaysOnTop = ref(false)
+const trayMenuMode = ref<'system' | 'custom'>('system')
+const jumpListStatus = ref('未写入')
+
+const progressState = ref<'none' | 'indeterminate' | 'normal' | 'paused' | 'error'>('normal')
+const progressValue = ref(0.45)
+const badgeEnabled = ref(true)
+const thumbClicks = ref(0)
+
+const tracks = [
+    { title: 'Canton Horizon', artist: 'Canton Studio', album: 'Desktop Suite' },
+    { title: 'DirectComposition Waltz', artist: 'Win32 Ensemble', album: 'Zero VRAM Nights' },
+    { title: 'Liquid Glass Echo', artist: 'HLSL Orchestra', album: 'Progressive Tiers' },
+]
+const trackIndex = ref(0)
+const mediaPlaying = ref(true)
+const mediaLog = ref('就绪（可用键盘媒体键或系统媒体中心控制）')
+const currentTrack = computed(() => tracks[trackIndex.value]!)
+
+const heartbeat = ref(0)
+useInterval(() => { heartbeat.value++ }, 1000)
+const countdownText = ref('空闲')
+
+const sampleAssetExists = ref('检测中...')
+void assets.exists('/sample.txt').then(v => { sampleAssetExists.value = String(v) }).catch(err => { sampleAssetExists.value = String(err) })
+
+const appDataPath = ref('')
+const tempPath = ref('')
+try {
+    appDataPath.value = paths.appData()
+    tempPath.value = paths.temp()
+} catch (err) {
+    appDataPath.value = `不可用：${String(err)}`
+}
+
+const noteStatus = ref('尚未读写')
+const netStatus = ref('空闲')
+let activeNetController: AbortController | null = null
+
+const launchRequest = inject(LaunchRequestKey, undefined)
+const graphicsEnv = inject(GraphicsEnvironmentKey, undefined)
+const glassSimMode = ref<'real' | 'full' | 'reduced'>('real')
+const attentionStatus = ref('点击后请切到其他窗口等待 3 秒，任务栏图标将橙黄高亮，点回本窗自动熄灭')
+
+function applyArgsNavigation(args: readonly string[] | undefined) {
+    if (!args) return
+    for (const arg of args) {
+        if (arg.startsWith('--tab=')) {
+            const target = arg.slice('--tab='.length)
+            if (target === 'tray' || target === 'taskbar' || target === 'platform' || target === 'graphics') {
+                tab.value = target
+            }
+        }
+    }
+}
+applyArgsNavigation(launchRequest?.args)
+
+async function triggerDelayedAttention() {
+    attentionStatus.value = '3 秒后触发任务栏高亮（请先切换到其他窗口）...'
+    await delay(3000)
+    windowState.requestAttention('informational')
+    attentionStatus.value = '已触发 FlashWindowEx（切回本窗自动熄灭）'
+}
+
+const trayTooltip = computed(() => `Canton Desktop (${trayMenuMode.value === 'system' ? '原生菜单' : '自绘菜单'})`)
+
+function showMainWindow() {
+    mainVisible.value = true
+    queueMicrotask(() => windowState.activate())
+}
+
+watch(() => props.wakeCount, count => {
+    if (count > 0) {
+        const latest = props.secondInstances[props.secondInstances.length - 1]
+        applyArgsNavigation(latest?.args)
+        showMainWindow()
+    }
+})
+
+function nextTrack() {
+    trackIndex.value = (trackIndex.value + 1) % tracks.length
+    mediaLog.value = `切换至下一曲：${currentTrack.value.title}`
+}
+
+function prevTrack() {
+    trackIndex.value = (trackIndex.value + tracks.length - 1) % tracks.length
+    mediaLog.value = `切换至上一曲：${currentTrack.value.title}`
+}
+
+const taskbarActions = computed<readonly TaskbarAction[]>(() => [
+    {
+        id: 'play-pause',
+        icon: mediaPlaying.value ? '/pause-icon.svg' : '/play-icon.svg',
+        tooltip: mediaPlaying.value ? '暂停' : '播放',
+        onClick: () => {
+            thumbClicks.value++
+            mediaPlaying.value = !mediaPlaying.value
+        },
+    },
+    {
+        id: 'next',
+        icon: '/next-icon.svg',
+        tooltip: '下一曲',
+        onClick: () => {
+            thumbClicks.value++
+            nextTrack()
+        },
+    },
+])
+
+function writeSampleJumpList() {
+    try {
+        setJumpList([
+            {
+                title: '快捷任务',
+                items: [
+                    { title: '打开存储与网络页', args: ['--tab=platform'], description: '通过 Jump List 唤醒 Canton' },
+                    { title: '打开图形感知页', args: ['--tab=graphics'], description: '查看 GraphicsEnvironmentKey' },
+                ],
+            },
+        ])
+        jumpListStatus.value = '已写入（右键任务栏图标可查看）'
+    } catch (err) {
+        jumpListStatus.value = `写入失败：${String(err)}`
+    }
+}
+
+function resetJumpList() {
+    try {
+        clearJumpList()
+        jumpListStatus.value = '已清空'
+    } catch (err) {
+        jumpListStatus.value = `清空失败：${String(err)}`
+    }
+}
+
+async function saveAtomicNote() {
+    try {
+        const file = paths.join(paths.appData(), 'desktop-shell-note.txt')
+        const content = `Canton 原子写测试 @ ${new Date().toISOString()} (heartbeat=${heartbeat.value})`
+        await writeText(file, content, { atomic: true })
+        noteStatus.value = `已原子写入：${file}`
+    } catch (err) {
+        noteStatus.value = `写入失败：${String(err)}`
+    }
+}
+
+async function loadAtomicNote() {
+    try {
+        const file = paths.join(paths.appData(), 'desktop-shell-note.txt')
+        const text = await readText(file)
+        noteStatus.value = `读回：${text}`
+    } catch (err) {
+        noteStatus.value = `读取失败：${String(err)}`
+    }
+}
+
+async function startCountdown() {
+    for (let i = 3; i >= 1; i--) {
+        countdownText.value = `${i}...`
+        await delay(1000)
+    }
+    countdownText.value = '倒计时完成！'
+}
+
+async function runHttpDemo() {
+    activeNetController?.abort()
+    activeNetController = new AbortController()
+    netStatus.value = '正在请求 https://example.com ...'
+    try {
+        const res = await http.get('https://example.com', { timeoutMs: 8000, signal: activeNetController.signal })
+        netStatus.value = `HTTP ${res.status} (${res.contentType}) · ${res.bytes().length} 字节`
+    } catch (err) {
+        netStatus.value = err instanceof NetError ? `NetError[${err.code}]: ${err.message}` : String(err)
+    }
+}
+
+async function runDownloadDemo() {
+    activeNetController?.abort()
+    activeNetController = new AbortController()
+    const dest = paths.join(paths.temp(), 'canton-demo-download.html')
+    netStatus.value = `正在下载到 ${dest} ...`
+    try {
+        const res = await downloadFile('https://example.com', {
+            destPath: dest,
+            timeoutMs: 10000,
+            signal: activeNetController.signal,
+            onProgress: p => {
+                netStatus.value = `下载中：${p.receivedBytes} / ${p.totalBytes ?? '?'} 字节`
+            },
+        })
+        netStatus.value = `下载完成：ok=${res.ok} status=${res.status} bytes=${res.bytesWritten}`
+    } catch (err) {
+        netStatus.value = err instanceof NetError ? `NetError[${err.code}]: ${err.message}` : String(err)
+    }
+}
+
+function cancelActiveNet() {
+    if (activeNetController) {
+        activeNetController.abort()
+        activeNetController = null
+    }
+}
+
+function tabMod(name: 'tray' | 'taskbar' | 'platform' | 'graphics') {
+    return M.background(tab.value === name ? palette.accent : palette.card, rounded(8.dp))
+        .padding({ horizontal: 12.dp, vertical: 6.dp })
+        .clickable({ onClick: () => { tab.value = name } })
+        .pointerIcon('hand')
+}
+
+function buttonMod(bg: typeof palette.accent, onClick: () => void) {
+    return M.background(bg, rounded(8.dp))
+        .padding({ horizontal: 14.dp, vertical: 8.dp })
+        .clickable({ onClick })
+        .pointerIcon('hand')
+}
+</script>

@@ -3,12 +3,15 @@
 #include <core/Clock.h>
 #include <core/InputIntent.h>
 #include <core/Layout.h>
+#include <runtime/Digest.h>
 #include <runtime/ErrorScreenModel.h>
+#include <runtime/FileSystem.h>
 #include <runtime/PainterResources.h>
 #include <runtime/UiPackage.h>
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <unordered_set>
 #include <utility>
 
@@ -72,18 +75,29 @@ namespace canton::runtime {
           textLayout_(measurer, 256, 8 * 1024 * 1024, fonts_.get()),
           options_(std::move(options)),
           resourceWorkers_(createResourceWorkers()),
+          ioPool_(std::make_shared<IoThreadPool>(4)),
+          appPaths_(options_.pathsConfig),
+          graphicsEnv_(options_.initialGraphicsEnv),
+          launchRequest_(options_.launchRequest),
+          platformBridge_(std::make_shared<quickjs::PlatformBridge>()),
           controlRuntime_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))),
           source_(
               AppResolver(makeMounter(options_)),
               RuntimePackageLoader(
                   options_.distResources ? options_.distResources : [workers = resourceWorkers_](std::shared_ptr<const core::UiPackage> package) {
-                      return RuntimeLoadResources{packagePainterLoader(package, workers), packageAssetLoader(package, workers)};
+                      return RuntimeLoadResources{
+                          packagePainterLoader(package, workers),
+                          packageAssetLoader(package, workers),
+                          packageAssetExistsChecker(package, workers),
+                      };
                   },
                   fonts_,
                   options_.painters,
-                  options_.shaderCompiler),
+                  options_.shaderCompiler,
+                  platformBridge_),
               options_.live),
           fallbackPipeline_(core::SceneFramePipeline(core::LayoutEngine(textLayout_))) {
+        initPlatformBridge();
         if (options_.hudFactory) {
             globalDiagnostics_.setHud(options_.hudFactory());
             globalDiagnostics_.setNotifySink([this](core::LogLevel level, std::string_view tag, const std::string& title, const std::string& message, bool coalesce) {
@@ -101,7 +115,16 @@ namespace canton::runtime {
 
     AppSession::~AppSession() {
         controlRuntime_.setWorkAvailable({});
+        cancelAllNetworkRequests();
+        timerQueue_.clear();
+        activeTrays_.clear();
+        if (options_.platform.onTrayClearAll) options_.platform.onTrayClearAll();
+        if (activeMediaSession_.active) {
+            activeMediaSession_ = {};
+            if (options_.platform.onMediaSessionUpdated) options_.platform.onMediaSessionUpdated(activeMediaSession_, {});
+        }
         teardownAllWindows();
+        if (ioPool_) ioPool_->shutdown();
     }
 
     void AppSession::setWorkAvailable(std::function<void()> callback) {
@@ -231,6 +254,16 @@ namespace canton::runtime {
     void AppSession::shutdownSession() {
         exitRequested_ = true;
         sessionLoaded_ = false;
+        cancelAllNetworkRequests();
+        timerQueue_.clear();
+        activeTrays_.clear();
+        windowTaskbarBadges_.clear();
+        windowTaskbarActions_.clear();
+        if (options_.platform.onTrayClearAll) options_.platform.onTrayClearAll();
+        if (activeMediaSession_.active) {
+            activeMediaSession_ = {};
+            if (options_.platform.onMediaSessionUpdated) options_.platform.onMediaSessionUpdated(activeMediaSession_, {});
+        }
         teardownAllWindows();
         controlRuntime_.reset();
     }
@@ -274,6 +307,16 @@ namespace canton::runtime {
     void AppSession::applyLoadOutcome(PackageLoadOutcome outcome) {
         if (outcome.pending) return;
         teardownAllWindows();
+        cancelAllNetworkRequests();
+        timerQueue_.clear();
+        activeTrays_.clear();
+        windowTaskbarBadges_.clear();
+        windowTaskbarActions_.clear();
+        if (options_.platform.onTrayClearAll) options_.platform.onTrayClearAll();
+        if (activeMediaSession_.active) {
+            activeMediaSession_ = {};
+            if (options_.platform.onMediaSessionUpdated) options_.platform.onMediaSessionUpdated(activeMediaSession_, {});
+        }
         sessionLoaded_ = false;
         everOpenedWindow_ = false;
         pendingWindowEvents_.clear();
@@ -367,6 +410,7 @@ namespace canton::runtime {
         }
         if (appIconChanged) {
             for (auto& [_, win] : windows_) requestIconIfNeeded(*win);
+            for (const auto& [trayId, _] : activeTrays_) refreshTrayIcon(trayId);
         }
     }
 
@@ -381,6 +425,12 @@ namespace canton::runtime {
         }
     }
 
+    void AppSession::requestIconAsset(const std::string& path) {
+        if (path.empty() || iconCache_.contains(path) || !activePainterLoader_) return;
+        if (std::any_of(pendingIcons_.begin(), pendingIcons_.end(), [&](const PendingIcon& item) { return item.path == path; })) return;
+        pendingIcons_.push_back({path, activePainterLoader_(path, [this] { controlRuntime_.notifyWorkAvailable(); })});
+    }
+
     void AppSession::requestIconIfNeeded(WindowSurfaceState& win) {
         const auto effective = !win.config.icon.empty() ? win.config.icon : appConfig_.icon;
         if (effective == win.appliedIconPath) return;
@@ -393,9 +443,7 @@ namespace canton::runtime {
             if (options_.platform.onWindowIconChanged) options_.platform.onWindowIconChanged(win.windowId, &cached->second.bigIcon, &cached->second.smallIcon);
             return;
         }
-        if (!activePainterLoader_) return;
-        if (std::any_of(pendingIcons_.begin(), pendingIcons_.end(), [&](const PendingIcon& item) { return item.path == effective; })) return;
-        pendingIcons_.push_back({effective, activePainterLoader_(effective, [this] { controlRuntime_.notifyWorkAvailable(); })});
+        requestIconAsset(effective);
     }
 
     void AppSession::pumpPendingIcons() {
@@ -419,6 +467,21 @@ namespace canton::runtime {
                 const auto effective = !win->config.icon.empty() ? win->config.icon : appConfig_.icon;
                 if (effective == path && options_.platform.onWindowIconChanged) {
                     options_.platform.onWindowIconChanged(win->windowId, &entry.bigIcon, &entry.smallIcon);
+                }
+            }
+            for (const auto& [trayId, spec] : activeTrays_) {
+                const auto effective = !spec.icon.empty() ? spec.icon : appConfig_.icon;
+                if (effective == path) refreshTrayIcon(trayId);
+            }
+            for (const auto& [winId, badge] : windowTaskbarBadges_) {
+                if (badge && badge->icon == path) refreshWindowTaskbarIcons(winId);
+            }
+            for (const auto& [winId, actions] : windowTaskbarActions_) {
+                for (const auto& act : actions) {
+                    if (act.icon == path) {
+                        refreshWindowTaskbarIcons(winId);
+                        break;
+                    }
                 }
             }
         }
@@ -548,6 +611,8 @@ namespace canton::runtime {
         }
 
         drainPendingWindowEvents();
+        drainBackgroundEvents();
+        pumpTimers(nowMillis);
         if (!sessionLoaded_ || globalDiagnostics_.hasError()) return changedWindows;
 
         for (const auto windowId : windowOrder_) {
@@ -847,6 +912,10 @@ namespace canton::runtime {
     bool AppSession::wantsFrame() const {
         if (exitRequested_) return false;
         if (reloadRequested_ || globalDiagnostics_.hasActiveToasts() || !pendingWindowEvents_.empty() || !pendingToasts_.empty()) return true;
+        {
+            const std::scoped_lock lock(const_cast<std::mutex&>(bgEventMutex_));
+            if (!queuedSecondInstances_.empty() || !queuedMediaButtons_.empty()) return true;
+        }
         if (sessionLoaded_ && !globalDiagnostics_.hasError()) {
             if (controlRuntime_.hasPendingEvents() || controlRuntime_.awaitingFontPreload()) return true;
             if (const auto* host = const_cast<CantonRuntime&>(controlRuntime_).scriptHost()) {
@@ -1348,5 +1417,465 @@ namespace canton::runtime {
     WindowSurfaceState* AppSession::window(core::WindowId windowId) noexcept {
         const auto it = windows_.find(windowId);
         return it == windows_.end() ? nullptr : it->second.get();
+    }
+
+    void AppSession::cancelAllNetworkRequests() {
+        std::unordered_map<std::uint64_t, std::shared_ptr<HttpCancellation>> active;
+        {
+            const std::scoped_lock lock(netCancelMutex_);
+            active = std::exchange(netCancellations_, {});
+        }
+        for (auto& [_, cancel] : active) {
+            if (cancel) cancel->cancel();
+        }
+    }
+
+    void AppSession::refreshTrayIcon(const std::string& trayId) {
+        const auto it = activeTrays_.find(trayId);
+        if (it == activeTrays_.end()) return;
+        const auto& spec = it->second;
+        const auto effective = !spec.icon.empty() ? spec.icon : appConfig_.icon;
+        const IconBitmap* iconPtr = nullptr;
+        if (!effective.empty()) {
+            if (const auto found = iconCache_.find(effective); found != iconCache_.end()) {
+                iconPtr = &found->second.smallIcon;
+            } else {
+                requestIconAsset(effective);
+            }
+        }
+        if (options_.platform.onTrayUpsert) options_.platform.onTrayUpsert(spec, iconPtr);
+    }
+
+    void AppSession::refreshWindowTaskbarIcons(core::WindowId windowId) {
+        if (const auto badgeIt = windowTaskbarBadges_.find(windowId); badgeIt != windowTaskbarBadges_.end()) {
+            if (badgeIt->second) {
+                const IconBitmap* iconPtr = nullptr;
+                if (!badgeIt->second->icon.empty()) {
+                    if (const auto found = iconCache_.find(badgeIt->second->icon); found != iconCache_.end()) {
+                        iconPtr = &found->second.smallIcon;
+                    } else {
+                        requestIconAsset(badgeIt->second->icon);
+                    }
+                }
+                if (options_.platform.onWindowTaskbarBadge) {
+                    options_.platform.onWindowTaskbarBadge(windowId, iconPtr, badgeIt->second->label);
+                }
+            } else {
+                if (options_.platform.onWindowTaskbarBadge) {
+                    options_.platform.onWindowTaskbarBadge(windowId, nullptr, {});
+                }
+            }
+        }
+
+        if (const auto actIt = windowTaskbarActions_.find(windowId); actIt != windowTaskbarActions_.end()) {
+            std::vector<const IconBitmap*> icons;
+            icons.reserve(actIt->second.size());
+            for (const auto& act : actIt->second) {
+                const IconBitmap* iconPtr = nullptr;
+                if (!act.icon.empty()) {
+                    if (const auto found = iconCache_.find(act.icon); found != iconCache_.end()) {
+                        iconPtr = &found->second.smallIcon;
+                    } else {
+                        requestIconAsset(act.icon);
+                    }
+                }
+                icons.push_back(iconPtr);
+            }
+            if (options_.platform.onWindowTaskbarActions) {
+                options_.platform.onWindowTaskbarActions(windowId, actIt->second, icons);
+            }
+        }
+    }
+
+    void AppSession::refreshMediaSessionThumbnail() {
+        std::string diskPath;
+        if (activeMediaSession_.active && !activeMediaSession_.thumbnail.empty()) {
+            const auto& ref = activeMediaSession_.thumbnail;
+            if (fsExists(ref)) {
+                diskPath = ref;
+            } else if (const auto cached = mediaThumbTempFiles_.find(ref); cached != mediaThumbTempFiles_.end() && fsExists(cached->second)) {
+                diskPath = cached->second;
+            }
+        }
+        if (options_.platform.onMediaSessionUpdated) {
+            options_.platform.onMediaSessionUpdated(activeMediaSession_, diskPath);
+        }
+    }
+
+    void AppSession::initPlatformBridge() {
+        auto& b = *platformBridge_;
+
+        b.scheduleTimer = [this](double delayMs, bool repeating) -> std::uint64_t {
+            return timerQueue_.schedule(core::monotonicMillis(), delayMs, repeating, {});
+        };
+        b.rescheduleRepeatingTimer = [this](std::uint64_t id) {
+            timerQueue_.rescheduleAfterRun(id, core::monotonicMillis());
+        };
+        b.cancelTimer = [this](std::uint64_t id) {
+            (void)timerQueue_.cancel(id);
+        };
+        b.clearTimers = [this]() {
+            timerQueue_.clear();
+        };
+
+        b.getGraphicsEnvironment = [this]() -> core::GraphicsEnvironmentInfo {
+            return graphicsEnv_;
+        };
+        b.getLaunchRequest = [this]() -> core::LaunchRequest {
+            return launchRequest_;
+        };
+
+        b.getKnownPath = [this](std::string_view kind) -> std::string {
+            if (kind == "appData") return appPaths_.appData();
+            if (kind == "temp") return appPaths_.temp();
+            if (kind == "downloads") return AppPaths::downloads();
+            if (kind == "documents") return AppPaths::documents();
+            if (kind == "desktop") return AppPaths::desktop();
+            if (kind == "pictures") return AppPaths::pictures();
+            if (kind == "music") return AppPaths::music();
+            if (kind == "videos") return AppPaths::videos();
+            throw std::invalid_argument("未知的标准目录类型：" + std::string(kind));
+        };
+
+        b.fsAsync = [pool = ioPool_](std::string op, std::string path, std::string path2, std::string bytes, bool flag, std::function<void()> wake) -> std::future<quickjs::FsBridgeResult> {
+            auto promise = std::make_shared<std::promise<quickjs::FsBridgeResult>>();
+            auto future = promise->get_future();
+            const bool posted = pool->post([promise, op = std::move(op), path = std::move(path), path2 = std::move(path2), bytes = std::move(bytes), flag, wake = std::move(wake)]() {
+                quickjs::FsBridgeResult out;
+                try {
+                    if (op == "readText") {
+                        out.bytes = fsReadText(path);
+                    } else if (op == "readBytes") {
+                        out.bytes = fsReadBytes(path);
+                    } else if (op == "writeText") {
+                        fsWriteText(path, bytes, flag);
+                    } else if (op == "writeBytes") {
+                        fsWriteBytes(path, bytes, flag);
+                    } else if (op == "exists") {
+                        out.boolValue = fsExists(path);
+                    } else if (op == "stat") {
+                        const auto st = fsStat(path);
+                        out.isFile = st.isFile;
+                        out.isDirectory = st.isDirectory;
+                        out.size = st.size;
+                        out.modifiedTimeMs = st.modifiedTimeMs;
+                        out.createdTimeMs = st.createdTimeMs;
+                    } else if (op == "readDir") {
+                        for (const auto& entry : fsReadDir(path)) {
+                            out.entries.push_back({entry.name, entry.isFile, entry.isDirectory});
+                        }
+                    } else if (op == "mkdir") {
+                        fsMkdir(path, flag);
+                    } else if (op == "remove") {
+                        fsRemove(path, flag);
+                    } else if (op == "rename") {
+                        fsRename(path, path2);
+                    } else if (op == "copy") {
+                        fsCopy(path, path2, flag);
+                    } else {
+                        throw FsError(FsErrorCode::Io, path, "未知的文件操作：" + op);
+                    }
+                } catch (const FsError& err) {
+                    out.ok = false;
+                    out.errorCode = fsErrorCodeName(err.code());
+                    out.errorPath = err.path();
+                    out.errorMessage = err.what();
+                } catch (const std::exception& err) {
+                    out.ok = false;
+                    out.errorCode = "IO";
+                    out.errorPath = path;
+                    out.errorMessage = err.what();
+                }
+                promise->set_value(std::move(out));
+                if (wake) wake();
+            });
+            if (!posted) {
+                quickjs::FsBridgeResult err;
+                err.ok = false;
+                err.errorCode = "IO";
+                err.errorPath = {};
+                err.errorMessage = "后台 I/O 线程池已关闭";
+                promise->set_value(std::move(err));
+            }
+            return future;
+        };
+
+        b.netRequestAsync = [this, pool = ioPool_](std::uint64_t reqId, quickjs::NetBridgeRequest req, std::function<void()> wake) -> std::future<quickjs::NetBridgeResponse> {
+            auto cancel = std::make_shared<HttpCancellation>();
+            {
+                const std::scoped_lock lock(netCancelMutex_);
+                netCancellations_[reqId] = cancel;
+            }
+            auto promise = std::make_shared<std::promise<quickjs::NetBridgeResponse>>();
+            auto future = promise->get_future();
+            const bool posted = pool->post([this, reqId, cancel, promise, req = std::move(req), wake = std::move(wake)]() {
+                quickjs::NetBridgeResponse out;
+                try {
+                    HttpRequestOptions opts;
+                    opts.method = req.method;
+                    opts.url = req.url;
+                    opts.headers = req.headers;
+                    opts.body = req.body;
+                    opts.timeoutMs = req.timeoutMs;
+                    opts.maxBytes = req.maxBytes;
+                    opts.followRedirects = req.followRedirects;
+                    opts.maxRedirects = req.maxRedirects;
+                    opts.useSystemProxy = req.useSystemProxy;
+                    auto resp = httpRequest(opts, cancel.get());
+                    out.status = resp.status;
+                    out.finalUrl = std::move(resp.url);
+                    out.contentType = std::move(resp.contentType);
+                    for (auto& [k, v] : resp.headers) out.headers.emplace_back(k, std::move(v));
+                    out.body = std::move(resp.body);
+                } catch (const NetError& err) {
+                    out.ok = false;
+                    out.errorCode = netErrorCodeName(err.code());
+                    out.errorUrl = err.url();
+                    out.errorMessage = err.what();
+                } catch (const std::exception& err) {
+                    out.ok = false;
+                    out.errorCode = "NETWORK";
+                    out.errorUrl = req.url;
+                    out.errorMessage = err.what();
+                }
+                {
+                    const std::scoped_lock lock(netCancelMutex_);
+                    netCancellations_.erase(reqId);
+                }
+                promise->set_value(std::move(out));
+                if (wake) wake();
+            });
+            if (!posted) {
+                const std::scoped_lock lock(netCancelMutex_);
+                netCancellations_.erase(reqId);
+                quickjs::NetBridgeResponse err;
+                err.ok = false;
+                err.errorCode = "ABORTED";
+                err.errorMessage = "后台 I/O 线程池已关闭";
+                promise->set_value(std::move(err));
+            }
+            return future;
+        };
+
+        b.netDownloadAsync = [this, pool = ioPool_](
+                                 std::uint64_t reqId,
+                                 quickjs::NetBridgeRequest req,
+                                 std::string destPath,
+                                 std::function<void(quickjs::NetBridgeProgress)> onProgress,
+                                 std::function<void()> wake) -> std::future<quickjs::NetBridgeResponse> {
+            auto cancel = std::make_shared<HttpCancellation>();
+            {
+                const std::scoped_lock lock(netCancelMutex_);
+                netCancellations_[reqId] = cancel;
+            }
+            auto promise = std::make_shared<std::promise<quickjs::NetBridgeResponse>>();
+            auto future = promise->get_future();
+            const bool posted = pool->post([this, reqId, cancel, promise, req = std::move(req), destPath = std::move(destPath), onProgress = std::move(onProgress), wake = std::move(wake)]() {
+                quickjs::NetBridgeResponse out;
+                try {
+                    HttpRequestOptions opts;
+                    opts.method = "GET";
+                    opts.url = req.url;
+                    opts.headers = req.headers;
+                    opts.timeoutMs = req.timeoutMs;
+                    opts.maxBytes = req.maxBytes;
+                    opts.followRedirects = req.followRedirects;
+                    opts.maxRedirects = req.maxRedirects;
+                    opts.useSystemProxy = req.useSystemProxy;
+                    auto res = httpDownloadFile(
+                        opts,
+                        destPath,
+                        [&](const DownloadProgress& p) {
+                            if (onProgress) onProgress({p.receivedBytes, p.totalBytes});
+                        },
+                        cancel.get());
+                    out.status = res.status;
+                    out.downloadOk = res.ok;
+                    out.finalUrl = std::move(res.url);
+                    out.destPath = std::move(res.destPath);
+                    out.bytesWritten = res.bytesWritten;
+                } catch (const NetError& err) {
+                    out.ok = false;
+                    out.errorCode = netErrorCodeName(err.code());
+                    out.errorUrl = err.url();
+                    out.errorMessage = err.what();
+                } catch (const std::exception& err) {
+                    out.ok = false;
+                    out.errorCode = "NETWORK";
+                    out.errorUrl = req.url;
+                    out.errorMessage = err.what();
+                }
+                {
+                    const std::scoped_lock lock(netCancelMutex_);
+                    netCancellations_.erase(reqId);
+                }
+                promise->set_value(std::move(out));
+                if (wake) wake();
+            });
+            if (!posted) {
+                const std::scoped_lock lock(netCancelMutex_);
+                netCancellations_.erase(reqId);
+                quickjs::NetBridgeResponse err;
+                err.ok = false;
+                err.errorCode = "ABORTED";
+                err.errorMessage = "后台 I/O 线程池已关闭";
+                promise->set_value(std::move(err));
+            }
+            return future;
+        };
+
+        b.netCancel = [this](std::uint64_t reqId) {
+            std::shared_ptr<HttpCancellation> cancel;
+            {
+                const std::scoped_lock lock(netCancelMutex_);
+                if (const auto it = netCancellations_.find(reqId); it != netCancellations_.end()) cancel = it->second;
+            }
+            if (cancel) cancel->cancel();
+        };
+
+        b.upsertTray = [this](const core::TrayIconSpec& spec) {
+            activeTrays_[spec.id] = spec;
+            refreshTrayIcon(spec.id);
+        };
+        b.removeTray = [this](const std::string& trayId) {
+            activeTrays_.erase(trayId);
+            if (options_.platform.onTrayRemove) options_.platform.onTrayRemove(trayId);
+        };
+        b.showSystemTrayMenu = [this](const std::vector<core::TrayMenuItemSpec>& items, int screenX, int screenY) -> std::uint32_t {
+            return options_.platform.onTrayShowSystemMenu ? options_.platform.onTrayShowSystemMenu(items, screenX, screenY) : 0u;
+        };
+        b.queryTrayAnchor = [this](const std::string& trayId) -> core::TrayAnchorRect {
+            return options_.platform.onTrayQueryAnchor ? options_.platform.onTrayQueryAnchor(trayId) : core::TrayAnchorRect{};
+        };
+
+        b.setWindowTaskbarProgress = [this](core::WindowId windowId, const core::TaskbarProgressSpec& spec) {
+            if (options_.platform.onWindowTaskbarProgress) options_.platform.onWindowTaskbarProgress(windowId, spec);
+        };
+        b.setWindowTaskbarBadge = [this](core::WindowId windowId, const std::optional<core::TaskbarBadgeSpec>& spec) {
+            windowTaskbarBadges_[windowId] = spec;
+            refreshWindowTaskbarIcons(windowId);
+        };
+        b.setWindowTaskbarActions = [this](core::WindowId windowId, const std::vector<core::TaskbarActionSpec>& actions) {
+            windowTaskbarActions_[windowId] = actions;
+            refreshWindowTaskbarIcons(windowId);
+        };
+
+        b.updateMediaSession = [this](const core::MediaSessionSpec& spec) {
+            activeMediaSession_ = spec;
+            refreshMediaSessionThumbnail();
+        };
+        b.setJumpList = [this](const std::vector<core::JumpListCategorySpec>& categories) {
+            if (options_.platform.onSetJumpList) {
+                const auto appId = !appConfig_.appId.empty() ? appConfig_.appId : options_.pathsConfig.appId;
+                options_.platform.onSetJumpList(appId, categories);
+            }
+        };
+        b.clearJumpList = [this]() {
+            if (options_.platform.onClearJumpList) {
+                const auto appId = !appConfig_.appId.empty() ? appConfig_.appId : options_.pathsConfig.appId;
+                options_.platform.onClearJumpList(appId);
+            }
+        };
+    }
+
+    std::optional<std::uint32_t> AppSession::nextTimerWaitMillis(double nowMillis) const noexcept {
+        if (exitRequested_) return std::nullopt;
+        return timerQueue_.nextWaitMillis(nowMillis);
+    }
+
+    void AppSession::pumpTimers(double nowMillis) {
+        if (exitRequested_ || !sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        auto* host = controlRuntime_.scriptHost();
+        if (!host) return;
+        const auto due = timerQueue_.popDue(nowMillis);
+        for (const auto& item : due) {
+            const auto res = host->invokeTimer(item.id);
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+                return;
+            }
+        }
+    }
+
+    void AppSession::updateGraphicsEnvironment(const core::GraphicsEnvironmentInfo& env) {
+        if (graphicsEnv_ == env) return;
+        graphicsEnv_ = env;
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        if (auto* host = controlRuntime_.scriptHost()) {
+            const auto res = host->notifyGraphicsEnvironmentChanged();
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+            } else {
+                controlRuntime_.notifyWorkAvailable();
+            }
+        }
+    }
+
+    void AppSession::notifySecondInstance(core::LaunchRequest request) {
+        {
+            const std::scoped_lock lock(bgEventMutex_);
+            queuedSecondInstances_.push_back(std::move(request));
+        }
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    void AppSession::notifyTrayEvent(const core::TrayEvent& event) {
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        if (auto* host = controlRuntime_.scriptHost()) {
+            const auto res = host->notifyTrayEvent(event);
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+            } else {
+                controlRuntime_.notifyWorkAvailable();
+            }
+        }
+    }
+
+    void AppSession::notifyTaskbarActionClicked(core::WindowId windowId, const std::string& actionId) {
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        if (auto* host = controlRuntime_.scriptHost()) {
+            const auto res = host->notifyTaskbarActionClicked(windowId, actionId);
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+            } else {
+                controlRuntime_.notifyWorkAvailable();
+            }
+        }
+    }
+
+    void AppSession::notifyMediaButtonPressed(core::MediaButtonKind button) {
+        {
+            const std::scoped_lock lock(bgEventMutex_);
+            queuedMediaButtons_.push_back(button);
+        }
+        controlRuntime_.notifyWorkAvailable();
+    }
+
+    void AppSession::drainBackgroundEvents() {
+        if (!sessionLoaded_ || globalDiagnostics_.hasError()) return;
+        auto* host = controlRuntime_.scriptHost();
+        if (!host) return;
+
+        std::vector<core::LaunchRequest> secondInstances;
+        std::vector<core::MediaButtonKind> mediaButtons;
+        {
+            const std::scoped_lock lock(bgEventMutex_);
+            secondInstances = std::exchange(queuedSecondInstances_, {});
+            mediaButtons = std::exchange(queuedMediaButtons_, {});
+        }
+        for (const auto& req : secondInstances) {
+            const auto res = host->notifySecondInstance(req);
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+                return;
+            }
+        }
+        for (const auto btn : mediaButtons) {
+            const auto res = host->notifyMediaButtonPressed(btn);
+            if (!res.ok) {
+                applyRuntimeFailure(res.error, RuntimeFrameErrorPhase::Event);
+                return;
+            }
+        }
     }
 }

@@ -1,6 +1,7 @@
 #include "QuickJsNativeApi.h"
 
 #include "QuickJsModifierReader.h"
+#include "QuickJsPlatformApi.h"
 #include "QuickJsRuntimeContext.h"
 #include "QuickJsValueReader.h"
 
@@ -347,6 +348,12 @@ namespace canton::quickjs {
                 kind = canton::core::WindowCommandKind::Activate;
             else if (cmd == "requestClose")
                 kind = canton::core::WindowCommandKind::RequestClose;
+            else if (cmd == "requestAttentionInformational")
+                kind = canton::core::WindowCommandKind::RequestAttentionInformational;
+            else if (cmd == "requestAttentionCritical")
+                kind = canton::core::WindowCommandKind::RequestAttentionCritical;
+            else if (cmd == "stopAttention")
+                kind = canton::core::WindowCommandKind::StopAttention;
             else
                 return JS_ThrowTypeError(context, "windowCommand 不支持命令: %s", cmd.c_str());
             self->windowCommands.push_back({windowId, kind});
@@ -691,6 +698,7 @@ namespace canton::quickjs {
                 JS_FreeValue(context, *val);
                 *val = JS_UNDEFINED;
             }
+            self->freePlatformHandles();
             return JS_UNDEFINED;
         }
 
@@ -1014,6 +1022,7 @@ namespace canton::quickjs {
                               },
                               "readAsset", 2));
         JS_SetPropertyStr(context, native.get(), "runtimeVersion", JS_NewUint32(context, canton::core::RuntimeVersion));
+        QuickJsPlatformApi::install(context, native.get(), global.get(), runtime);
         JS_SetPropertyStr(context, global.get(), "__CANTON_NATIVE__", native.release());
 
         ScopedValue performance(context, JS_NewObject(context));
